@@ -145,16 +145,8 @@ tag: ## Create and push a new git tag
 	git push origin $(VERSION)
 	@echo "Tag $(VERSION) pushed. GitHub Actions will build and create release."
 
-# Docker targets (if needed in future)
-docker-build: ## Build Docker image for testing
-	docker build -t lumenhub:test .
-
-docker-run: ## Run Docker container for testing
-	docker run -d --name lumenhub-test -p 8080:8080 lumenhub:test
-
-docker-stop: ## Stop and remove test container
-	docker stop lumenhub-test || true
-	docker rm lumenhub-test || true
+# Container targets (if needed in future)
+# Removed Docker targets as requested
 
 # Version management
 version: ## Show version information
