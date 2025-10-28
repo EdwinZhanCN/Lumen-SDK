@@ -1,0 +1,65 @@
+# Basic Configuration - Personal Computers
+# Designed for typical personal computers with standard resources
+
+# Service Discovery - Standard configuration
+discovery:
+    enabled: true
+    service_type: "_lumen._tcp"
+    domain: "local"
+    scan_interval: 30s              # Standard scan frequency
+    node_timeout: 5m                 # Standard timeout
+    max_nodes: 20                    # Good limit for personal computers
+
+# Connection - Standard settings
+connection:
+    dial_timeout: 5s                 # Standard timeout
+    keep_alive: 30s                 # Standard keep-alive
+    max_message_size: 4194304       # 4MB limit
+    insecure: false
+    compression: true               # Save bandwidth
+
+# Server - Full service set
+server:
+    rest:
+        enabled: true
+        host: "0.0.0.0"
+        port: 8080
+        cors: true                  # Enable CORS for web interfaces
+        timeout: 30s                # Standard timeout
+
+    mcp:
+        enabled: false               # MCP disabled by default
+
+    llmtools:
+        enabled: false               # LLM tools disabled by default
+
+# Load Balancer - Standard configuration
+load_balancer:
+    strategy: "round_robin"         # Simple and reliable
+    cache_enabled: true             # Enable caching for performance
+    cache_ttl: 5m                   # Standard cache duration
+    health_check: true             # Enable health checks
+    check_interval: 10s            # Standard check frequency
+    default_timeout: 30s            # Standard timeout
+
+# Logging - Standard logging
+logging:
+    level: "info"                   # Standard logging level
+    format: "json"                  # JSON format for structured logging
+    output: "stdout"
+
+# Monitoring - Full monitoring enabled
+monitoring:
+    enabled: true                   # Enable monitoring for observability
+    metrics_port: 9091              # Standard metrics port
+    health_port: 9092               # Standard health check port
+
+# Features for Personal Computers:
+# - Standard service discovery frequency
+# - Good balance of performance and resource usage
+# - Request caching enabled for better performance
+# - Health checks for reliability
+# - Structured logging for debugging
+# - Full monitoring capabilities
+# - Optional MCP and LLM tools (can be enabled as needed)
+# - Standard timeouts and limits

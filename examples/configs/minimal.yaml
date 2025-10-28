@@ -1,0 +1,62 @@
+# Minimal Configuration - Edge Devices
+# Designed for resource-constrained edge devices with limited CPU and memory
+
+# Service Discovery - Minimal configuration
+discovery:
+    enabled: true
+    service_type: "_lumen._tcp"
+    domain: "local"
+    scan_interval: 60s              # Less frequent scans to save CPU
+    node_timeout: 10m               # Longer timeout for unstable connections
+    max_nodes: 5                    # Limit discovered nodes to reduce memory usage
+
+# Connection - Conservative settings
+connection:
+    dial_timeout: 10s               # Longer timeout for unreliable networks
+    keep_alive: 60s                 # Longer keep-alive to reduce reconnections
+    max_message_size: 2097152       # 2MB limit to save memory
+    insecure: false
+    compression: true               # Save bandwidth
+
+# Server - Minimal services
+server:
+    rest:
+        enabled: true
+        host: "0.0.0.0"
+        port: 8080
+        cors: false                 # Disable CORS to save CPU
+        timeout: 60s                # Longer timeout for slow edge processing
+
+    mcp:
+        enabled: false               # Disable MCP to save resources
+
+    llmtools:
+        enabled: false               # Disable LLM tools to save resources
+
+# Load Balancer - Simple and efficient
+load_balancer:
+    strategy: "round_robin"         # Simple strategy, minimal CPU
+    cache_enabled: true             # Cache to reduce repeated requests
+    cache_ttl: 10m                  # Longer cache to save bandwidth
+    health_check: false             # Disable health checks to save CPU
+    default_timeout: 60s            # Longer default timeout for edge processing
+
+# Logging - Minimal output
+logging:
+    level: "warn"                   # Only log warnings and errors
+    format: "text"                  # Text format saves CPU compared to JSON
+    output: "stdout"
+
+# Monitoring - Disabled to save resources
+monitoring:
+    enabled: false                   # Disable monitoring to save CPU/memory
+
+# Optimizations for Edge Devices:
+# - Fewer service discovery scans
+# - Limited concurrent connections
+# - Longer timeouts for unstable networks
+# - Minimal logging output
+# - No health monitoring
+# - Request caching enabled
+# - Small message size limits
+# ```

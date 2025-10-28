@@ -1,0 +1,64 @@
+# Lightweight Configuration - Small Computers (Intel N100, NAS)
+# Designed for small form factor computers with moderate resources
+
+# Service Discovery - Balanced configuration
+discovery:
+    enabled: true
+    service_type: "_lumen._tcp"
+    domain: "local"
+    scan_interval: 45s              # Moderate scan frequency
+    node_timeout: 5m                 # Standard timeout
+    max_nodes: 10                    # Reasonable limit for small computers
+
+# Connection - Balanced settings
+connection:
+    dial_timeout: 5s                 # Standard timeout
+    keep_alive: 30s                 # Standard keep-alive
+    max_message_size: 4194304       # 4MB limit
+    insecure: false
+    compression: true               # Save bandwidth
+
+# Server - Essential services only
+server:
+    rest:
+        enabled: true
+        host: "0.0.0.0"
+        port: 8080
+        cors: true                  # Enable CORS for web interfaces
+        timeout: 30s                # Standard timeout
+
+    mcp:
+        enabled: false               # Disable MCP to save resources
+
+    llmtools:
+        enabled: false               # Disable LLM tools to save resources
+
+# Load Balancer - Efficient configuration
+load_balancer:
+    strategy: "round_robin"         # Simple and efficient
+    cache_enabled: true             # Enable caching for performance
+    cache_ttl: 5m                   # Standard cache duration
+    health_check: true             # Enable health checks
+    check_interval: 30s             # Moderate check frequency
+    default_timeout: 30s            # Standard timeout
+
+# Logging - Balanced verbosity
+logging:
+    level: "info"                   # Standard logging level
+    format: "json"                  # JSON format for structured logging
+    output: "stdout"
+
+# Monitoring - Basic monitoring enabled
+monitoring:
+    enabled: true                   # Enable monitoring for health checks
+    metrics_port: 9091              # Standard metrics port
+    health_port: 9092               # Standard health check port
+
+# Optimizations for Lightweight Devices:
+# - Moderate service discovery frequency
+# - Limited concurrent connections (10 nodes)
+# - Request caching enabled for performance
+# - Health checks enabled but not too frequent
+# - Structured logging with JSON format
+# - Basic monitoring for health tracking
+# - No MCP or LLM tools to save CPU/memory

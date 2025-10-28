@@ -1,0 +1,132 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build output directories
+dist/
+build/
+bin/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Coverage files
+coverage.out
+coverage.html
+
+# Profiling files
+*.prof
+*.pprof
+
+# Air live reload
+.air.toml
+
+# PID files
+*.pid
+
+# Local configuration
+config.local.yaml
+*.local.yaml
+
+# Release artifacts
+*.tar.gz
+*.zip
+
+# Test data
+test-data/
+testdata/
+
+# Debug files
+debug
+debug.test
+
+# Local development
+local/
+dev/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Keys and certificates
+*.key
+*.pem
+*.crt
+*.p12
+
+# Node modules (if any)
+node_modules/
+
+# Rust build (if any)
+target/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# Local Go modules cache
+/go/pkg/mod/cache/download/
+/go/pkg/mod/cache/vcs/
