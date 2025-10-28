@@ -127,13 +127,15 @@ jobs:
                   # Generate release notes from commit history since last tag
                   PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
                   if [ -n "$PREV_TAG" ]; then
-                    git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD > release_notes.txt
+                    NOTES=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
                   else
-                    git log --pretty=format:"- %s (%h)" > release_notes.txt
+                    NOTES=$(git log --pretty=format:"- %s (%h)")
                   fi
-                  echo "notes<<EOF" >> $GITHUB_OUTPUT
-                  cat release_notes.txt >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
+                  {
+                    echo 'notes<<EOF'
+                    echo "$NOTES"
+                    echo 'EOF'
+                  } >> "$GITHUB_OUTPUT"
 
             - name: Create Release
               uses: softprops/action-gh-release@v1
