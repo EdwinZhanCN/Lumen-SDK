@@ -4,7 +4,52 @@ A distributed AI service platform for managing and coordinating Lumen AI inferen
 
 ## Quick Start
 
-### Installation
+
+### Package Usage
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/EdwinZhanCN/Lumen-SDK/pkg/client"
+    "github.com/EdwinZhanCN/Lumen-SDK/pkg/config"
+)
+
+func main() {
+    // Create configuration
+    cfg := config.DefaultConfig()
+
+    // Create Lumen client
+    lumenClient, err := client.NewLumenClient(cfg, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    ctx := context.Background()
+    if err := lumenClient.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer lumenClient.Close()
+
+    // Text embedding inference
+    result, err := lumenClient.Embed(ctx, &client.EmbedRequest{
+        Text:    "Hello, world!",
+        ModelID: "text-embedding-ada-002",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Embedding dimensions: %d\n", len(result.Embedding))
+    fmt.Printf("First few values: %v\n", result.Embedding[:5])
+}
+```
+
+### Server Usage
 
 **Download Release Binaries**
 ```bash
