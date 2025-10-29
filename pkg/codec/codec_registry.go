@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"Lumen-SDK/pkg/utils"
+	"github.com/edwinzhancn/lumen-sdk/pkg/utils"
 )
 
 // Codec 编解码器接口

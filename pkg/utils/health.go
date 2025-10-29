@@ -7,8 +7,7 @@ import (
 	"sync"
 	"time"
 
-	pb "Lumen-SDK/proto"
-
+	pb "github.com/edwinzhancn/lumen-sdk/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"Lumen-SDK/pkg/config"
-	pb "Lumen-SDK/proto"
+	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 	"go.uber.org/zap"
 )

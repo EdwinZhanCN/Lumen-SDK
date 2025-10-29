@@ -15,8 +15,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/EdwinZhanCN/Lumen-SDK/pkg/client"
-    "github.com/EdwinZhanCN/Lumen-SDK/pkg/config"
+    "github.com/edwinzhancn/lumen-sdk/pkg/client"
+    "github.com/edwinzhancn/lumen-sdk/pkg/config"
 )
 
 func main() {
@@ -54,17 +54,17 @@ func main() {
 **Download Release Binaries**
 ```bash
 # Linux AMD64
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-linux-amd64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-linux-amd64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 
 # macOS
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-darwin-amd64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-darwin-amd64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 ```
 
 **Build from Source**
 ```bash
-git clone https://github.com/EdwinZhanCN/Lumen-SDK.git
+git clone https://github.com/edwinzhancn/lumen-sdk.git
 cd Lumen-SDK
 make build && sudo make install-local
 ```

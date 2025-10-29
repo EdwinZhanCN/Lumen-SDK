@@ -15,29 +15,29 @@
 #### Linux
 ```bash
 # AMD64
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-linux-amd64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-linux-amd64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 
 # ARM64
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-linux-arm64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-linux-arm64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 ```
 
 #### macOS
 ```bash
 # Intel (AMD64)
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-darwin-amd64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-darwin-amd64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 
 # Apple Silicon (ARM64)
-curl -L https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-darwin-arm64.tar.gz | tar xz
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-darwin-arm64.tar.gz | tar xz
 sudo mv lumenhubd lumenhub /usr/local/bin/
 ```
 
 #### Windows
 ```powershell
 # Download and extract
-Invoke-WebRequest -Uri "https://github.com/EdwinZhanCN/Lumen-SDK/releases/latest/download/lumenhub-latest-windows-amd64.zip" -OutFile "lumenhub.zip"
+Invoke-WebRequest -Uri "https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-windows-amd64.zip" -OutFile "lumenhub.zip"
 Expand-Archive -Path "lumenhub.zip" -DestinationPath "."
 # Move to PATH or add to PATH
 ```
@@ -60,7 +60,7 @@ sudo yum install golang
 #### Build Instructions
 ```bash
 # Clone repository
-git clone https://github.com/EdwinZhanCN/Lumen-SDK.git
+git clone https://github.com/edwinzhancn/lumen-sdk.git
 cd Lumen-SDK
 
 # Build binaries

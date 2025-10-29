@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"Lumen-SDK/cmd/lumenhub/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/internal"
 
 	"github.com/spf13/cobra"
 )

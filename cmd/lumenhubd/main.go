@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"syscall"
 
-	"Lumen-SDK/cmd/lumenhubd/internal"
-	"Lumen-SDK/cmd/lumenhubd/service"
-	"Lumen-SDK/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/service"
+	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 
 	"go.uber.org/zap"
 )

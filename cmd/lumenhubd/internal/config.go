@@ -3,7 +3,7 @@ package internal
 import (
 	"fmt"
 
-	"Lumen-SDK/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 )
 
 // LoadPresetConfig loads a built-in preset configuration

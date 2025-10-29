@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"Lumen-SDK/pkg/server/rest"
+	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 )
 
 // APIClient is the HTTP client for communicating with lumenhubd daemon

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"Lumen-SDK/pkg/codec"
+	"github.com/edwinzhancn/lumen-sdk/pkg/codec"
 )
 
 func main() {

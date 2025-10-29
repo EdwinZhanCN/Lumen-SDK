@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"time"
 
-	"Lumen-SDK/cmd/lumenhubd/internal"
-	"Lumen-SDK/pkg/client"
-	"Lumen-SDK/pkg/codec"
-	"Lumen-SDK/pkg/config"
-	"Lumen-SDK/pkg/server/rest"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/internal"
+	"github.com/edwinzhancn/lumen-sdk/pkg/client"
+	"github.com/edwinzhancn/lumen-sdk/pkg/codec"
+	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 
 	"go.uber.org/zap"
 )

@@ -4,11 +4,11 @@
 BINARY_NAME_LUMENHUBD = lumenhubd
 BINARY_NAME_LUMENHUB = lumenhub
 BUILD_DIR = dist
-VERSION ?= $(shell cat VERSION 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS_LUMENHUBD = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
-LDFLAGS_LUMENHUB = -ldflags="-X 'Lumen-SDK/cmd/lumenhub/cmd.Version=$(VERSION)' -X 'Lumen-SDK/cmd/lumenhub/cmd.Commit=$(COMMIT)' -X 'Lumen-SDK/cmd/lumenhub/cmd.BuildTime=$(BUILD_TIME)'"
+LDFLAGS_LUMENHUB = -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Version=$(VERSION)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Commit=$(COMMIT)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.BuildTime=$(BUILD_TIME)'"
 
 # Go flags
 GO_FLAGS = -v
@@ -161,6 +161,7 @@ set-version: ## Set new version (usage: make set-version VERSION=v1.2.3)
 	fi
 	@echo "$(VERSION)" > VERSION
 	@echo "Version updated to $(VERSION)"
+	@echo "Note: Consider creating a git tag: git tag $(VERSION) && git push origin $(VERSION)"
 
 # Quick start
 quick-start: ## Quick build and start

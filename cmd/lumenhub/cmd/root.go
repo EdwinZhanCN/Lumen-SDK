@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"Lumen-SDK/cmd/lumenhub/cmd/commands"
 	"fmt"
 	"os"
+
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd/commands"
 
 	"github.com/spf13/cobra"
 )

@@ -4,11 +4,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
-
-	"Lumen-SDK/pkg/config"
 )
 
 // 全局日志器

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"Lumen-SDK/pkg/client"
-	"Lumen-SDK/pkg/codec"
-	pb "Lumen-SDK/proto"
+	"github.com/edwinzhancn/lumen-sdk/pkg/client"
+	"github.com/edwinzhancn/lumen-sdk/pkg/codec"
+	pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"

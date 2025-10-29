@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	pb "Lumen-SDK/proto"
+	pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

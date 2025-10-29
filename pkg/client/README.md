@@ -98,8 +98,8 @@ type ServiceDiscovery interface {
 
 ```go
 import (
-    "Lumen-SDK/pkg/client"
-    "Lumen-SDK/pkg/config"
+    "github.com/edwinzhancn/lumen-sdk/pkg/client"
+    "github.com/edwinzhancn/lumen-sdk/pkg/config"
     "go.uber.org/zap"
 )
 
@@ -125,7 +125,7 @@ defer client.Close()
 #### 3. 执行推理请求
 
 ```go
-import pb "Lumen-SDK/proto"
+import pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 // 创建推理请求
 req := &pb.InferRequest{

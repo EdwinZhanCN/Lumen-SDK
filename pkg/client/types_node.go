@@ -1,10 +1,11 @@
 package client
 
 import (
-	pb "Lumen-SDK/proto"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	pb "github.com/edwinzhancn/lumen-sdk/proto"
 )
 
 type NodeInfo struct {
