@@ -42,6 +42,22 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 	return NewLumenClientWithBalancer(cfg, logger, RoundRobin)
 }
 
+// GetConfig 返回 LumenClient 当前持有的配置的副本（线程安全）。
+// 这样可以让 REST handler 通过 client 获取运行时配置视图，而不会修改 client 内部状态。
+func (c *LumenClient) GetConfig() *config.Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.config == nil {
+		// 返回默认配置的副本
+		d := config.DefaultConfig()
+		return d
+	}
+	// 返回一个拷贝，避免调用方能修改内部结构
+	copyCfg := *c.config
+	return &copyCfg
+}
+
 // NewLumenClientWithBalancer 创建指定负载均衡策略的Lumen客户端
 func NewLumenClientWithBalancer(cfg *config.Config, logger *zap.Logger, balancerType LoadBalancerType) (*LumenClient, error) {
 	if cfg == nil {

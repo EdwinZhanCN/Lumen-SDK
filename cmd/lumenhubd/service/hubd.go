@@ -90,7 +90,7 @@ func (s *HubdService) startServers(ctx context.Context) error {
 
 // startRESTServer starts the REST API server
 func (s *HubdService) startRESTServer() error {
-	handler := rest.NewHandler(s.client, codecRegistry, s.logger)
+	handler := rest.NewHandler(s.client, nil, s.logger)
 	router := rest.NewRouter(handler, s.logger)
 
 	router.SetupRoutes()

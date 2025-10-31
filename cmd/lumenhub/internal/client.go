@@ -104,22 +104,9 @@ func (c *APIClient) GetMetrics() (*rest.APIResponse, error) {
 	return c.Get("/api/v1/metrics")
 }
 
-// PostEmbedding performs text embedding
-func (c *APIClient) PostEmbedding(request *rest.EmbedRequest) (*rest.APIResponse, error) {
-	return c.Post("/api/v1/embed", request)
-}
-
-// PostDetection performs object detection
-func (c *APIClient) PostDetection(request *rest.DetectRequest) (*rest.APIResponse, error) {
-	return c.Post("/api/v1/detect", request)
-}
-
-// PostOCR performs OCR
-func (c *APIClient) PostOCR(request *rest.OCRRequest) (*rest.APIResponse, error) {
-	return c.Post("/api/v1/ocr", request)
-}
-
-// PostTTS performs text-to-speech
-func (c *APIClient) PostTTS(request *rest.TTSRequest) (*rest.APIResponse, error) {
-	return c.Post("/api/v1/tts", request)
+// PostInfer performs a generic inference request against the REST infer endpoint.
+// It accepts the unified RESTInferRequest DTO (see pkg/server/rest/dto.go) so callers
+// (CLI commands) can build a request for the single `/v1/infer` endpoint.
+func (c *APIClient) PostInfer(request *rest.RESTInferRequest) (*rest.APIResponse, error) {
+	return c.Post("/api/v1/infer", request)
 }

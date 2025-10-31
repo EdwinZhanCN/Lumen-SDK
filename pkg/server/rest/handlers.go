@@ -20,7 +20,6 @@ type Handlers interface {
 	GetNodes(c *fiber.Ctx) error
 	GetNodeCapabilities(c *fiber.Ctx) error
 	GetConfig(c *fiber.Ctx) error
-	UpdateConfig(c *fiber.Ctx) error
 	GetMetrics(c *fiber.Ctx) error
 }
 
@@ -187,22 +186,27 @@ func (h *handler) GetNodeCapabilities(c *fiber.Ctx) error {
 }
 
 func (h *handler) GetConfig(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error":   true,
-		"message": "GetConfig handler not implemented",
-	})
-}
+	// Return the client's current effective configuration (thread-safe copy).
+	// This avoids loading/parsing files again and ensures the view is consistent
+	// with the running client.
+	cfg := h.client.GetConfig()
+	if cfg == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   true,
+			"message": "configuration not available",
+		})
+	}
 
-func (h *handler) UpdateConfig(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error":   true,
-		"message": "UpdateConfig handler not implemented",
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    cfg,
 	})
 }
 
 func (h *handler) GetMetrics(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error":   true,
-		"message": "GetMetrics handler not implemented",
+	metrics := h.client.GetMetrics()
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    metrics,
 	})
 }

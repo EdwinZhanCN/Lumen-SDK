@@ -57,6 +57,37 @@ Notes on `payload`:
 - In JSON, the `payload` field should be a base64-encoded string. The server unmarshals into `[]byte`.
 - If payloads are large, server/client may automatically chunk them according to configuration (see `Chunk` config in the SDK config). Chunking is performed automatically in the client layer and the server merges the chunks.
 
+## Alternative upload modes (recommended for large/binary payloads)
+
+In addition to JSON+base64, the REST API supports two more efficient upload styles:
+
+1) multipart/form-data (recommended for file uploads)
+- Use a file field named `payload` and form fields for `service`, `task`, `metadata`, etc.
+
+cURL example:
+```bash
+curl -X POST http://localhost:8080/v1/infer \
+  -F "service=face_detection" \
+  -F "task=face_model_v1" \
+  -F "payload=@image.jpg" \
+  -F 'metadata={"detection_confidence_threshold":"0.5"}'
+```
+
+2) application/octet-stream (raw body)
+- Send raw binary in the request body and provide `service`/`task` via query params or headers.
+
+cURL example:
+```bash
+curl -X POST "http://localhost:8080/v1/infer?service=face_detection&task=face_model_v1" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @image.jpg
+```
+
+Notes:
+- multipart avoids base64 inflation and is browser-friendly.
+- octet-stream is minimal and efficient for programmatic clients.
+- The REST handler automatically detects `Content-Type` and parses appropriately. If you use JSON+base64, make sure your server and proxy body-size limits are large enough (see `BodyLimit` in Fiber config and `Connection.MaxMessageSize`).
+
 Face detection metadata keys
 - `detection_confidence_threshold` (float, e.g. `"0.5"`)
 - `nms_threshold` (float)

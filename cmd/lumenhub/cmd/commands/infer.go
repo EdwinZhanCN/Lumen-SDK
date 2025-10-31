@@ -1,334 +1,165 @@
 package commands
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
+	"strings"
 
 	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/internal"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
-
 	"github.com/spf13/cobra"
 )
 
-// InferCmd represents the inference command
+// InferCmd is a single, generic CLI entrypoint for making inference requests.
+//
+// Users build the request with flags:
+//
+//	--service        (required) : service name used for routing, e.g. "embedding", "face_detection_stream"
+//	--task                      : optional task/model id
+//	--payload-file              : path to a binary file to use as payload (recommended for images/audio)
+//	--payload-b64               : base64-encoded payload string (alternative to file)
+//	--metadata                  : JSON object string representing metadata map[string]string
+//	--correlation-id            : optional correlation id
+//	--output                    : json|yaml|table (default: table)
+//
+// The command will POST a single `rest.RESTInferRequest` to the daemon's `/v1/infer` endpoint.
 var InferCmd = &cobra.Command{
 	Use:   "infer",
-	Short: "AI inference commands",
-	Long:  `Perform AI inference using various models available on the Lumen Hub.`,
-}
-
-var embedCmd = &cobra.Command{
-	Use:   "embed [text]",
-	Short: "Generate text embeddings",
-	Long: `Generate embeddings for the given text using available embedding models.
-
-Example:
-  lumenhub infer embed "Hello world"
-  lumenhub infer embed "Hello world" --model-id text-embedding-ada-002`,
-	Args: cobra.ExactArgs(1),
-	RunE: runEmbed,
-}
-
-var detectCmd = &cobra.Command{
-	Use:   "detect",
-	Short: "Object detection in images",
-	Long: `Detect objects in images using computer vision models.
-
-Example:
-  lumenhub infer detect --image ./photo.jpg
-  lumenhub infer detect --image ./photo.jpg --model-id yolov5`,
-	RunE: runDetect,
-}
-
-var ocrCmd = &cobra.Command{
-	Use:   "ocr",
-	Short: "Optical Character Recognition",
-	Long: `Extract text from images using OCR models.
-
-Example:
-  lumenhub infer ocr --image ./document.jpg
-  lumenhub infer ocr --image ./document.jpg --language en`,
-	RunE: runOCR,
-}
-
-var ttsCmd = &cobra.Command{
-	Use:   "tts [text]",
-	Short: "Text-to-Speech synthesis",
-	Long: `Convert text to speech using TTS models.
-
-Example:
-  lumenhub infer tts "Hello world"
-  lumenhub infer tts "Hello world" --output hello.wav
-  lumenhub infer tts "Hello world" --voice-id en-US-Wavenet-D`,
-	Args: cobra.ExactArgs(1),
-	RunE: runTTS,
+	Short: "Run a generic inference request against a Lumen Hub daemon",
+	Long: `Generic inference command. Build a RESTInferRequest using flags and send it to the daemon.
+You may provide payload as a file (--payload-file) or as a base64 string (--payload-b64).
+Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_faces":"10"}').`,
+	Args: cobra.NoArgs,
+	RunE: runInfer,
 }
 
 func init() {
-	InferCmd.AddCommand(embedCmd)
-	InferCmd.AddCommand(detectCmd)
-	InferCmd.AddCommand(ocrCmd)
-	InferCmd.AddCommand(ttsCmd)
+	// Request flags
+	InferCmd.Flags().String("service", "", "Service name to route the request (required). E.g. embedding, face_detection_stream")
+	InferCmd.Flags().String("task", "", "Task/model id (optional)")
+	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")
+	InferCmd.Flags().String("payload-b64", "", "Base64-encoded payload string (alternative to file)")
+	InferCmd.Flags().String("metadata", "", "JSON string of metadata map (e.g. '{\"threshold\":\"0.5\"}')")
+	InferCmd.Flags().String("correlation-id", "", "Optional correlation id for tracing")
+	InferCmd.Flags().String("output", "table", "Output format: json|yaml|table")
 
-	// Embed flags
-	embedCmd.Flags().String("model-id", "", "Model ID for embedding")
-	embedCmd.Flags().String("language", "en", "Language code")
-	embedCmd.Flags().String("image", "", "Image file path (for multimodal embedding)")
-
-	// Detect flags
-	detectCmd.Flags().String("image", "", "Image file path (required)")
-	detectCmd.Flags().String("model-id", "", "Model ID for detection")
-	detectCmd.Flags().Float64("threshold", 0.5, "Confidence threshold")
-	detectCmd.Flags().Int("max-results", 100, "Maximum number of results")
-	detectCmd.Flags().StringSlice("classes", []string{}, "Filter by specific classes")
-
-	// OCR flags
-	ocrCmd.Flags().String("image", "", "Image file path (required)")
-	ocrCmd.Flags().String("model-id", "", "Model ID for OCR")
-	ocrCmd.Flags().String("language", "auto", "Language code")
-
-	// TTS flags
-	ttsCmd.Flags().String("model-id", "", "Model ID for TTS")
-	ttsCmd.Flags().String("voice-id", "", "Voice ID for synthesis")
-	ttsCmd.Flags().String("language", "en", "Language code")
-	ttsCmd.Flags().String("output", "", "Output file path (optional)")
-	ttsCmd.Flags().Float64("speed", 1.0, "Speech speed (0.1-2.0)")
-	ttsCmd.Flags().Float64("pitch", 1.0, "Speech pitch (0.1-2.0)")
-	ttsCmd.Flags().Float64("volume", 1.0, "Speech volume (0.1-2.0)")
-	ttsCmd.Flags().String("format", "wav", "Audio format (wav|mp3|ogg)")
-
-	// Mark required flags
-	detectCmd.MarkFlagRequired("image")
-	ocrCmd.MarkFlagRequired("image")
+	// Make service required (user must specify)
+	_ = InferCmd.MarkFlagRequired("service")
 }
 
-func runEmbed(cmd *cobra.Command, args []string) error {
-	text := args[0]
+// runInfer builds a rest.RESTInferRequest from flags and sends it to the daemon.
+func runInfer(cmd *cobra.Command, _ []string) error {
+	service, _ := cmd.Flags().GetString("service")
+	task, _ := cmd.Flags().GetString("task")
+	payloadFile, _ := cmd.Flags().GetString("payload-file")
+	payloadB64, _ := cmd.Flags().GetString("payload-b64")
+	metadataStr, _ := cmd.Flags().GetString("metadata")
+	corrID, _ := cmd.Flags().GetString("correlation-id")
+	outputFormat, _ := cmd.Flags().GetString("output")
 
-	modelID, _ := cmd.Flags().GetString("model-id")
-	language, _ := cmd.Flags().GetString("language")
-	image, _ := cmd.Flags().GetString("image")
+	var payload []byte
+	var err error
 
-	// Prepare request
-	request := &rest.EmbedRequest{
-		Text:     text,
-		ModelID:  modelID,
-		Language: language,
-	}
-
-	// Handle image file
-	if image != "" {
-		imageData, err := readImageAsBase64(image)
+	if payloadFile != "" {
+		payload, err = os.ReadFile(payloadFile)
 		if err != nil {
-			return fmt.Errorf("failed to read image: %w", err)
+			return fmt.Errorf("failed to read payload file: %w", err)
 		}
-		request.Image = imageData
-	}
-
-	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
-
-	outputFormat, _ := cmd.Flags().GetString("output")
-	resp, err := client.PostEmbedding(request)
-	if err != nil {
-		return fmt.Errorf("embedding request failed: %w", err)
-	}
-
-	return outputInferenceResult(resp, outputFormat)
-}
-
-func runDetect(cmd *cobra.Command, args []string) error {
-	image, _ := cmd.Flags().GetString("image")
-	modelID, _ := cmd.Flags().GetString("model-id")
-	threshold, _ := cmd.Flags().GetFloat64("threshold")
-	maxResults, _ := cmd.Flags().GetInt("max-results")
-	classes, _ := cmd.Flags().GetStringSlice("classes")
-
-	// Read image
-	imageData, err := readImageAsBase64(image)
-	if err != nil {
-		return fmt.Errorf("failed to read image: %w", err)
-	}
-
-	// Prepare request
-	request := &rest.DetectRequest{
-		Image:      imageData,
-		ModelID:    modelID,
-		Threshold:  float32(threshold),
-		MaxResults: maxResults,
-		Classes:    classes,
-	}
-
-	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
-
-	outputFormat, _ := cmd.Flags().GetString("output")
-	resp, err := client.PostDetection(request)
-	if err != nil {
-		return fmt.Errorf("detection request failed: %w", err)
-	}
-
-	return outputInferenceResult(resp, outputFormat)
-}
-
-func runOCR(cmd *cobra.Command, args []string) error {
-	image, _ := cmd.Flags().GetString("image")
-	modelID, _ := cmd.Flags().GetString("model-id")
-	language, _ := cmd.Flags().GetString("language")
-
-	// Read image
-	imageData, err := readImageAsBase64(image)
-	if err != nil {
-		return fmt.Errorf("failed to read image: %w", err)
-	}
-
-	// Prepare request
-	request := &rest.OCRRequest{
-		Image:    imageData,
-		ModelID:  modelID,
-		Language: []string{language},
-	}
-
-	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
-
-	outputFormat, _ := cmd.Flags().GetString("output")
-	resp, err := client.PostOCR(request)
-	if err != nil {
-		return fmt.Errorf("OCR request failed: %w", err)
-	}
-
-	return outputInferenceResult(resp, outputFormat)
-}
-
-func runTTS(cmd *cobra.Command, args []string) error {
-	text := args[0]
-
-	modelID, _ := cmd.Flags().GetString("model-id")
-	voiceID, _ := cmd.Flags().GetString("voice-id")
-	language, _ := cmd.Flags().GetString("language")
-	output, _ := cmd.Flags().GetString("output")
-	speed, _ := cmd.Flags().GetFloat64("speed")
-	pitch, _ := cmd.Flags().GetFloat64("pitch")
-	volume, _ := cmd.Flags().GetFloat64("volume")
-	format, _ := cmd.Flags().GetString("format")
-
-	// Prepare request
-	request := &rest.TTSRequest{
-		Text:     text,
-		ModelID:  modelID,
-		VoiceID:  voiceID,
-		Language: language,
-		Speed:    float32(speed),
-		Pitch:    float32(pitch),
-		Volume:   float32(volume),
-		Format:   format,
-	}
-
-	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
-
-	outputFormat, _ := cmd.Flags().GetString("output")
-	resp, err := client.PostTTS(request)
-	if err != nil {
-		return fmt.Errorf("TTS request failed: %w", err)
-	}
-
-	// Handle audio output
-	if outputFormat == "json" || outputFormat == "yaml" {
-		return outputInferenceResult(resp, outputFormat)
-	}
-
-	// For TTS, if not JSON/YAML, handle audio data
-	if resp.Data != nil {
-		if dataMap, ok := resp.Data.(map[string]interface{}); ok {
-			if audioDataInterface, ok := dataMap["audio_data"]; ok {
-				if audioData, ok := audioDataInterface.(string); ok && audioData != "" {
-					return saveAudioToFile(audioData, output, format)
-				}
-			}
+	} else if payloadB64 != "" {
+		// decode base64 input
+		payload, err = base64.StdEncoding.DecodeString(strings.TrimSpace(payloadB64))
+		if err != nil {
+			return fmt.Errorf("failed to decode payload-b64: %w", err)
 		}
+	} else {
+		// No payload provided; allow empty payload for services that don't require it.
+		payload = nil
 	}
 
-	return outputInferenceResult(resp, "table")
-}
-
-func readImageAsBase64(imagePath string) (string, error) {
-	// Check if it's a URL or file path
-	if isURL(imagePath) {
-		// For URLs, just return the URL - the server will handle downloading
-		return imagePath, nil
+	// parse metadata JSON string into map[string]string
+	var metadata map[string]string
+	if metadataStr != "" {
+		if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
+			return fmt.Errorf("invalid metadata JSON: %w", err)
+		}
+	} else {
+		metadata = map[string]string{}
 	}
 
-	// Read file
-	data, err := ioutil.ReadFile(imagePath)
+	req := &rest.RESTInferRequest{
+		Service:       service,
+		Task:          task,
+		Payload:       payload,
+		CorrelationID: corrID,
+		Metadata:      metadata,
+	}
+
+	// Create API client (uses global flags for host/port if set on root command)
+	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
+
+	resp, err := client.PostInfer(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to read image file: %w", err)
+		return fmt.Errorf("inference request failed: %w", err)
 	}
 
-	// Convert to base64 (simplified - in production you'd use proper encoding)
-	return string(data), nil
+	return outputInferenceResult(resp, outputFormat)
 }
 
-func saveAudioToFile(audioData, outputPath, format string) error {
-	if outputPath == "" {
-		outputPath = "output." + format
-	}
-
-	// Decode base64 and save (simplified)
-	data := []byte(audioData) // In production, you'd decode base64 here
-
-	err := ioutil.WriteFile(outputPath, data, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to save audio file: %w", err)
-	}
-
-	fmt.Printf("Audio saved to: %s\n", outputPath)
-	return nil
-}
-
+// outputInferenceResult renders the APIResponse in the selected format.
+// Simple implementations: JSON, YAML-like (manual), or a human table.
 func outputInferenceResult(resp *rest.APIResponse, outputFormat string) error {
 	switch outputFormat {
 	case "json":
-		if data, err := json.MarshalIndent(resp.Data, "", "  "); err == nil {
-			fmt.Println(string(data))
+		b, err := json.MarshalIndent(resp.Data, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal response data to json: %w", err)
 		}
+		fmt.Println(string(b))
+		return nil
 	case "yaml":
-		fmt.Printf("# Inference Result\n")
+		// Minimal YAML-ish printing
 		fmt.Printf("success: %t\n", resp.Success)
-		fmt.Printf("timestamp: %s\n", resp.Timestamp)
+		if resp.Timestamp != "" {
+			fmt.Printf("timestamp: %s\n", resp.Timestamp)
+		}
 		if resp.RequestID != "" {
 			fmt.Printf("request_id: %s\n", resp.RequestID)
 		}
-		// Simple YAML output - in production you'd use a proper YAML library
 		if resp.Data != nil {
 			fmt.Printf("data:\n")
-			if dataMap, ok := resp.Data.(map[string]interface{}); ok {
-				for key, value := range dataMap {
-					fmt.Printf("  %s: %v\n", key, value)
+			if m, ok := resp.Data.(map[string]interface{}); ok {
+				for k, v := range m {
+					fmt.Printf("  %s: %v\n", k, v)
 				}
+			} else {
+				// fallback to JSON blob
+				b, _ := json.MarshalIndent(resp.Data, "  ", "  ")
+				fmt.Printf("  raw: %s\n", string(b))
 			}
 		}
+		return nil
 	default:
-		// Table format
-		fmt.Printf("Inference Result\n")
-		fmt.Printf("================\n")
+		// Table/human friendly
 		fmt.Printf("Success: %t\n", resp.Success)
-		fmt.Printf("Timestamp: %s\n", resp.Timestamp)
+		if resp.Timestamp != "" {
+			fmt.Printf("Timestamp: %s\n", resp.Timestamp)
+		}
 		if resp.RequestID != "" {
 			fmt.Printf("Request ID: %s\n", resp.RequestID)
 		}
-
 		if resp.Data != nil {
 			fmt.Printf("\nData:\n")
-			if dataMap, ok := resp.Data.(map[string]interface{}); ok {
-				for key, value := range dataMap {
-					fmt.Printf("  %s: %v\n", key, value)
+			if m, ok := resp.Data.(map[string]interface{}); ok {
+				for k, v := range m {
+					fmt.Printf("  %s: %v\n", k, v)
 				}
+			} else {
+				b, _ := json.MarshalIndent(resp.Data, "", "  ")
+				fmt.Println(string(b))
 			}
 		}
+		return nil
 	}
-
-	return nil
-}
-
-func isURL(s string) bool {
-	return len(s) > 7 && (s[:7] == "http://" || s[:8] == "https://")
 }
