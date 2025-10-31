@@ -16,6 +16,13 @@ type Config struct {
 	LoadBalancer LoadBalancerConfig `yaml:"load_balancer" json:"load_balancer"`
 	Logging      LoggingConfig      `yaml:"logging" json:"logging"`
 	Monitoring   MonitoringConfig   `yaml:"monitoring" json:"monitoring"`
+	Chunk        ChunkConfig        `yaml:"chunk" json:"chunk"`
+}
+
+type ChunkConfig struct {
+	EnableAuto    bool `yaml:"enable_auto" json:"enable_auto"`         // 是否自动按阈值启用 chunking
+	Threshold     int  `yaml:"threshold" json:"threshold"`             // 超过多少字节启用 chunking（例如 1<<20 = 1MiB）
+	MaxChunkBytes int  `yaml:"max_chunk_bytes" json:"max_chunk_bytes"` // 每个 chunk 的最大字节数（例如 256KB/512KB）
 }
 
 // DiscoveryConfig 服务发现配置

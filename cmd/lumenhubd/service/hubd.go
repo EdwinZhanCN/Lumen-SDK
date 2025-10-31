@@ -10,7 +10,6 @@ import (
 
 	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/internal"
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
-	"github.com/edwinzhancn/lumen-sdk/pkg/codec"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 
@@ -91,7 +90,6 @@ func (s *HubdService) startServers(ctx context.Context) error {
 
 // startRESTServer starts the REST API server
 func (s *HubdService) startRESTServer() error {
-	codecRegistry := codec.GetDefaultRegistry()
 	handler := rest.NewHandler(s.client, codecRegistry, s.logger)
 	router := rest.NewRouter(handler, s.logger)
 

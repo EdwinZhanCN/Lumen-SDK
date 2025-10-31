@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.24.5
 
 require (
+	github.com/gabriel-vasile/mimetype v1.4.10
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/sethvargo/go-retry v0.3.0

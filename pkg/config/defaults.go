@@ -56,5 +56,10 @@ func DefaultConfig() *Config {
 			MetricsPort: 9090,
 			HealthPort:  8081,
 		},
+		Chunk: ChunkConfig{
+			EnableAuto:    true,
+			Threshold:     1 << 20,    // 1 MiB: payloads larger than this will be chunked
+			MaxChunkBytes: 256 * 1024, // 256 KiB per chunk
+		},
 	}
 }

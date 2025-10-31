@@ -131,6 +131,33 @@ func (c *Config) ValidateWithErrors() []error {
 		}
 	}
 
+	// 验证 Chunk 配置
+	// - 当启用自动 chunk 时，Threshold 应为非负数，MaxChunkBytes 应为正数并且不应过大
+	if c.Chunk.EnableAuto {
+		if c.Chunk.Threshold < 0 {
+			errors = append(errors, NewConfigError("chunk.threshold", "must be non-negative"))
+		}
+		if c.Chunk.MaxChunkBytes <= 0 {
+			errors = append(errors, NewConfigError("chunk.max_chunk_bytes", "must be positive when chunking is enabled"))
+		}
+		// 防止用户设置一个不合理的单 chunk 大小（例如超过 100MB），以避免内存问题
+		if c.Chunk.MaxChunkBytes > 100<<20 {
+			errors = append(errors, NewConfigError("chunk.max_chunk_bytes", "unreasonably large; must be <= 100MiB"))
+		}
+		// 建议：MaxChunkBytes 不应大于 Threshold（否则 chunk 无意义），我们将其作为警告级别的错误
+		if c.Chunk.Threshold > 0 && c.Chunk.MaxChunkBytes > c.Chunk.Threshold {
+			errors = append(errors, NewConfigError("chunk.max_chunk_bytes", "should not be greater than chunk.threshold"))
+		}
+	} else {
+		// 如果未启用自动 chunk，仍然校验提供的数值是否合理（以便用户后续开启时不会出错）
+		if c.Chunk.Threshold < 0 {
+			errors = append(errors, NewConfigError("chunk.threshold", "must be non-negative"))
+		}
+		if c.Chunk.MaxChunkBytes < 0 {
+			errors = append(errors, NewConfigError("chunk.max_chunk_bytes", "must be non-negative"))
+		}
+	}
+
 	return errors
 }
 

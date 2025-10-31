@@ -142,98 +142,321 @@ func (c *LumenClient) Stop() error {
 	return nil
 }
 
-// Infer 执行非流式推理请求
-// 对于简单的单次推理请求，此方法会自动处理双向流的复杂性
-// 发送一个请求并等待一个响应，然后关闭流
-func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
-	if req == nil {
-		return nil, fmt.Errorf("request cannot be nil")
-	}
-
+// inferSingle 是原来单请求路径的实现（可复用）
+func (c *LumenClient) inferSingle(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
 	startTime := time.Now()
 	c.incrementTotalRequests()
 
-	// 使用负载均衡器选择节点
 	node, err := c.balancer.SelectNode(ctx, req.Task)
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}
 
-	// 增加节点连接计数
 	node.IncrementConnections()
 	defer node.DecrementConnections()
 
-	// 获取连接
 	conn, err := c.pool.GetConnection(node.ID)
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
 	}
 
-	// 执行推理
 	resp, err := conn.Infer(ctx, req)
 	if err != nil {
 		c.incrementFailedRequests()
+		c.pool.ReturnConnection(node.ID, conn)
 		return nil, fmt.Errorf("inference failed: %w", err)
 	}
 
-	// 返回连接
+	// 归还连接并更新统计
 	c.pool.ReturnConnection(node.ID, conn)
-
-	// 更新统计
 	c.incrementSuccessfulRequests()
 	c.updateLatency(time.Since(startTime))
-
 	return resp, nil
 }
 
-// InferStream 执行流式推理请求
-// 返回一个通道，可以接收多个响应（部分结果和最终结果）
-// 适用于需要增量结果的场景，如生成式AI、流式音频处理等
-func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
+// inferStreamSingle 是原来单-chunk 流式路径（原先的 InferStream 实现）
+// 返回 channel，并负责 connection 的 lifecycle
+func (c *LumenClient) inferStreamSingle(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
 
-	// 选择节点
 	node, err := c.balancer.SelectNode(ctx, req.Task)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}
 
-	// 获取连接
 	conn, err := c.pool.GetConnection(node.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
 	}
 
-	// 执行流式推理
-	respChan, err := c.InferStream(ctx, req)
+	// 调用底层连接的流式方法（已有实现）
+	respChan, err := conn.InferStream(ctx, req)
 	if err != nil {
-		c.incrementFailedRequests()
 		c.pool.ReturnConnection(node.ID, conn)
 		return nil, fmt.Errorf("stream inference failed: %w", err)
 	}
 
-	// 创建包装通道，用于连接管理
-	wrappedChan := make(chan *pb.InferResponse, 100)
-
-	// 启动流处理和连接管理
+	// 包装通道以便在 goroutine 结束时归还连接
+	wrapped := make(chan *pb.InferResponse, 100)
 	go func() {
-		defer close(wrappedChan)
+		defer close(wrapped)
 		defer c.pool.ReturnConnection(node.ID, conn)
 
-		// 转发响应
 		for resp := range respChan {
-			wrappedChan <- resp
+			wrapped <- resp
 			if resp.IsFinal {
 				break
 			}
 		}
 	}()
 
-	return wrappedChan, nil
+	return wrapped, nil
+}
+
+// Infer 执行非流式推理请求（自动 chunking）
+// 对于简单的单次推理请求，此方法会自动处理双向流的复杂性
+// 发送一个请求并等待一个响应，然后关闭流（如果需要 chunking 会内部使用 bidi stream）
+func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+
+	// 决定使用的 chunk 配置（从 c.config 获取）
+	chCfg := c.config.Chunk
+	chunks, err := ChunkPayload(req.Payload, chCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果只有一个 chunk，调用 helper（与以前兼容）
+	if len(chunks) == 1 {
+		return c.inferSingle(ctx, req)
+	}
+
+	// 多个 chunk：使用同一节点的一个 bidi stream 发送所有 chunk，然后等待最终响应
+	startTime := time.Now()
+	c.incrementTotalRequests()
+
+	node, err := c.balancer.SelectNode(ctx, req.Task)
+	if err != nil {
+		c.incrementFailedRequests()
+		return nil, fmt.Errorf("failed to select node: %w", err)
+	}
+
+	node.IncrementConnections()
+	defer node.DecrementConnections()
+
+	conn, err := c.pool.GetConnection(node.ID)
+	if err != nil {
+		c.incrementFailedRequests()
+		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
+	}
+
+	stream, err := conn.Client.Infer(ctx)
+	if err != nil {
+		c.incrementFailedRequests()
+		c.pool.ReturnConnection(node.ID, conn)
+		return nil, fmt.Errorf("failed to create inference stream: %w", err)
+	}
+
+	// using cancelable context to coordinate sender/receiver
+	sendCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sendErrCh := make(chan error, 1)
+
+	// sender goroutine
+	go func() {
+		defer func() {
+			_ = stream.CloseSend()
+		}()
+		var offset uint64
+		total := uint64(len(chunks))
+		for i, chunk := range chunks {
+			select {
+			case <-sendCtx.Done():
+				sendErrCh <- sendCtx.Err()
+				return
+			default:
+			}
+
+			sendReq := &pb.InferRequest{
+				CorrelationId: req.CorrelationId,
+				Task:          req.Task,
+				Payload:       chunk,
+				PayloadMime:   req.PayloadMime,
+				Seq:           uint64(i),
+				Total:         total,
+				Offset:        offset,
+				Meta:          req.Meta,
+			}
+			if err := stream.Send(sendReq); err != nil {
+				conn.mu.Lock()
+				conn.ErrorCount++
+				conn.mu.Unlock()
+				// notify receiver about send failure
+				sendErrCh <- err
+				cancel()
+				return
+			}
+			offset += uint64(len(chunk))
+		}
+		// indicate send completed successfully
+		sendErrCh <- nil
+	}()
+
+	// receiver: 等待最终响应或发送失败
+	var finalResp *pb.InferResponse
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			// check send error
+			select {
+			case se := <-sendErrCh:
+				if se != nil {
+					c.incrementFailedRequests()
+					c.pool.ReturnConnection(node.ID, conn)
+					return nil, fmt.Errorf("send failed: %w", se)
+				}
+			default:
+				// no send error reported yet
+			}
+
+			c.incrementFailedRequests()
+			c.pool.ReturnConnection(node.ID, conn)
+			return nil, fmt.Errorf("failed to receive response: %w", err)
+		}
+
+		if resp.IsFinal {
+			finalResp = resp
+			break
+		}
+		// ignore intermediate partials for synchronous Infer
+	}
+
+	// 成功
+	conn.mu.Lock()
+	conn.UsageCount++
+	conn.LastUsed = time.Now()
+	conn.mu.Unlock()
+	c.incrementSuccessfulRequests()
+	c.updateLatency(time.Since(startTime))
+	c.pool.ReturnConnection(node.ID, conn)
+	return finalResp, nil
+}
+
+// InferStream 执行流式推理请求（自动 chunking）
+// 返回一个通道，可以接收多个响应（部分结果和最终结果）
+func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+
+	chCfg := c.config.Chunk
+	chunks, err := ChunkPayload(req.Payload, chCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// 单 chunk：使用原来的单-stream helper
+	if len(chunks) == 1 {
+		return c.inferStreamSingle(ctx, req)
+	}
+
+	// 多 chunk：在同一连接/stream 上发送所有 chunk，并将接收到的响应转发到返回通道
+	node, err := c.balancer.SelectNode(ctx, req.Task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select node: %w", err)
+	}
+
+	conn, err := c.pool.GetConnection(node.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
+	}
+
+	stream, err := conn.Client.Infer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create inference stream: %w", err)
+	}
+
+	out := make(chan *pb.InferResponse, 100)
+
+	sendCtx, cancel := context.WithCancel(ctx)
+
+	// sender goroutine
+	sendErrCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			_ = stream.CloseSend()
+		}()
+		var offset uint64
+		total := uint64(len(chunks))
+		for i, chunk := range chunks {
+			select {
+			case <-sendCtx.Done():
+				sendErrCh <- sendCtx.Err()
+				return
+			default:
+			}
+
+			sendReq := &pb.InferRequest{
+				CorrelationId: req.CorrelationId,
+				Task:          req.Task,
+				Payload:       chunk,
+				PayloadMime:   req.PayloadMime,
+				Seq:           uint64(i),
+				Total:         total,
+				Offset:        offset,
+				Meta:          req.Meta,
+			}
+			if err := stream.Send(sendReq); err != nil {
+				conn.mu.Lock()
+				conn.ErrorCount++
+				conn.mu.Unlock()
+				sendErrCh <- err
+				cancel()
+				return
+			}
+			offset += uint64(len(chunk))
+		}
+		sendErrCh <- nil
+	}()
+
+	// receiver goroutine
+	go func() {
+		defer func() {
+			cancel()
+			close(out)
+			c.pool.ReturnConnection(node.ID, conn)
+		}()
+
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				// if send reported an error, we may want to propagate it as a final Error response;
+				// here we simply stop the stream.
+				return
+			}
+			out <- resp
+			if resp.IsFinal {
+				return
+			}
+		}
+	}()
+
+	// monitor send errors in background to cancel if necessary
+	go func() {
+		if se := <-sendErrCh; se != nil {
+			// send failed; cancel and ensure out eventually closes
+			cancel()
+		}
+	}()
+
+	return out, nil
 }
 
 // GetBalancerStats 获取负载均衡器统计信息

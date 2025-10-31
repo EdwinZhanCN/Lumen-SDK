@@ -81,6 +81,11 @@ func minimalPreset() *Config {
 			MetricsPort: 9090,
 			HealthPort:  8081,
 		},
+		Chunk: ChunkConfig{
+			EnableAuto:    true,
+			Threshold:     256 * 1024, // 256 KiB threshold for edge devices
+			MaxChunkBytes: 64 * 1024,  // 64 KiB per chunk
+		},
 	}
 }
 
@@ -134,6 +139,11 @@ func basicPreset() *Config {
 			Enabled:     true, // Enable monitoring for observability
 			MetricsPort: 9091, // Standard metrics port
 			HealthPort:  9092, // Standard health check port
+		},
+		Chunk: ChunkConfig{
+			EnableAuto:    true,
+			Threshold:     1 << 20,    // 1 MiB threshold
+			MaxChunkBytes: 256 * 1024, // 256 KiB per chunk
 		},
 	}
 }
@@ -189,6 +199,11 @@ func lightweightPreset() *Config {
 			MetricsPort: 9091, // Standard metrics port
 			HealthPort:  9092, // Standard health check port
 		},
+		Chunk: ChunkConfig{
+			EnableAuto:    true,
+			Threshold:     512 * 1024, // 512 KiB threshold
+			MaxChunkBytes: 128 * 1024, // 128 KiB per chunk
+		},
 	}
 }
 
@@ -242,6 +257,11 @@ func bravePreset() *Config {
 			Enabled:     true, // Enable comprehensive monitoring
 			MetricsPort: 9091, // Standard metrics port
 			HealthPort:  9092, // Standard health check port
+		},
+		Chunk: ChunkConfig{
+			EnableAuto:    true,
+			Threshold:     4 << 20, // 4 MiB threshold for high-performance servers
+			MaxChunkBytes: 1 << 20, // 1 MiB per chunk
 		},
 	}
 }

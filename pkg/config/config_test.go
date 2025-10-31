@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// Existing basic tests retained and extended with chunk-related tests.
+
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
@@ -23,6 +25,45 @@ func TestDefaultConfig(t *testing.T) {
 
 	if config.Logging.Level != "info" {
 		t.Errorf("Expected log level 'info', got '%s'", config.Logging.Level)
+	}
+}
+
+// New tests for chunk config defaults and presets
+
+func TestChunkDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.Chunk.EnableAuto {
+		t.Error("Default chunk EnableAuto should be true")
+	}
+	if cfg.Chunk.Threshold != 1<<20 {
+		t.Fatalf("Expected default chunk Threshold %d, got %d", 1<<20, cfg.Chunk.Threshold)
+	}
+	if cfg.Chunk.MaxChunkBytes != 256*1024 {
+		t.Fatalf("Expected default MaxChunkBytes %d, got %d", 256*1024, cfg.Chunk.MaxChunkBytes)
+	}
+}
+
+func TestPresetChunkConfigs(t *testing.T) {
+	edgeCfg, err := PresetConfig("edge")
+	if err != nil {
+		t.Fatalf("PresetConfig(edge) error = %v", err)
+	}
+	if !edgeCfg.Chunk.EnableAuto {
+		t.Error("Edge preset should have chunking enabled")
+	}
+	if edgeCfg.Chunk.Threshold != 512*1024 {
+		t.Errorf("Edge preset expected Threshold %d, got %d", 512*1024, edgeCfg.Chunk.Threshold)
+	}
+
+	serverCfg, err := PresetConfig("server")
+	if err != nil {
+		t.Fatalf("PresetConfig(server) error = %v", err)
+	}
+	if !serverCfg.Chunk.EnableAuto {
+		t.Error("Server preset should have chunking enabled")
+	}
+	if serverCfg.Chunk.MaxChunkBytes != 512*1024 {
+		t.Errorf("Server preset expected MaxChunkBytes %d, got %d", 512*1024, serverCfg.Chunk.MaxChunkBytes)
 	}
 }
 
@@ -206,5 +247,56 @@ func TestValidateWithErrors(t *testing.T) {
 		if !errorFields[field] {
 			t.Errorf("Expected error for field '%s', but not found", field)
 		}
+	}
+}
+
+// New tests to assert chunk-related validation behavior
+func TestChunkValidationErrors(t *testing.T) {
+	// Case 1: negative threshold
+	cfg1 := DefaultConfig()
+	cfg1.Chunk.Threshold = -1
+	errs := cfg1.ValidateWithErrors()
+	found := false
+	for _, e := range errs {
+		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.threshold" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected validation error for chunk.threshold negative value")
+	}
+
+	// Case 2: MaxChunkBytes unreasonably large
+	cfg2 := DefaultConfig()
+	cfg2.Chunk.EnableAuto = true
+	cfg2.Connection.MaxMessageSize = 0   // allow larger than connection for this test path
+	cfg2.Chunk.MaxChunkBytes = 200 << 20 // 200 MiB -> should trigger too large error
+	errs2 := cfg2.ValidateWithErrors()
+	foundLarge := false
+	for _, e := range errs2 {
+		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
+			foundLarge = true
+			break
+		}
+	}
+	if !foundLarge {
+		t.Error("Expected validation error for chunk.max_chunk_bytes being unreasonably large")
+	}
+
+	// Case 3: MaxChunkBytes greater than Threshold
+	cfg3 := DefaultConfig()
+	cfg3.Chunk.Threshold = 100 * 1024     // 100 KiB
+	cfg3.Chunk.MaxChunkBytes = 200 * 1024 // 200 KiB > threshold
+	errs3 := cfg3.ValidateWithErrors()
+	foundRelation := false
+	for _, e := range errs3 {
+		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
+			foundRelation = true
+			break
+		}
+	}
+	if !foundRelation {
+		t.Error("Expected validation error when max_chunk_bytes > threshold")
 	}
 }

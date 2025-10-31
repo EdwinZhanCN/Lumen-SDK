@@ -1,114 +1,153 @@
 package rest
 
 import (
-	"time"
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
-	"go.uber.org/zap"
+	"github.com/edwinzhancn/lumen-sdk/pkg/client"
+	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest/service"
+	"github.com/edwinzhancn/lumen-sdk/pkg/types"
 )
 
-// Router 路由器
-type Router struct {
-	handler *Handler
-	app     *fiber.App
-	logger  *zap.Logger
+// ServiceRouter handles routing between different ML services
+type ServiceRouter struct {
+	detectionService      service.DetectionService
+	classificationService service.ClassificationService
+	embeddingService      service.EmbeddingService
+
+	// dispatch map: service string -> handler
+	handlers map[string]func(ctx context.Context, req RESTInferRequest) (interface{}, error)
 }
 
-// NewRouter 创建新的路由器
-func NewRouter(handler *Handler, logger *zap.Logger) *Router {
-	app := fiber.New(fiber.Config{
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			code := fiber.StatusInternalServerError
-			if e, ok := err.(*fiber.Error); ok {
-				code = e.Code
-			}
-
-			errorResp := APIResponse{
-				Success: false,
-				Error: &APIError{
-					Code:    "internal_error",
-					Message: err.Error(),
-				},
-				RequestID: c.GetRespHeader("X-Request-ID"),
-				Timestamp: time.Now(),
-			}
-
-			return c.Status(code).JSON(errorResp)
-		},
-	})
-
-	// 添加中间件
-	app.Use(recover.New())
-	app.Use(requestid.New())
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Request-ID",
-	}))
-
-	return &Router{
-		handler: handler,
-		app:     app,
-		logger:  logger,
+// NewServiceRouter creates a new ServiceRouter instance
+func NewServiceRouter(client *client.LumenClient) *ServiceRouter {
+	r := &ServiceRouter{
+		detectionService:      service.NewDetectionService(client),
+		classificationService: service.NewClassificationService(client),
+		embeddingService:      service.NewEmbeddingService(client),
+		handlers:              make(map[string]func(ctx context.Context, req RESTInferRequest) (interface{}, error)),
 	}
+
+	// build handlers - closures capture service instances
+	r.handlers[ServiceEmbedding] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		newReq, err := types.NewEmbeddingRequest(req.Payload)
+		if err != nil {
+			return nil, err
+		}
+		return r.embeddingService.GetEmbedding(ctx, newReq, req.Task)
+	}
+
+	// Stream variant for embedding
+	r.handlers[ServiceEmbeddingStream] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		newReq, err := types.NewEmbeddingRequest(req.Payload)
+		if err != nil {
+			return nil, err
+		}
+		return r.embeddingService.GetEmbeddingStream(ctx, newReq, req.Task)
+	}
+
+	r.handlers[ServiceClassification] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		newReq, err := types.NewClassificationRequest(req.Payload)
+		if err != nil {
+			return nil, err
+		}
+		return r.classificationService.GetClassification(ctx, newReq, req.Task)
+	}
+
+	// Stream variant for classification
+	r.handlers[ServiceClassificationStream] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		newReq, err := types.NewClassificationRequest(req.Payload)
+		if err != nil {
+			return nil, err
+		}
+		return r.classificationService.GetClassificationStream(ctx, newReq, req.Task)
+	}
+
+	// face detection and face recognition map to different methods
+	r.handlers[ServiceFaceDetection] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		opts := buildFaceRecognitionOptions(req.Metadata)
+		newReq, err := types.NewFaceRecognitionRequest(req.Payload, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return r.detectionService.GetFaceDetection(ctx, newReq, req.Task)
+	}
+
+	// Stream variant for face detection
+	r.handlers[ServiceFaceDetectionStream] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		opts := buildFaceRecognitionOptions(req.Metadata)
+		newReq, err := types.NewFaceRecognitionRequest(req.Payload, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return r.detectionService.GetFaceDetectionStream(ctx, newReq, req.Task)
+	}
+
+	r.handlers[ServiceFaceRecognition] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		opts := buildFaceRecognitionOptions(req.Metadata)
+		newReq, err := types.NewFaceRecognitionRequest(req.Payload, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return r.detectionService.GetFaceRecognition(ctx, newReq, req.Task)
+	}
+
+	// Stream variant for face recognition
+	r.handlers[ServiceFaceRecognitionStream] = func(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+		opts := buildFaceRecognitionOptions(req.Metadata)
+		newReq, err := types.NewFaceRecognitionRequest(req.Payload, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return r.detectionService.GetFaceRecognitionStream(ctx, newReq, req.Task)
+	}
+
+	return r
 }
 
-// SetupRoutes 设置路由
-func (r *Router) SetupRoutes() {
-	// API版本1
-	v1 := r.app.Group("/api/v1")
-
-	// 推理API
-	v1.Post("/embed", r.handler.HandleEmbed)
-	v1.Post("/detect", r.handler.HandleDetect)
-	v1.Post("/ocr", r.handler.HandleOCR)
-	v1.Post("/tts", r.handler.HandleTTS)
-
-	// 管理API
-	v1.Get("/nodes", r.handler.HandleNodes)
-	v1.Get("/health", r.handler.HandleHealth)
-	v1.Get("/metrics", r.handler.HandleMetrics)
-
-	// 根路径
-	r.app.Get("/", r.handleRoot)
-	r.app.Get("/health", r.handler.HandleHealth)
-
-	r.logger.Info("routes configured successfully")
+// RouteRequest routes the request using the dispatch map
+func (r *ServiceRouter) RouteRequest(ctx context.Context, req RESTInferRequest) (interface{}, error) {
+	// normalize key (可选)
+	key := strings.ToLower(strings.TrimSpace(req.Service))
+	if handler, ok := r.handlers[key]; ok {
+		return handler(ctx, req)
+	}
+	return nil, fmt.Errorf("unsupported service: %s", req.Service)
 }
 
-// handleRoot 处理根路径请求
-func (r *Router) handleRoot(c *fiber.Ctx) error {
-	return c.JSON(map[string]interface{}{
-		"service":     "Lumen Hub",
-		"version":     "1.0.0",
-		"description": "Lumen AI Services Hub",
-		"endpoints": map[string]string{
-			"api_docs": "/api/v1",
-			"mcp":      "/mcp/v1",
-			"health":   "/health",
-		},
-	})
-}
+// buildFaceRecognitionOptions 与之前示例类似
+func buildFaceRecognitionOptions(metadata map[string]string) []types.FaceRecognitionOption {
+	var opts []types.FaceRecognitionOption
+	if metadata == nil {
+		return opts
+	}
 
-// GetApp 获取Fiber应用实例
-func (r *Router) GetApp() *fiber.App {
-	return r.app
-}
-
-// Start 启动服务器
-func (r *Router) Start(addr string) error {
-	r.logger.Info("starting REST API server",
-		zap.String("address", addr))
-	return r.app.Listen(addr)
-}
-
-// StartTLS 启动HTTPS服务器
-func (r *Router) StartTLS(addr, certFile, keyFile string) error {
-	r.logger.Info("starting REST API server with TLS",
-		zap.String("address", addr),
-		zap.String("cert_file", certFile))
-	return r.app.ListenTLS(addr, certFile, keyFile)
+	if v, ok := metadata["detection_confidence_threshold"]; ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			opts = append(opts, types.WithDetectionConfidenceThreshold(float32(f)))
+		}
+	}
+	if v, ok := metadata["nms_threshold"]; ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			opts = append(opts, types.WithNmsThreshold(float32(f)))
+		}
+	}
+	if v, ok := metadata["face_size_min"]; ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			opts = append(opts, types.WithFaceSizeMin(float32(f)))
+		}
+	}
+	if v, ok := metadata["face_size_max"]; ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			opts = append(opts, types.WithFaceSizeMax(float32(f)))
+		}
+	}
+	if v, ok := metadata["max_faces"]; ok && v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			opts = append(opts, types.WithMaxFaces(i))
+		}
+	}
+	return opts
 }
