@@ -77,7 +77,7 @@ make build && sudo make install-local
 # Use CLI
 ./lumenhub status
 ./lumenhub node list
-./lumenhub infer embed "Hello world"
+./lumenhub infer --service embedding --payload-b64 "SGVsbG8gd29ybGQ="
 ./lumenhub --version
 ```
 

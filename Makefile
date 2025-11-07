@@ -149,7 +149,7 @@ tag: ## Create and push a new git tag
 # Removed Docker targets as requested
 
 # Version management
-version: ## Show version information
+show-version: ## Show version information
 	@echo "Version: $(VERSION)"
 	@echo "Commit: $(COMMIT)"
 	@echo "Build Time: $(BUILD_TIME)"

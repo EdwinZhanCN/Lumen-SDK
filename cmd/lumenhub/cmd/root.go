@@ -38,8 +38,8 @@ The CLI connects to a running lumenhubd daemon via REST API to:
 Usage:
   lumenhub node list              # List discovered nodes
   lumenhub status                  # Show hub status
-  lumenhub embed "hello world"     # Text embedding
-  lumenhub detect --image img.jpg  # Object detection
+  lumenhub infer --service embedding "hello world"           # Text embedding
+  lumenhub infer --service face_detection --payload-file img.jpg  # Face detection
 
 	Environment Variables:
   LUMENHUB_HOST    Hub daemon host (default: localhost)

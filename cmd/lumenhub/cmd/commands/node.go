@@ -27,13 +27,6 @@ var nodeListCmd = &cobra.Command{
 	RunE:  runNodeList,
 }
 
-var nodeConnectCmd = &cobra.Command{
-	Use:   "connect [node-id]",
-	Short: "Connect to a specific node",
-	Long:  `Establish a connection to a specific node by its ID.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runNodeConnect,
-}
 
 var nodePingCmd = &cobra.Command{
 	Use:   "ping [node-id]",
@@ -51,11 +44,19 @@ var nodeInfoCmd = &cobra.Command{
 	RunE:  runNodeInfo,
 }
 
+var nodeStatusCmd = &cobra.Command{
+	Use:   "status [node-id]",
+	Short: "Show real-time status of a node",
+	Long:  `Display real-time status including connectivity, health, and performance metrics for a specific node.`,
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runNodeStatus,
+}
+
 func init() {
 	NodeCmd.AddCommand(nodeListCmd)
-	NodeCmd.AddCommand(nodeConnectCmd)
 	NodeCmd.AddCommand(nodePingCmd)
 	NodeCmd.AddCommand(nodeInfoCmd)
+	NodeCmd.AddCommand(nodeStatusCmd)
 }
 
 func runNodeList(cmd *cobra.Command, args []string) error {
@@ -78,17 +79,6 @@ func runNodeList(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func runNodeConnect(cmd *cobra.Command, args []string) error {
-	nodeID := args[0]
-
-	// For now, this is a placeholder
-	// In a real implementation, you might call a connect API endpoint
-	fmt.Printf("Connecting to node: %s\n", nodeID)
-	fmt.Printf("Note: Node connection is handled automatically by the hub daemon\n")
-	fmt.Printf("This command is informational only\n")
-
-	return nil
-}
 
 func runNodePing(cmd *cobra.Command, args []string) error {
 	nodeID := args[0]
@@ -412,4 +402,271 @@ func outputNodeTableSingle(node map[string]interface{}) error {
 	}
 
 	return nil
+}
+func runNodeStatus(cmd *cobra.Command, args []string) error {
+	client := internal.NewAPIClient(getHostFromCmd(cmd), getPortFromCmd(cmd))
+
+	// Get health check first
+	healthResp, err := client.GetHealth()
+	if err != nil {
+		return fmt.Errorf("failed to get daemon health: %w", err)
+	}
+
+	fmt.Printf("Lumen Hub Status: %s\n", formatHealthStatus(healthResp))
+
+	// Get node information
+	resp, err := client.GetNodes()
+	if err != nil {
+		return fmt.Errorf("failed to get nodes: %w", err)
+	}
+
+	dataMap, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid response format")
+	}
+
+	nodesData, ok := dataMap["nodes"].([]interface{})
+	if !ok {
+		return fmt.Errorf("invalid response format")
+	}
+
+	// If specific node requested, show only that node
+	if len(args) == 1 {
+		nodeID := args[0]
+		for _, nodeInterface := range nodesData {
+			node, ok := nodeInterface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			id, idOk := node["id"].(string)
+			name, nameOk := node["name"].(string)
+			if (idOk && id == nodeID) || (nameOk && name == nodeID) {
+				return outputNodeStatus(node)
+			}
+		}
+		return fmt.Errorf("node '%s' not found", nodeID)
+	}
+
+	// Show status for all nodes
+	if len(nodesData) == 0 {
+		fmt.Printf("\nNo nodes connected\n")
+		return nil
+	}
+
+	fmt.Printf("\nConnected Nodes: %d\n\n", len(nodesData))
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NODE\tSTATUS\tCPU\tMEMORY\tGPU\tDISK\tREQUESTS\tLATENCY")
+
+	for _, nodeInterface := range nodesData {
+		node, ok := nodeInterface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		id, _ := node["id"].(string)
+		name, _ := node["name"].(string)
+		status, _ := node["status"].(string)
+
+		nodeName := name
+		if nodeName == "" {
+			nodeName = truncateString(id, 12)
+		}
+
+		// Extract load information
+		var cpu, memory, gpu, disk string
+		if loadInterface, ok := node["load"]; ok {
+			if load, ok := loadInterface.(map[string]interface{}); ok {
+				if cpuVal, ok := load["cpu"].(float64); ok {
+					cpu = fmt.Sprintf("%.0f%%", cpuVal*100)
+				}
+				if memVal, ok := load["memory"].(float64); ok {
+					memory = fmt.Sprintf("%.0f%%", memVal*100)
+				}
+				if gpuVal, ok := load["gpu"].(float64); ok {
+					gpu = fmt.Sprintf("%.0f%%", gpuVal*100)
+				}
+				if diskVal, ok := load["disk"].(float64); ok {
+					disk = fmt.Sprintf("%.0f%%", diskVal*100)
+				}
+			}
+		}
+
+		if cpu == "" { cpu = "N/A" }
+		if memory == "" { memory = "N/A" }
+		if gpu == "" { gpu = "N/A" }
+		if disk == "" { disk = "N/A" }
+
+		// Extract statistics
+		var requests, latency string
+		if statsInterface, ok := node["stats"]; ok {
+			if stats, ok := statsInterface.(map[string]interface{}); ok {
+				if totalReqs, ok := stats["total_requests"].(float64); ok {
+					requests = fmt.Sprintf("%.0f", totalReqs)
+				}
+				if avgLat, ok := stats["average_latency"].(float64); ok {
+					latency = fmt.Sprintf("%.0fms", avgLat)
+				}
+			}
+		}
+
+		if requests == "" { requests = "0" }
+		if latency == "" { latency = "N/A" }
+
+		// Status formatting with colors
+		statusIcon := getStatusIcon(status)
+
+		fmt.Fprintf(w, "%s\t%s%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			nodeName, statusIcon, status, cpu, memory, gpu, disk, requests, latency)
+	}
+
+	return w.Flush()
+}
+
+func formatHealthStatus(resp *rest.APIResponse) string {
+	if resp.Success {
+		return "✅ Healthy"
+	} else {
+		return "❌ Unhealthy"
+	}
+}
+
+func getStatusIcon(status string) string {
+	switch status {
+	case "active", "ready", "connected":
+		return "🟢 "
+	case "connecting", "pending":
+		return "🟡 "
+	case "error", "failed", "disconnected":
+		return "🔴 "
+	default:
+		return "⚪ "
+	}
+}
+
+func outputNodeStatus(node map[string]interface{}) error {
+	name, _ := node["name"].(string)
+	id, _ := node["id"].(string)
+	status, _ := node["status"].(string)
+	address, _ := node["address"].(string)
+
+	nodeName := name
+	if nodeName == "" {
+		nodeName = id
+	}
+
+	fmt.Printf("Node Status: %s (%s)\n", nodeName, getStatusIcon(status))
+	fmt.Printf("ID:         %s\n", id)
+	fmt.Printf("Address:    %s\n", address)
+	fmt.Printf("Status:     %s %s\n", getStatusIcon(status), status)
+
+	// Last seen
+	if lastSeenInterface, ok := node["last_seen"]; ok {
+		if lastSeenStr, ok := lastSeenInterface.(string); ok {
+			if lastSeen, err := time.Parse(time.RFC3339, lastSeenStr); err == nil {
+				timeAgo := time.Since(lastSeen).Round(time.Second)
+				fmt.Printf("Last Seen:  %v ago\n", timeAgo)
+			}
+		}
+	}
+
+	// Resource usage
+	if loadInterface, ok := node["load"]; ok {
+		if load, ok := loadInterface.(map[string]interface{}); ok {
+			fmt.Printf("\nResource Usage:\n")
+			if cpu, ok := load["cpu"].(float64); ok {
+				fmt.Printf("  CPU:    %s%s\n", getProgressBar(cpu*100), fmt.Sprintf("%.0f%%", cpu*100))
+			}
+			if memory, ok := load["memory"].(float64); ok {
+				fmt.Printf("  Memory: %s%s\n", getProgressBar(memory*100), fmt.Sprintf("%.0f%%", memory*100))
+			}
+			if gpu, ok := load["gpu"].(float64); ok {
+				fmt.Printf("  GPU:    %s%s\n", getProgressBar(gpu*100), fmt.Sprintf("%.0f%%", gpu*100))
+			}
+			if disk, ok := load["disk"].(float64); ok {
+				fmt.Printf("  Disk:   %s%s\n", getProgressBar(disk*100), fmt.Sprintf("%.0f%%", disk*100))
+			}
+		}
+	}
+
+	// Performance metrics
+	if statsInterface, ok := node["stats"]; ok {
+		if stats, ok := statsInterface.(map[string]interface{}); ok {
+			fmt.Printf("\nPerformance Metrics:\n")
+			var totalRequests float64
+			if totalReqs, ok := stats["total_requests"].(float64); ok {
+				totalRequests = totalReqs
+				fmt.Printf("  Total Requests:      %.0f\n", totalRequests)
+			}
+			if successfulRequests, ok := stats["successful_requests"].(float64); ok {
+				successRate := float64(0)
+				if totalRequests > 0 {
+					successRate = (successfulRequests / totalRequests) * 100
+				}
+				fmt.Printf("  Successful Requests: %.0f (%.1f%%)\n", successfulRequests, successRate)
+			}
+			if failedRequests, ok := stats["failed_requests"].(float64); ok {
+				fmt.Printf("  Failed Requests:     %.0f\n", failedRequests)
+			}
+			if avgLatency, ok := stats["average_latency"].(float64); ok {
+				fmt.Printf("  Average Latency:     %.0fms\n", avgLatency)
+			}
+			if lastRequestInterface, ok := stats["last_request"]; ok {
+				if lastRequestStr, ok := lastRequestInterface.(string); ok {
+					fmt.Printf("  Last Request:        %s\n", lastRequestStr)
+				}
+			}
+		}
+	}
+
+	// Available services/models
+	if modelsInterface, ok := node["models"]; ok {
+		if modelsList, ok := modelsInterface.([]interface{}); ok && len(modelsList) > 0 {
+			fmt.Printf("\nAvailable Services: %d\n", len(modelsList))
+			for _, modelInterface := range modelsList {
+				if model, ok := modelInterface.(map[string]interface{}); ok {
+					if modelName, ok := model["name"].(string); ok {
+						runtime, _ := model["runtime"].(string)
+						if runtime != "" {
+							fmt.Printf("  • %s (%s)\n", modelName, runtime)
+						} else {
+							fmt.Printf("  • %s\n", modelName)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func getProgressBar(percentage float64) string {
+	const barWidth = 20
+	filled := int(percentage / 100 * barWidth)
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	bar := "["
+	for i := 0; i < barWidth; i++ {
+		if i < filled {
+			bar += "█"
+		} else {
+			bar += "░"
+		}
+	}
+	bar += "] "
+
+	// Color coding based on percentage
+	if percentage >= 80 {
+		bar = "\033[31m" + bar + "\033[0m" // Red for high usage
+	} else if percentage >= 60 {
+		bar = "\033[33m" + bar + "\033[0m" // Yellow for medium usage
+	} else {
+		bar = "\033[32m" + bar + "\033[0m" // Green for low usage
+	}
+
+	return bar
 }

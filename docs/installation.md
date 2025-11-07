@@ -99,7 +99,7 @@ lumenhubd --help
 3. **Test functionality**:
    ```bash
    lumenhub node list
-   lumenhub infer embed "Hello, world!"
+   lumenhub infer --service embedding --payload-b64 "SGVsbG8sIHdvcmxkIQ=="
    ```
 
 ## Troubleshooting
