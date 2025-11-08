@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewFaceRecognitionRequestBasic(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	// Create a minimal JPEG header
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
@@ -26,7 +26,7 @@ func TestNewFaceRecognitionRequestBasic(t *testing.T) {
 }
 
 func TestNewFaceRecognitionRequestWithOptions(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -62,7 +62,7 @@ func TestNewFaceRecognitionRequestWithOptions(t *testing.T) {
 }
 
 func TestWithDetectionConfidenceThreshold(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -78,7 +78,7 @@ func TestWithDetectionConfidenceThreshold(t *testing.T) {
 }
 
 func TestWithNmsThreshold(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -94,7 +94,7 @@ func TestWithNmsThreshold(t *testing.T) {
 }
 
 func TestWithFaceSizeMin(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -110,7 +110,7 @@ func TestWithFaceSizeMin(t *testing.T) {
 }
 
 func TestWithFaceSizeMax(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -126,7 +126,7 @@ func TestWithFaceSizeMax(t *testing.T) {
 }
 
 func TestWithMaxFaces(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -142,7 +142,7 @@ func TestWithMaxFaces(t *testing.T) {
 }
 
 func TestWithMaxFacesNoLimit(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,
@@ -158,7 +158,7 @@ func TestWithMaxFacesNoLimit(t *testing.T) {
 }
 
 func TestNewFaceRecognitionRequestMultipleOptions(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
+
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
 	req, err := types.NewFaceRecognitionRequest(payload,

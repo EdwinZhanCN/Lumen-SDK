@@ -165,7 +165,6 @@ func TestLabelsV1TopKModifiesOriginal(t *testing.T) {
 }
 
 func TestNewClassificationRequestValidImage(t *testing.T) {
-	t.Skip("Skipping due to mimetype.EqualsAny not working with comma-separated strings in production code")
 	// Create a minimal JPEG header (not a valid image, but detectable as JPEG)
 	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
 
@@ -174,6 +173,7 @@ func TestNewClassificationRequestValidImage(t *testing.T) {
 		t.Fatalf("NewClassificationRequest() error = %v", err)
 	}
 
+	// Should be detected as image/jpeg
 	if req.PayloadMime != "image/jpeg" {
 		t.Errorf("Expected PayloadMime 'image/jpeg', got %s", req.PayloadMime)
 	}

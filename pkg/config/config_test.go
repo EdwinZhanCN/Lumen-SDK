@@ -44,26 +44,26 @@ func TestChunkDefaults(t *testing.T) {
 }
 
 func TestPresetChunkConfigs(t *testing.T) {
-	edgeCfg, err := PresetConfig("edge")
+	lightweightCfg, err := PresetConfig("lightweight")
 	if err != nil {
-		t.Fatalf("PresetConfig(edge) error = %v", err)
+		t.Fatalf("PresetConfig(lightweight) error = %v", err)
 	}
-	if !edgeCfg.Chunk.EnableAuto {
-		t.Error("Edge preset should have chunking enabled")
+	if !lightweightCfg.Chunk.EnableAuto {
+		t.Error("Lightweight preset should have chunking enabled")
 	}
-	if edgeCfg.Chunk.Threshold != 512*1024 {
-		t.Errorf("Edge preset expected Threshold %d, got %d", 512*1024, edgeCfg.Chunk.Threshold)
+	if lightweightCfg.Chunk.Threshold != 512*1024 {
+		t.Errorf("Lightweight preset expected Threshold %d, got %d", 512*1024, lightweightCfg.Chunk.Threshold)
 	}
 
-	serverCfg, err := PresetConfig("server")
+	braveCfg, err := PresetConfig("brave")
 	if err != nil {
-		t.Fatalf("PresetConfig(server) error = %v", err)
+		t.Fatalf("PresetConfig(brave) error = %v", err)
 	}
-	if !serverCfg.Chunk.EnableAuto {
-		t.Error("Server preset should have chunking enabled")
+	if !braveCfg.Chunk.EnableAuto {
+		t.Error("Brave preset should have chunking enabled")
 	}
-	if serverCfg.Chunk.MaxChunkBytes != 512*1024 {
-		t.Errorf("Server preset expected MaxChunkBytes %d, got %d", 512*1024, serverCfg.Chunk.MaxChunkBytes)
+	if braveCfg.Chunk.MaxChunkBytes != 1<<20 {
+		t.Errorf("Brave preset expected MaxChunkBytes %d, got %d", 1<<20, braveCfg.Chunk.MaxChunkBytes)
 	}
 }
 

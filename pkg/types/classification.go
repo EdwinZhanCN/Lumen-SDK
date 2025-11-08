@@ -36,12 +36,15 @@ type ClassificationRequest struct {
 // Accepts MimeTypes from SupportedImageMimeTypes
 func NewClassificationRequest(payload []byte) (*ClassificationRequest, error) {
 	mime := mimetype.Detect(payload)
-	if mimetype.EqualsAny(mime.String(), SupportedImageMimeTypes) {
-		payloadMime := mime.String()
+	mimeString := mime.String()
+
+	// Check if detected MIME type matches any supported image type
+	if mimetype.EqualsAny(mimeString, SupportedImageMimeTypes...) {
 		return &ClassificationRequest{
 			Payload:     payload,
-			PayloadMime: payloadMime,
+			PayloadMime: mimeString,
 		}, nil
 	}
-	return nil, fmt.Errorf("unsupported payload type: %s", mime.String())
+
+	return nil, fmt.Errorf("unsupported payload type: %s", mimeString)
 }
