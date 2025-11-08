@@ -5,7 +5,43 @@ import (
 	"time"
 )
 
-// PresetConfig returns a configuration for the specified preset
+// PresetConfig returns a pre-configured Config for the specified preset.
+//
+// Available presets are optimized for different deployment scenarios:
+//
+//   - "minimal": Edge devices with limited resources (Raspberry Pi, IoT devices)
+//   - Minimal CPU/memory, longer timeouts, reduced node discovery
+//
+//   - "basic": Personal computers with standard resources (laptops, desktops)
+//   - Balanced settings for development and small production use
+//
+//   - "lightweight": Small servers with moderate resources
+//   - Optimized for resource-constrained servers
+//
+//   - "brave": High-performance servers (data centers, cloud deployments)
+//   - Aggressive settings for maximum performance and throughput
+//
+// Parameters:
+//   - preset: One of "minimal", "basic", "lightweight", or "brave"
+//
+// Returns:
+//   - *Config: Preset configuration
+//   - error: InvalidPresetError if preset name is not recognized
+//
+// Role in project: Simplifies configuration by providing optimized presets for
+// common deployment scenarios. Eliminates the need for manual tuning in most cases.
+//
+// Example:
+//
+//	// Use basic preset for personal computer
+//	cfg, err := config.PresetConfig("basic")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Use brave preset for production server
+//	cfg, err := config.PresetConfig("brave")
+//	client, _ := client.NewLumenClient(cfg, logger)
 func PresetConfig(preset string) (*Config, error) {
 	switch preset {
 	case "minimal":
@@ -266,12 +302,40 @@ func bravePreset() *Config {
 	}
 }
 
-// GetValidPresets returns a list of all valid preset names
+// GetValidPresets returns a list of all available preset configuration names.
+//
+// Use this function to enumerate valid preset options, for example in CLI help
+// text or configuration validation.
+//
+// Returns:
+//   - []string: Array of valid preset names
+//
+// Example:
+//
+//	validPresets := config.GetValidPresets()
+//	fmt.Printf("Available presets: %s\n", strings.Join(validPresets, ", "))
 func GetValidPresets() []string {
 	return []string{"minimal", "basic", "lightweight", "brave"}
 }
 
-// IsValidPreset checks if the given preset name is valid
+// IsValidPreset validates whether a preset name is recognized.
+//
+// This function is useful for validating user input before attempting to
+// load a preset configuration.
+//
+// Parameters:
+//   - preset: The preset name to validate
+//
+// Returns:
+//   - bool: true if preset is valid, false otherwise
+//
+// Example:
+//
+//	userPreset := "basic"
+//	if !config.IsValidPreset(userPreset) {
+//	    log.Fatalf("Invalid preset: %s", userPreset)
+//	}
+//	cfg, _ := config.PresetConfig(userPreset)
 func IsValidPreset(preset string) bool {
 	validPresets := GetValidPresets()
 	for _, valid := range validPresets {

@@ -5,12 +5,19 @@ import (
 	"strings"
 )
 
-// ErrorCode 错误码类型
+// ErrorCode represents a standardized error code for the Lumen SDK.
+//
+// Error codes provide a machine-readable way to identify error types,
+// enabling clients to handle errors programmatically with appropriate
+// retry logic, user messages, and recovery strategies.
+//
+// Role in project: Standardizes error handling across the SDK, enabling
+// consistent error reporting and intelligent error recovery.
 type ErrorCode string
 
 const (
-	// 通用错误码
-	ErrCodeInternal     ErrorCode = "INTERNAL"
+	// General error codes applicable across all components
+	ErrCodeInternal     ErrorCode = "INTERNAL"     // Internal server/SDK error
 	ErrCodeInvalid      ErrorCode = "INVALID"
 	ErrCodeTimeout      ErrorCode = "TIMEOUT"
 	ErrCodeUnavailable  ErrorCode = "UNAVAILABLE"
@@ -29,7 +36,26 @@ const (
 	ErrCodeResponseFailed     ErrorCode = "RESPONSE_FAILED"
 )
 
-// LumenError Lumen SDK错误结构
+// LumenError represents a structured error from the Lumen SDK.
+//
+// This error type provides:
+//   - Standardized error codes for programmatic handling
+//   - Human-readable error messages
+//   - Optional structured details (can be logged or returned to API clients)
+//   - Error wrapping/chaining support via Cause
+//
+// Role in project: Provides structured, actionable error information throughout
+// the SDK. Essential for debugging, monitoring, and building resilient applications.
+//
+// Example:
+//
+//	err := utils.NodeNotFoundError("node-123", map[string]interface{}{
+//	    "requested_at": time.Now(),
+//	    "available_nodes": 5,
+//	})
+//	if utils.HasErrorCode(err, utils.ErrCodeNodeNotFound) {
+//	    // Handle node not found specifically
+//	}
 type LumenError struct {
 	Code    ErrorCode   `json:"code"`
 	Message string      `json:"message"`
@@ -50,7 +76,23 @@ func (e *LumenError) Unwrap() error {
 	return e.Cause
 }
 
-// NewLumenError 创建新的Lumen错误
+// NewLumenError creates a new LumenError with the specified code and message.
+//
+// Parameters:
+//   - code: Standardized error code (e.g., ErrCodeTimeout)
+//   - message: Human-readable error description
+//   - details: Optional structured details (first element used if provided)
+//
+// Returns:
+//   - *LumenError: New error instance
+//
+// Example:
+//
+//	err := utils.NewLumenError(
+//	    utils.ErrCodeTimeout,
+//	    "inference request timed out",
+//	    map[string]interface{}{"timeout": "30s", "node": "node-1"},
+//	)
 func NewLumenError(code ErrorCode, message string, details ...interface{}) *LumenError {
 	err := &LumenError{
 		Code:    code,
@@ -64,7 +106,28 @@ func NewLumenError(code ErrorCode, message string, details ...interface{}) *Lume
 	return err
 }
 
-// Wrap 包装已有错误
+// Wrap wraps an existing error with additional context and a Lumen error code.
+//
+// This function creates a new LumenError that preserves the original error
+// as the cause, enabling error chain unwrapping with errors.Unwrap().
+//
+// Parameters:
+//   - err: The original error to wrap
+//   - code: Lumen error code for categorization
+//   - message: Additional context message
+//   - details: Optional structured details
+//
+// Returns:
+//   - *LumenError: Wrapped error with Lumen context
+//
+// Example:
+//
+//	_, err := conn.Dial(address)
+//	if err != nil {
+//	    return utils.Wrap(err, utils.ErrCodeConnectionFailed,
+//	        "failed to connect to ML node",
+//	        map[string]string{"address": address})
+//	}
 func Wrap(err error, code ErrorCode, message string, details ...interface{}) *LumenError {
 	return &LumenError{
 		Code:    code,
@@ -106,7 +169,16 @@ func HasErrorCode(err error, code ErrorCode) bool {
 	return false
 }
 
-// 错误构造函数
+// InternalError creates an internal error indicating an unexpected condition.
+//
+// Use for unexpected errors, programming errors, or unhandled edge cases.
+// These typically indicate bugs or misconfigurations.
+//
+// Example:
+//
+//	if node == nil {
+//	    return utils.InternalError("node should never be nil at this point")
+//	}
 func InternalError(message string, details ...interface{}) *LumenError {
 	return NewLumenError(ErrCodeInternal, message, details...)
 }
@@ -135,7 +207,25 @@ func ForbiddenError(message string, details ...interface{}) *LumenError {
 	return NewLumenError(ErrCodeForbidden, message, details...)
 }
 
-// Lumen特定错误构造函数
+// NodeNotFoundError creates an error indicating a requested ML node was not found.
+//
+// This error typically occurs when:
+//   - The node ID doesn't exist in the discovered nodes
+//   - The node has been removed or gone offline
+//   - Service discovery hasn't found any nodes yet
+//
+// Parameters:
+//   - nodeID: The ID of the node that was not found
+//   - details: Optional additional context
+//
+// Example:
+//
+//	node, exists := discovery.GetNode(nodeID)
+//	if !exists {
+//	    return utils.NodeNotFoundError(nodeID, map[string]interface{}{
+//	        "available_nodes": discovery.GetNodeCount(),
+//	    })
+//	}
 func NodeNotFoundError(nodeID string, details ...interface{}) *LumenError {
 	return NewLumenError(ErrCodeNodeNotFound,
 		fmt.Sprintf("node not found: %s", nodeID), details...)
@@ -176,7 +266,27 @@ func ResponseFailedError(message string, details ...interface{}) *LumenError {
 		fmt.Sprintf("response failed: %s", message), details...)
 }
 
-// ErrorAggregator 错误聚合器
+// ErrorAggregator collects multiple errors for batch operations.
+//
+// Use this when performing operations on multiple items where you want to:
+//   - Continue processing despite individual failures
+//   - Report all errors at once rather than failing on first error
+//   - Track partial success/failure in batch operations
+//
+// Role in project: Enables robust error handling in batch operations like
+// initializing multiple connections or processing multiple inference requests.
+//
+// Example:
+//
+//	aggr := utils.NewErrorAggregator()
+//	for _, node := range nodes {
+//	    if err := node.Connect(); err != nil {
+//	        aggr.Add(err)
+//	    }
+//	}
+//	if aggr.HasErrors() {
+//	    log.Printf("Connection errors: %v", aggr.Error())
+//	}
 type ErrorAggregator struct {
 	errors []error
 }
