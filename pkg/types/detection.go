@@ -70,11 +70,13 @@ func WithMaxFaces(maxFaces int) FaceRecognitionOption {
 // NewFaceRecognitionRequest 创建新的人脸检测请求
 func NewFaceRecognitionRequest(payload []byte, opts ...FaceRecognitionOption) (*FaceRecognitionRequest, error) {
 	mime := mimetype.Detect(payload)
-	if mimetype.EqualsAny(mime.String(), SupportedImageMimeTypes) {
-		payloadMime := mime.String()
+	mimeString := mime.String()
+
+	// Check if detected MIME type matches any supported image type
+	if mimetype.EqualsAny(mimeString, SupportedImageMimeTypes...) {
 		req := &FaceRecognitionRequest{
 			Payload:     payload,
-			PayloadMime: payloadMime,
+			PayloadMime: mimeString,
 		}
 
 		// 应用所有选项
@@ -84,5 +86,6 @@ func NewFaceRecognitionRequest(payload []byte, opts ...FaceRecognitionOption) (*
 
 		return req, nil
 	}
-	return nil, fmt.Errorf("unsupported payload type: %s", mime.String())
+
+	return nil, fmt.Errorf("unsupported payload type: %s", mimeString)
 }

@@ -163,21 +163,23 @@ type EmbeddingRequest struct {
 // NewEmbeddingRequest Creates a new EmbeddingRequest instance. The payloadMime must be one of SupportedImageMimeTypes or SupportedTextMimeTypes.
 func NewEmbeddingRequest(payload []byte) (*EmbeddingRequest, error) {
 	mime := mimetype.Detect(payload)
-	if mimetype.EqualsAny(mime.String(), SupportedImageMimeTypes) {
-		payloadMime := mime.String()
+	mimeString := mime.String()
+
+	// Check if detected MIME type matches any supported image type
+	if mimetype.EqualsAny(mimeString, SupportedImageMimeTypes...) {
 		return &EmbeddingRequest{
 			Payload:     payload,
-			PayloadMime: payloadMime,
+			PayloadMime: mimeString,
 		}, nil
 	}
 
-	if mimetype.EqualsAny(mime.String(), SupportedTextMimeTypes) {
-		payloadMime := mime.String()
+	// Check if detected MIME type matches any supported text type
+	if mimetype.EqualsAny(mimeString, SupportedTextMimeTypes...) {
 		return &EmbeddingRequest{
 			Payload:     payload,
-			PayloadMime: payloadMime,
+			PayloadMime: mimeString,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported payload type: %s", mime.String())
+	return nil, fmt.Errorf("unsupported payload type: %s", mimeString)
 }
