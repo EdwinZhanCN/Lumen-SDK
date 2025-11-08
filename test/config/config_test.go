@@ -4,12 +4,14 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	config2 "github.com/edwinzhancn/lumen-sdk/pkg/config"
 )
 
 // Existing basic tests retained and extended with chunk-related tests.
 
 func TestDefaultConfig(t *testing.T) {
-	config := DefaultConfig()
+	config := config2.DefaultConfig()
 
 	if !config.Discovery.Enabled {
 		t.Error("Default discovery should be enabled")
@@ -31,7 +33,7 @@ func TestDefaultConfig(t *testing.T) {
 // New tests for chunk config defaults and presets
 
 func TestChunkDefaults(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config2.DefaultConfig()
 	if !cfg.Chunk.EnableAuto {
 		t.Error("Default chunk EnableAuto should be true")
 	}
@@ -44,7 +46,23 @@ func TestChunkDefaults(t *testing.T) {
 }
 
 func TestPresetChunkConfigs(t *testing.T) {
-	lightweightCfg, err := PresetConfig("lightweight")
+	// Test minimal preset
+	minimalCfg, err := config2.PresetConfig("minimal")
+	if err != nil {
+		t.Fatalf("PresetConfig(minimal) error = %v", err)
+	}
+	if !minimalCfg.Chunk.EnableAuto {
+		t.Error("Minimal preset should have chunking enabled")
+	}
+	if minimalCfg.Chunk.Threshold != 256*1024 {
+		t.Errorf("Minimal preset expected Threshold %d, got %d", 256*1024, minimalCfg.Chunk.Threshold)
+	}
+	if minimalCfg.Chunk.MaxChunkBytes != 64*1024 {
+		t.Errorf("Minimal preset expected MaxChunkBytes %d, got %d", 64*1024, minimalCfg.Chunk.MaxChunkBytes)
+	}
+
+	// Test lightweight preset
+	lightweightCfg, err := config2.PresetConfig("lightweight")
 	if err != nil {
 		t.Fatalf("PresetConfig(lightweight) error = %v", err)
 	}
@@ -54,13 +72,20 @@ func TestPresetChunkConfigs(t *testing.T) {
 	if lightweightCfg.Chunk.Threshold != 512*1024 {
 		t.Errorf("Lightweight preset expected Threshold %d, got %d", 512*1024, lightweightCfg.Chunk.Threshold)
 	}
+	if lightweightCfg.Chunk.MaxChunkBytes != 128*1024 {
+		t.Errorf("Lightweight preset expected MaxChunkBytes %d, got %d", 128*1024, lightweightCfg.Chunk.MaxChunkBytes)
+	}
 
-	braveCfg, err := PresetConfig("brave")
+	// Test brave preset
+	braveCfg, err := config2.PresetConfig("brave")
 	if err != nil {
 		t.Fatalf("PresetConfig(brave) error = %v", err)
 	}
 	if !braveCfg.Chunk.EnableAuto {
 		t.Error("Brave preset should have chunking enabled")
+	}
+	if braveCfg.Chunk.Threshold != 4<<20 {
+		t.Errorf("Brave preset expected Threshold %d, got %d", 4<<20, braveCfg.Chunk.Threshold)
 	}
 	if braveCfg.Chunk.MaxChunkBytes != 1<<20 {
 		t.Errorf("Brave preset expected MaxChunkBytes %d, got %d", 1<<20, braveCfg.Chunk.MaxChunkBytes)
@@ -70,17 +95,17 @@ func TestPresetChunkConfigs(t *testing.T) {
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  *Config
+		config  *config2.Config
 		wantErr bool
 	}{
 		{
 			name:   "valid config",
-			config: DefaultConfig(),
+			config: config2.DefaultConfig(),
 		},
 		{
 			name: "invalid discovery - empty service type",
-			config: &Config{
-				Discovery: DiscoveryConfig{
+			config: &config2.Config{
+				Discovery: config2.DiscoveryConfig{
 					Enabled:     true,
 					ServiceType: "",
 				},
@@ -89,8 +114,8 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name: "invalid discovery - negative scan interval",
-			config: &Config{
-				Discovery: DiscoveryConfig{
+			config: &config2.Config{
+				Discovery: config2.DiscoveryConfig{
 					Enabled:      true,
 					ServiceType:  "_lumen._tcp",
 					ScanInterval: -1 * time.Second,
@@ -100,9 +125,9 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name: "invalid rest port",
-			config: &Config{
-				Server: ServerConfig{
-					REST: RESTConfig{
+			config: &config2.Config{
+				Server: config2.ServerConfig{
+					REST: config2.RESTConfig{
 						Enabled: true,
 						Port:    0,
 					},
@@ -112,8 +137,8 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name: "invalid log level",
-			config: &Config{
-				Logging: LoggingConfig{
+			config: &config2.Config{
+				Logging: config2.LoggingConfig{
 					Level: "invalid",
 				},
 			},
@@ -148,7 +173,7 @@ func TestLoadFromEnv(t *testing.T) {
 		os.Unsetenv("LUMEN_LOG_FORMAT")
 	}()
 
-	config := DefaultConfig()
+	config := config2.DefaultConfig()
 	err := config.LoadFromEnv()
 	if err != nil {
 		t.Fatalf("LoadFromEnv() error = %v", err)
@@ -181,7 +206,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	defer os.Remove(tmpFile)
 
 	// 创建测试配置
-	originalConfig := DefaultConfig()
+	originalConfig := config2.DefaultConfig()
 	originalConfig.Logging.Level = "debug"
 	originalConfig.Server.REST.Port = 9090
 
@@ -192,7 +217,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	}
 
 	// 加载配置
-	loadedConfig, err := LoadConfig(tmpFile)
+	loadedConfig, err := config2.LoadConfig(tmpFile)
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -208,18 +233,18 @@ func TestSaveAndLoadConfig(t *testing.T) {
 }
 
 func TestValidateWithErrors(t *testing.T) {
-	config := &Config{
-		Discovery: DiscoveryConfig{
+	config := &config2.Config{
+		Discovery: config2.DiscoveryConfig{
 			Enabled:     true,
 			ServiceType: "", // 无效
 		},
-		Server: ServerConfig{
-			REST: RESTConfig{
+		Server: config2.ServerConfig{
+			REST: config2.RESTConfig{
 				Enabled: true,
 				Port:    0, // 无效
 			},
 		},
-		Logging: LoggingConfig{
+		Logging: config2.LoggingConfig{
 			Level: "invalid", // 无效
 		},
 	}
@@ -232,7 +257,7 @@ func TestValidateWithErrors(t *testing.T) {
 	// 检查具体错误
 	errorFields := make(map[string]bool)
 	for _, err := range errors {
-		if configErr, ok := err.(*ConfigError); ok {
+		if configErr, ok := err.(*config2.ConfigError); ok {
 			errorFields[configErr.Field] = true
 		}
 	}
@@ -253,12 +278,12 @@ func TestValidateWithErrors(t *testing.T) {
 // New tests to assert chunk-related validation behavior
 func TestChunkValidationErrors(t *testing.T) {
 	// Case 1: negative threshold
-	cfg1 := DefaultConfig()
+	cfg1 := config2.DefaultConfig()
 	cfg1.Chunk.Threshold = -1
 	errs := cfg1.ValidateWithErrors()
 	found := false
 	for _, e := range errs {
-		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.threshold" {
+		if ce, ok := e.(*config2.ConfigError); ok && ce.Field == "chunk.threshold" {
 			found = true
 			break
 		}
@@ -268,14 +293,14 @@ func TestChunkValidationErrors(t *testing.T) {
 	}
 
 	// Case 2: MaxChunkBytes unreasonably large
-	cfg2 := DefaultConfig()
+	cfg2 := config2.DefaultConfig()
 	cfg2.Chunk.EnableAuto = true
 	cfg2.Connection.MaxMessageSize = 0   // allow larger than connection for this test path
 	cfg2.Chunk.MaxChunkBytes = 200 << 20 // 200 MiB -> should trigger too large error
 	errs2 := cfg2.ValidateWithErrors()
 	foundLarge := false
 	for _, e := range errs2 {
-		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
+		if ce, ok := e.(*config2.ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
 			foundLarge = true
 			break
 		}
@@ -285,13 +310,13 @@ func TestChunkValidationErrors(t *testing.T) {
 	}
 
 	// Case 3: MaxChunkBytes greater than Threshold
-	cfg3 := DefaultConfig()
+	cfg3 := config2.DefaultConfig()
 	cfg3.Chunk.Threshold = 100 * 1024     // 100 KiB
 	cfg3.Chunk.MaxChunkBytes = 200 * 1024 // 200 KiB > threshold
 	errs3 := cfg3.ValidateWithErrors()
 	foundRelation := false
 	for _, e := range errs3 {
-		if ce, ok := e.(*ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
+		if ce, ok := e.(*config2.ConfigError); ok && ce.Field == "chunk.max_chunk_bytes" {
 			foundRelation = true
 			break
 		}

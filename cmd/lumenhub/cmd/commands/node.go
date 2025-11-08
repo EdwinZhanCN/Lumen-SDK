@@ -27,7 +27,6 @@ var nodeListCmd = &cobra.Command{
 	RunE:  runNodeList,
 }
 
-
 var nodePingCmd = &cobra.Command{
 	Use:   "ping [node-id]",
 	Short: "Ping a node to test connectivity",
@@ -78,7 +77,6 @@ func runNodeList(cmd *cobra.Command, args []string) error {
 		return outputNodesTable(resp)
 	}
 }
-
 
 func runNodePing(cmd *cobra.Command, args []string) error {
 	nodeID := args[0]
@@ -493,10 +491,18 @@ func runNodeStatus(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if cpu == "" { cpu = "N/A" }
-		if memory == "" { memory = "N/A" }
-		if gpu == "" { gpu = "N/A" }
-		if disk == "" { disk = "N/A" }
+		if cpu == "" {
+			cpu = "N/A"
+		}
+		if memory == "" {
+			memory = "N/A"
+		}
+		if gpu == "" {
+			gpu = "N/A"
+		}
+		if disk == "" {
+			disk = "N/A"
+		}
 
 		// Extract statistics
 		var requests, latency string
@@ -511,8 +517,12 @@ func runNodeStatus(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if requests == "" { requests = "0" }
-		if latency == "" { latency = "N/A" }
+		if requests == "" {
+			requests = "0"
+		}
+		if latency == "" {
+			latency = "N/A"
+		}
 
 		// Status formatting with colors
 		statusIcon := getStatusIcon(status)
