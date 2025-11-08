@@ -17,6 +17,7 @@ import (
 
     "github.com/edwinzhancn/lumen-sdk/pkg/client"
     "github.com/edwinzhancn/lumen-sdk/pkg/config"
+    "github.com/edwinzhancn/lumen-sdk/pkg/types"
 )
 
 func main() {
@@ -36,16 +37,30 @@ func main() {
     defer lumenClient.Close()
 
     // Text embedding inference
-    result, err := lumenClient.Embed(ctx, &client.EmbedRequest{
-        Text:    "Hello, world!",
-        ModelID: "text-embedding-ada-002",
-    })
+    textData := []byte("Hello, world!")
+    embeddingReq, err := types.NewEmbeddingRequest(textData)
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Printf("Embedding dimensions: %d\n", len(result.Embedding))
-    fmt.Printf("First few values: %v\n", result.Embedding[:5])
+    inferReq := types.NewInferRequest("text_embedding").
+        WithCorrelationID("my_embedding_request").
+        ForEmbedding(embeddingReq, "text_embedding").
+        Build()
+
+    result, err := lumenClient.Infer(ctx, inferReq)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    embeddingResp, err := types.ParseInferResponse(result).
+        AsEmbeddingResponse()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Embedding dimensions: %d\n", embeddingResp.DimValue())
+    fmt.Printf("First few values: %v\n", embeddingResp.Vector[:5])
 }
 ```
 
