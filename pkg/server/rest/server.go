@@ -14,13 +14,73 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
-// Server represents the REST API server
+// Server represents the REST API server for the Lumen SDK.
+//
+// The REST server provides HTTP endpoints for:
+//   - ML inference operations (embedding, classification, face detection)
+//   - Node management and discovery
+//   - Health checks and metrics
+//   - Configuration inspection
+//
+// Built on Fiber (FastHTTP), it offers high performance with low memory overhead.
+//
+// Role in project: Provides HTTP/REST interface for the Lumen SDK, enabling
+// integration with web applications, microservices, and any HTTP-capable client.
+// This is the primary interface for the lumenhubd daemon.
+//
+// Example:
+//
+//	cfg := &config.RESTConfig{
+//	    Enabled: true,
+//	    Host:    "0.0.0.0",
+//	    Port:    8080,
+//	    CORS:    true,
+//	}
+//	server := rest.NewServer(cfg)
 type Server struct {
 	app    *fiber.App
 	config *config.RESTConfig
 }
 
-// NewServer creates a new REST server instance
+// NewServer creates a new REST API server instance with the specified configuration.
+//
+// This function initializes a Fiber application with:
+//   - Error handling middleware
+//   - Panic recovery middleware
+//   - Optional CORS middleware
+//   - Custom error handler for consistent error responses
+//
+// After creating the server, register routes using App() and then call Start().
+//
+// Parameters:
+//   - cfg: REST server configuration (host, port, CORS, timeout)
+//
+// Returns:
+//   - *Server: Initialized REST server ready for route registration
+//
+// Role in project: Factory function for creating the HTTP server. This is called
+// by the daemon to set up the REST API interface.
+//
+// Example:
+//
+//	cfg := &config.RESTConfig{
+//	    Enabled: true,
+//	    Host:    "0.0.0.0",
+//	    Port:    8080,
+//	    CORS:    true,
+//	    Timeout: 30 * time.Second,
+//	}
+//	server := rest.NewServer(cfg)
+//
+//	// Register routes
+//	app := server.App()
+//	app.Get("/v1/health", rest.HealthCheck)
+//	app.Post("/v1/infer", inferHandler)
+//
+//	// Start server
+//	if err := server.Start(); err != nil {
+//	    log.Fatal(err)
+//	}
 func NewServer(cfg *config.RESTConfig) *Server {
 
 	// Create Fiber app
@@ -51,7 +111,29 @@ func (s *Server) App() *fiber.App {
 	return s.app
 }
 
-// Start starts the REST server
+// Start starts the REST API server and blocks until shutdown.
+//
+// The server listens on the configured host:port and handles requests until
+// an interrupt signal (SIGINT/SIGTERM) is received. It implements graceful
+// shutdown to allow in-flight requests to complete.
+//
+// This method blocks until the server is stopped, so it's typically called
+// in the main goroutine or as the final step in daemon initialization.
+//
+// Returns:
+//   - error: Non-nil if server fails to start or shutdown encounters issues
+//
+// Role in project: Starts the HTTP server and manages its lifecycle. This is
+// the entry point for making the REST API available to clients.
+//
+// Example:
+//
+//	server := rest.NewServer(cfg)
+//	// Register routes...
+//	log.Println("Starting REST API server...")
+//	if err := server.Start(); err != nil {
+//	    log.Fatalf("Server error: %v", err)
+//	}
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
@@ -108,7 +190,27 @@ func errorHandler(c *fiber.Ctx, err error) error {
 	})
 }
 
-// HealthCheck returns server health status
+// HealthCheck is a handler that returns the server's health status.
+//
+// This endpoint is used for:
+//   - Load balancer health checks
+//   - Kubernetes liveness/readiness probes
+//   - Monitoring systems
+//   - Quick service availability verification
+//
+// Returns a JSON response with status, timestamp, and service name.
+//
+// Role in project: Provides health checking endpoint for operational monitoring
+// and orchestration systems. Essential for production deployments.
+//
+// Example usage:
+//
+//	// Register the health check endpoint
+//	app.Get("/v1/health", rest.HealthCheck)
+//
+//	// Client usage
+//	curl http://localhost:8080/v1/health
+//	// Response: {"status":"healthy","timestamp":"2024-01-01T12:00:00Z","service":"Lumen REST API"}
 func HealthCheck(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"status":    "healthy",
