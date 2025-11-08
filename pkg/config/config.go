@@ -8,7 +8,39 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config Lumen SDK统一配置结构
+// Config represents the unified configuration structure for the Lumen SDK.
+//
+// This is the central configuration object that controls all aspects of the SDK's
+// behavior including:
+//   - Service discovery and node management
+//   - Connection settings and timeouts
+//   - Server configurations (REST, MCP, LLMTools)
+//   - Load balancing strategies
+//   - Logging and monitoring
+//   - Payload chunking
+//
+// Configuration can be loaded from YAML files, environment variables, or created
+// programmatically. The SDK provides several preset configurations for common use cases.
+//
+// Role in project: Central configuration hub that controls the behavior of all SDK
+// components. Proper configuration is essential for optimal performance, reliability,
+// and resource utilization.
+//
+// Example:
+//
+//	// Use default configuration
+//	cfg := config.DefaultConfig()
+//
+//	// Load from YAML file
+//	cfg, err := config.LoadConfig("config.yaml")
+//
+//	// Load preset configuration
+//	cfg := config.GetPresetConfig("basic")
+//
+//	// Customize configuration
+//	cfg := config.DefaultConfig()
+//	cfg.Server.REST.Port = 9090
+//	cfg.LoadBalancer.Strategy = "weighted"
 type Config struct {
 	Discovery    DiscoveryConfig    `yaml:"discovery" json:"discovery"`
 	Connection   ConnectionConfig   `yaml:"connection" json:"connection"`
@@ -19,13 +51,28 @@ type Config struct {
 	Chunk        ChunkConfig        `yaml:"chunk" json:"chunk"`
 }
 
+// ChunkConfig controls automatic payload chunking for large data transfers.
+//
+// Chunking breaks large payloads (images, videos, large text) into smaller pieces
+// for efficient transmission over gRPC. This prevents connection timeouts and
+// enables progressive processing on the ML node side.
+//
+// Role in project: Enables reliable handling of large payloads without hitting
+// gRPC message size limits or network timeouts.
 type ChunkConfig struct {
-	EnableAuto    bool `yaml:"enable_auto" json:"enable_auto"`         // 是否自动按阈值启用 chunking
-	Threshold     int  `yaml:"threshold" json:"threshold"`             // 超过多少字节启用 chunking（例如 1<<20 = 1MiB）
-	MaxChunkBytes int  `yaml:"max_chunk_bytes" json:"max_chunk_bytes"` // 每个 chunk 的最大字节数（例如 256KB/512KB）
+	EnableAuto    bool `yaml:"enable_auto" json:"enable_auto"`         // Enable automatic chunking based on threshold
+	Threshold     int  `yaml:"threshold" json:"threshold"`             // Size in bytes to trigger chunking (e.g., 1<<20 = 1MiB)
+	MaxChunkBytes int  `yaml:"max_chunk_bytes" json:"max_chunk_bytes"` // Maximum size per chunk (e.g., 256KB/512KB)
 }
 
-// DiscoveryConfig 服务发现配置
+// DiscoveryConfig controls service discovery for finding ML nodes.
+//
+// The SDK uses mDNS (multicast DNS) for zero-configuration discovery of ML nodes
+// on the local network. Nodes advertise their services, and clients automatically
+// discover them without manual configuration.
+//
+// Role in project: Enables automatic discovery and management of distributed ML nodes,
+// eliminating the need for static node configuration and enabling dynamic scaling.
 type DiscoveryConfig struct {
 	Enabled      bool          `yaml:"enabled" json:"enabled"`
 	ServiceType  string        `yaml:"service_type" json:"service_type"`
@@ -96,7 +143,39 @@ type MonitoringConfig struct {
 	HealthPort  int  `yaml:"health_port" json:"health_port"`
 }
 
-// LoadConfig 从文件加载配置
+// LoadConfig loads configuration from a YAML file with environment variable overrides.
+//
+// This function performs the following steps:
+//  1. Starts with default configuration
+//  2. Loads and merges settings from the YAML file (if path provided)
+//  3. Applies environment variable overrides
+//  4. Validates the final configuration
+//
+// If configPath is empty, only default config with env overrides is used.
+//
+// Parameters:
+//   - configPath: Path to YAML configuration file (empty string for defaults only)
+//
+// Returns:
+//   - *Config: Loaded and validated configuration
+//   - error: Non-nil if file reading, parsing, or validation fails
+//
+// Role in project: Primary method for loading production configurations from files.
+// Supports the standard deployment pattern of base config + environment overrides.
+//
+// Example:
+//
+//	// Load from file
+//	cfg, err := config.LoadConfig("/etc/lumen/config.yaml")
+//	if err != nil {
+//	    log.Fatalf("Failed to load config: %v", err)
+//	}
+//
+//	// Use defaults with environment overrides
+//	cfg, err := config.LoadConfig("")
+//
+//	// Create client with loaded config
+//	client, err := client.NewLumenClient(cfg, logger)
 func LoadConfig(configPath string) (*Config, error) {
 	config := DefaultConfig()
 
@@ -125,7 +204,32 @@ func LoadConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
-// LoadFromEnv 从环境变量加载配置
+// LoadFromEnv loads configuration from environment variables.
+//
+// This method reads environment variables with the LUMEN_ prefix and overrides
+// the corresponding configuration fields. Supported variables include:
+//   - LUMEN_DISCOVERY_ENABLED: Enable/disable service discovery
+//   - LUMEN_REST_HOST: REST API host
+//   - LUMEN_REST_PORT: REST API port
+//   - LUMEN_LOAD_BALANCER_STRATEGY: Load balancing strategy
+//   - LUMEN_LOG_LEVEL: Logging level (debug, info, warn, error)
+//
+// Returns:
+//   - error: Non-nil if environment variable parsing fails
+//
+// Role in project: Enables 12-factor app configuration pattern where environment
+// variables override file-based settings. Essential for containerized deployments.
+//
+// Example:
+//
+//	// Set environment variables
+//	os.Setenv("LUMEN_REST_PORT", "9090")
+//	os.Setenv("LUMEN_LOG_LEVEL", "debug")
+//
+//	cfg := config.DefaultConfig()
+//	if err := cfg.LoadFromEnv(); err != nil {
+//	    log.Fatal(err)
+//	}
 func (c *Config) LoadFromEnv() error {
 	// 服务发现配置
 	if os.Getenv("LUMEN_DISCOVERY_ENABLED") != "" {
@@ -195,7 +299,28 @@ func (c *Config) LoadFromEnv() error {
 	return nil
 }
 
-// Validate 验证配置有效性
+// Validate checks the configuration for correctness and consistency.
+//
+// This method validates all configuration fields including:
+//   - Service discovery settings (intervals, timeouts, max nodes)
+//   - Connection parameters (timeouts, message sizes)
+//   - Server ports and timeouts
+//   - Load balancer settings
+//   - Logging configuration
+//   - Monitoring ports
+//
+// Returns:
+//   - error: Non-nil with descriptive message if any validation fails
+//
+// Role in project: Prevents runtime errors by catching configuration mistakes early.
+// Always called during config loading to ensure the SDK operates with valid settings.
+//
+// Example:
+//
+//	cfg := &config.Config{...}
+//	if err := cfg.Validate(); err != nil {
+//	    log.Fatalf("Invalid configuration: %v", err)
+//	}
 func (c *Config) Validate() error {
 	// 验证服务发现配置
 	if c.Discovery.Enabled {

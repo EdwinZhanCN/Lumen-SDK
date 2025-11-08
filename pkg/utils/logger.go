@@ -10,13 +10,52 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// 全局日志器
-var (
-	Logger *zap.Logger
-	Sugar  *zap.SugaredLogger
-)
+// Logger is the global structured logger instance for the Lumen SDK.
+//
+// This is a zap.Logger configured based on the logging configuration. Use this
+// for performance-critical logging with structured fields.
+var Logger *zap.Logger
 
-// InitLogger 初始化日志器
+// Sugar is the global sugared logger for more convenient logging.
+//
+// SugaredLogger provides a more ergonomic API with printf-style formatting
+// at the cost of minor performance overhead. Use for non-critical paths.
+var Sugar *zap.SugaredLogger
+
+// InitLogger initializes the global logger with the specified configuration.
+//
+// This function sets up structured logging with configurable:
+//   - Log level (debug, info, warn, error, fatal)
+//   - Output format (json, text/console)
+//   - Output destination (stdout, stderr, file)
+//   - File rotation (when using file output)
+//
+// The function initializes both Logger (structured) and Sugar (convenient) loggers.
+// It should be called once during application startup.
+//
+// Parameters:
+//   - cfg: Logging configuration specifying level, format, and output
+//
+// Role in project: Configures the centralized logging system used throughout the SDK.
+// Proper logging is essential for debugging, monitoring, and operational visibility.
+//
+// Example:
+//
+//	// Initialize with custom config
+//	logCfg := &config.LoggingConfig{
+//	    Level:  "debug",
+//	    Format: "json",
+//	    Output: "stdout",
+//	}
+//	utils.InitLogger(logCfg)
+//
+//	// Use the logger
+//	utils.Logger.Info("Client started",
+//	    zap.String("version", "1.0.0"),
+//	    zap.Int("nodes", 3))
+//
+//	// Or use sugar for convenience
+//	utils.Sugar.Infof("Client started: version=%s, nodes=%d", "1.0.0", 3)
 func InitLogger(cfg *config.LoggingConfig) {
 	// 解析日志级别
 	level := parseLogLevel(cfg.Level)

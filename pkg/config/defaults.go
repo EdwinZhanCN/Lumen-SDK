@@ -2,7 +2,36 @@ package config
 
 import "time"
 
-// DefaultConfig 返回默认配置
+// DefaultConfig returns the default configuration for the Lumen SDK.
+//
+// This configuration provides sensible defaults suitable for development and
+// small-scale deployments. It enables:
+//   - Service discovery via mDNS
+//   - REST API on port 8080 with CORS enabled
+//   - Round-robin load balancing with caching
+//   - Health checking of nodes
+//   - JSON logging to stdout at info level
+//   - Automatic payload chunking for data >1MB
+//
+// For production use, consider using one of the preset configurations
+// (basic, lightweight, brave) or loading from a configuration file.
+//
+// Returns:
+//   - *Config: Default configuration ready to use
+//
+// Role in project: Provides zero-configuration setup for quick starts and
+// development. Most users start with DefaultConfig() and customize as needed.
+//
+// Example:
+//
+//	// Use default configuration
+//	cfg := config.DefaultConfig()
+//	client, err := client.NewLumenClient(cfg, logger)
+//
+//	// Or customize defaults
+//	cfg := config.DefaultConfig()
+//	cfg.Server.REST.Port = 9090
+//	cfg.LoadBalancer.Strategy = "weighted"
 func DefaultConfig() *Config {
 	return &Config{
 		Discovery: DiscoveryConfig{

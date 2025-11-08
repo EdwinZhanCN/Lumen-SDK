@@ -8,6 +8,35 @@ import (
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 )
 
+// NodeInfo represents a discovered ML inference node with its capabilities and status.
+//
+// This structure contains all information about an ML node including:
+//   - Identity and location (ID, Name, Address)
+//   - Current status and last contact time
+//   - ML capabilities (supported tasks, models, hardware)
+//   - Performance metrics and load information
+//   - Load balancing metadata (weight, connections)
+//
+// NodeInfo is used by:
+//   - Service discovery to track available nodes
+//   - Load balancers to select appropriate nodes
+//   - Connection pools to manage node connections
+//   - Monitoring systems to track cluster health
+//
+// Role in project: Central data structure representing ML nodes in the distributed
+// cluster. Essential for discovery, routing, load balancing, and monitoring.
+//
+// Example:
+//
+//	nodes := client.GetNodes()
+//	for _, node := range nodes {
+//	    if node.IsActive() && node.SupportsTask("embedding") {
+//	        fmt.Printf("Node %s: %s at %s\n",
+//	            node.ID, node.Name, node.Address)
+//	        fmt.Printf("Runtime: %s, Models: %d\n",
+//	            node.Runtime, len(node.Models))
+//	    }
+//	}
 type NodeInfo struct {
 	ID           string
 	Name         string
@@ -21,7 +50,7 @@ type NodeInfo struct {
 	LastSeen     time.Time
 	Tasks        []*pb.IOTask
 
-	// 负载均衡相关字段
+	// Load balancing fields
 	Weight         int64           `json:"weight"`
 	Load           *NodeLoad       `json:"load,omitempty"`
 	Stats          *NodeStats      `json:"stats,omitempty"`
@@ -37,16 +66,26 @@ type ModelInfo struct {
 	Runtime string
 }
 
+// NodeStatus represents the current operational state of an ML node.
+//
+// Role in project: Tracks node lifecycle for health monitoring and routing decisions.
 type NodeStatus string
 
 const (
-	NodeStatusUnknown  NodeStatus = "unknown"
-	NodeStatusStarting NodeStatus = "starting"
-	NodeStatusActive   NodeStatus = "active"
-	NodeStatusError    NodeStatus = "error"
+	NodeStatusUnknown  NodeStatus = "unknown"  // Initial state or communication lost
+	NodeStatusStarting NodeStatus = "starting" // Node is initializing
+	NodeStatusActive   NodeStatus = "active"   // Node is healthy and accepting requests
+	NodeStatusError    NodeStatus = "error"    // Node encountered an error
 )
 
-// NodeLoad 节点负载信息
+// NodeLoad represents real-time resource utilization of an ML node.
+//
+// All values are ratios from 0.0 (idle) to 1.0 (fully utilized).
+// Load information helps load balancers make intelligent routing decisions
+// to avoid overloading nodes.
+//
+// Role in project: Provides resource utilization data for intelligent load
+// balancing and capacity planning.
 type NodeLoad struct {
 	CPU    float64 `json:"cpu"`    // CPU 使用率 0-1
 	Memory float64 `json:"memory"` // 内存使用率 0-1
@@ -54,7 +93,16 @@ type NodeLoad struct {
 	Disk   float64 `json:"disk"`   // 磁盘使用率 0-1
 }
 
-// NodeStats 节点统计信息
+// NodeStats tracks performance metrics for an ML node.
+//
+// These statistics help with:
+//   - Monitoring node health and performance
+//   - Load balancing decisions based on success rate
+//   - Identifying problematic nodes
+//   - Calculating error rates and latencies
+//
+// Role in project: Provides operational metrics for monitoring, alerting,
+// and intelligent routing decisions.
 type NodeStats struct {
 	TotalRequests      int64     `json:"total_requests"`
 	SuccessfulRequests int64     `json:"successful_requests"`
@@ -63,12 +111,42 @@ type NodeStats struct {
 	LastRequest        time.Time `json:"last_request"`
 }
 
-// IsActive 检查节点是否活跃
+// IsActive checks if the node is currently active and accepting requests.
+//
+// Returns:
+//   - bool: true if node status is NodeStatusActive
+//
+// Example:
+//
+//	for _, node := range nodes {
+//	    if node.IsActive() {
+//	        fmt.Printf("Active node: %s\n", node.Name)
+//	    }
+//	}
 func (n *NodeInfo) IsActive() bool {
 	return n.Status == NodeStatusActive
 }
 
-// SupportsTask 检查节点是否支持指定任务
+// SupportsTask checks if the node has the capability to execute a specific task.
+//
+// This method uses a cache to avoid repeatedly scanning the capabilities list.
+// The cache is lazily initialized and rebuilt as needed.
+//
+// Parameters:
+//   - task: The task name to check (e.g., "text_embedding", "face_detection")
+//
+// Returns:
+//   - bool: true if the node supports the task
+//
+// Role in project: Essential for task-aware load balancing and ensuring requests
+// are only sent to capable nodes.
+//
+// Example:
+//
+//	if node.SupportsTask("text_embedding") {
+//	    // Send embedding request to this node
+//	    result, err := sendRequest(node, embeddingReq)
+//	}
 func (n *NodeInfo) SupportsTask(task string) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()

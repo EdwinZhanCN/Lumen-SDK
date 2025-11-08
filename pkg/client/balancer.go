@@ -13,7 +13,31 @@ import (
 	"go.uber.org/zap"
 )
 
-// LoadBalancer 负载均衡器接口
+// LoadBalancer defines the interface for distributing inference requests across ML nodes.
+//
+// Load balancers implement strategies for node selection to optimize:
+//   - Resource utilization across nodes
+//   - Response time and latency
+//   - Task-specific routing based on node capabilities
+//   - Fault tolerance and failover
+//
+// Built-in strategies include round-robin, random, weighted, least-connections,
+// and task-aware variants that consider node capabilities.
+//
+// Role in project: Critical component for distributing workload across the distributed
+// ML cluster. Proper load balancing ensures optimal performance and resource utilization.
+//
+// Example:
+//
+//	// Create load balancer with strategy
+//	balancer := client.CreateLoadBalancer(
+//	    client.RoundRobin,
+//	    &cfg.LoadBalancer,
+//	    logger,
+//	)
+//
+//	// Select node for inference
+//	node, err := balancer.SelectNode(ctx, "text_embedding")
 type LoadBalancer interface {
 	// SelectNode 选择一个合适的节点来处理指定任务
 	SelectNode(ctx context.Context, task string) (*NodeInfo, error)
@@ -688,19 +712,60 @@ func (s *TaskAwareStrategy) calculateTaskScore(node *NodeInfo, task string) floa
 
 // ============== 工厂函数 ==============
 
-// LoadBalancerType 负载均衡器类型
+// LoadBalancerType represents the load balancing strategy to use.
+//
+// Each type implements different selection logic:
+//   - RoundRobin: Cycles through nodes sequentially
+//   - Random: Selects nodes randomly
+//   - Weighted: Considers node weight/capacity
+//   - LeastConnections: Selects node with fewest active connections
+//   - TaskAwareRoundRobin: Round-robin with task capability matching
+//   - TaskAwareRandom: Random selection with task capability matching
 type LoadBalancerType string
 
 const (
-	RoundRobin          LoadBalancerType = "round_robin"
-	Random              LoadBalancerType = "random"
-	Weighted            LoadBalancerType = "weighted"
-	LeastConnections    LoadBalancerType = "least_connections"
-	TaskAwareRoundRobin LoadBalancerType = "task_aware_round_robin"
-	TaskAwareRandom     LoadBalancerType = "task_aware_random"
+	RoundRobin          LoadBalancerType = "round_robin"           // Sequential node selection
+	Random              LoadBalancerType = "random"                // Random node selection
+	Weighted            LoadBalancerType = "weighted"              // Weight-based selection
+	LeastConnections    LoadBalancerType = "least_connections"     // Connection-based selection
+	TaskAwareRoundRobin LoadBalancerType = "task_aware_round_robin" // Task-aware round-robin
+	TaskAwareRandom     LoadBalancerType = "task_aware_random"     // Task-aware random
 )
 
-// CreateLoadBalancer 创建负载均衡器
+// CreateLoadBalancer creates a configured load balancer with the specified strategy.
+//
+// This factory function instantiates the appropriate load balancing strategy and
+// wraps it in a SimpleLoadBalancer with optional caching and health checking.
+// If an unknown type is provided, it falls back to round-robin with a warning.
+//
+// Parameters:
+//   - balancerType: The load balancing strategy to use
+//   - config: Load balancer configuration (caching, health checks, etc.)
+//   - logger: Logger for load balancer operations
+//
+// Returns:
+//   - LoadBalancer: Configured load balancer ready for node selection
+//
+// Role in project: Factory function that creates load balancers with proper configuration.
+// This is the recommended way to instantiate load balancers in the SDK.
+//
+// Example:
+//
+//	// Create round-robin balancer
+//	balancer := client.CreateLoadBalancer(
+//	    client.RoundRobin,
+//	    &cfg.LoadBalancer,
+//	    logger,
+//	)
+//
+//	// Create task-aware balancer with caching
+//	cfg.LoadBalancer.CacheEnabled = true
+//	cfg.LoadBalancer.CacheTTL = 5 * time.Minute
+//	balancer := client.CreateLoadBalancer(
+//	    client.TaskAwareRoundRobin,
+//	    &cfg.LoadBalancer,
+//	    logger,
+//	)
 func CreateLoadBalancer(balancerType LoadBalancerType, config *config.LoadBalancerConfig, logger *zap.Logger) LoadBalancer {
 	var strategy LoadBalancingStrategy
 
