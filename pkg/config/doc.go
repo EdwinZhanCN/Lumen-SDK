@@ -53,7 +53,7 @@
 //	  rest:
 //	    enabled: true
 //	    host: "0.0.0.0"
-//	    port: 8080
+//	    port: 5866
 //	load_balancer:
 //	  strategy: "round_robin"
 //	  cache_enabled: true

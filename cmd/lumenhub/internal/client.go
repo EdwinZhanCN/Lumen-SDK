@@ -91,22 +91,22 @@ func (c *APIClient) parseResponse(resp *http.Response) (*rest.APIResponse, error
 
 // GetNodes retrieves the list of nodes
 func (c *APIClient) GetNodes() (*rest.APIResponse, error) {
-	return c.Get("/api/v1/nodes")
+	return c.Get("/v1/nodes")
 }
 
 // GetHealth retrieves the health status
 func (c *APIClient) GetHealth() (*rest.APIResponse, error) {
-	return c.Get("/api/v1/health")
+	return c.Get("/v1/health")
 }
 
 // GetMetrics retrieves the metrics
 func (c *APIClient) GetMetrics() (*rest.APIResponse, error) {
-	return c.Get("/api/v1/metrics")
+	return c.Get("/v1/metrics")
 }
 
 // PostInfer performs a generic inference request against the REST infer endpoint.
 // It accepts the unified RESTInferRequest DTO (see pkg/server/rest/dto.go) so callers
 // (CLI commands) can build a request for the single `/v1/infer` endpoint.
 func (c *APIClient) PostInfer(request *rest.RESTInferRequest) (*rest.APIResponse, error) {
-	return c.Post("/api/v1/infer", request)
+	return c.Post("/v1/infer", request)
 }

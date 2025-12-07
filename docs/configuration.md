@@ -38,7 +38,7 @@ lumenhubd --config /path/to/custom-config.yaml
 ### Core Settings
 ```bash
 LUMEN_REST_HOST=localhost        # REST API host
-LUMEN_REST_PORT=8080           # REST API port
+LUMEN_REST_PORT=5866           # REST API port
 LUMEN_LOG_LEVEL=info            # Log level (debug/info/warn/error/fatal)
 LUMEN_LOG_FORMAT=json           # Log format (text/json)
 LUMEN_LOG_OUTPUT=stdout         # Log output (stdout/stderr/file)

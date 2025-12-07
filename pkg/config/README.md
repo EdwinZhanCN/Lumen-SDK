@@ -108,7 +108,7 @@ server:
   rest:
     enabled: true
     host: "0.0.0.0"
-    port: 8080
+    port: 5866
     cors: true
     timeout: 30s
   grpc:
@@ -164,7 +164,7 @@ config := &config.Config{
         REST: config.RESTConfig{
             Enabled: true,
             Host:    "localhost",
-            Port:    8080,
+            Port:    5866,
             CORS:    true,
         },
         GRPC: config.GRPCConfig{

@@ -33,7 +33,7 @@ import (
 //	cfg := &config.RESTConfig{
 //	    Enabled: true,
 //	    Host:    "0.0.0.0",
-//	    Port:    8080,
+//	    Port:    5866,
 //	    CORS:    true,
 //	}
 //	server := rest.NewServer(cfg)
@@ -66,7 +66,7 @@ type Server struct {
 //	cfg := &config.RESTConfig{
 //	    Enabled: true,
 //	    Host:    "0.0.0.0",
-//	    Port:    8080,
+//	    Port:    5866,
 //	    CORS:    true,
 //	    Timeout: 30 * time.Second,
 //	}
@@ -209,7 +209,7 @@ func errorHandler(c *fiber.Ctx, err error) error {
 //	app.Get("/v1/health", rest.HealthCheck)
 //
 //	// Client usage
-//	curl http://localhost:8080/v1/health
+//	curl http://localhost:5866/v1/health
 //	// Response: {"status":"healthy","timestamp":"2024-01-01T12:00:00Z","service":"Lumen REST API"}
 func HealthCheck(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{

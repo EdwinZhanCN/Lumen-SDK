@@ -291,7 +291,7 @@ func (c *LumenClient) inferSingle(ctx context.Context, req *pb.InferRequest) (*p
 	node.IncrementConnections()
 	defer node.DecrementConnections()
 
-	conn, err := c.pool.GetConnection(node.ID)
+	conn, err := c.pool.GetConnection(node)
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
@@ -323,7 +323,7 @@ func (c *LumenClient) inferStreamSingle(ctx context.Context, req *pb.InferReques
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}
 
-	conn, err := c.pool.GetConnection(node.ID)
+	conn, err := c.pool.GetConnection(node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
 	}
@@ -424,7 +424,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	node.IncrementConnections()
 	defer node.DecrementConnections()
 
-	conn, err := c.pool.GetConnection(node.ID)
+	conn, err := c.pool.GetConnection(node)
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
@@ -597,7 +597,7 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}
 
-	conn, err := c.pool.GetConnection(node.ID)
+	conn, err := c.pool.GetConnection(node)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
 	}

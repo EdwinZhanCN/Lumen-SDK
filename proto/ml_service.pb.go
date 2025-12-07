@@ -305,7 +305,7 @@ func (x *Capability) GetTasks() []*IOTask {
 type InferRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`                                    // Trace/correlation
-	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "embed","classify","detect","ocr","asr","generate","tts",...
+	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "embed","clip_classify","detect","ocr","asr","generate","tts",...
 	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`                                                                     // Raw payload (binary or UTF-8 text)
 	Meta          map[string]string      `protobuf:"bytes,4,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Task-specific parameters: model_id, conf_thres, stop, etc.
 	// --- Added: input content type and chunking control ---

@@ -26,9 +26,6 @@ func TestPresetConfigMinimal(t *testing.T) {
 	if cfg.Server.MCP.Enabled {
 		t.Error("Expected MCP to be disabled for minimal")
 	}
-	if cfg.Server.LLMTools.Enabled {
-		t.Error("Expected LLMTools to be disabled for minimal")
-	}
 	if cfg.LoadBalancer.HealthCheck {
 		t.Error("Expected HealthCheck to be disabled for minimal")
 	}
@@ -68,9 +65,6 @@ func TestPresetConfigBasic(t *testing.T) {
 	if cfg.Server.MCP.Enabled {
 		t.Error("Expected MCP to be disabled for basic")
 	}
-	if cfg.Server.LLMTools.Enabled {
-		t.Error("Expected LLMTools to be disabled for basic")
-	}
 	if !cfg.LoadBalancer.HealthCheck {
 		t.Error("Expected HealthCheck to be enabled for basic")
 	}
@@ -107,9 +101,6 @@ func TestPresetConfigLightweight(t *testing.T) {
 	if cfg.Server.MCP.Enabled {
 		t.Error("Expected MCP to be disabled for lightweight")
 	}
-	if cfg.Server.LLMTools.Enabled {
-		t.Error("Expected LLMTools to be disabled for lightweight")
-	}
 	if !cfg.LoadBalancer.HealthCheck {
 		t.Error("Expected HealthCheck to be enabled for lightweight")
 	}
@@ -142,9 +133,6 @@ func TestPresetConfigBrave(t *testing.T) {
 	}
 	if !cfg.Server.MCP.Enabled {
 		t.Error("Expected MCP to be enabled for brave")
-	}
-	if !cfg.Server.LLMTools.Enabled {
-		t.Error("Expected LLMTools to be enabled for brave")
 	}
 	if !cfg.LoadBalancer.HealthCheck {
 		t.Error("Expected HealthCheck to be enabled for brave")
@@ -283,10 +271,10 @@ func TestPresetConfigsHaveUniqueCharacteristics(t *testing.T) {
 	}
 
 	// Verify feature flags differ appropriately
-	if minimal.Server.MCP.Enabled || minimal.Server.LLMTools.Enabled {
+	if minimal.Server.MCP.Enabled {
 		t.Error("Minimal should have advanced features disabled")
 	}
-	if !brave.Server.MCP.Enabled || !brave.Server.LLMTools.Enabled {
+	if !brave.Server.MCP.Enabled {
 		t.Error("Brave should have advanced features enabled")
 	}
 

@@ -35,7 +35,7 @@ type FaceV1 struct {
 // Face represents a single detected face with its attributes.
 //
 // Each face includes:
-//   - BBox: Bounding box as [x, y, width, height] in image coordinates
+//   - BBox: Bounding box as [x1, y1, x2, y2] in image coordinates
 //   - Confidence: Detection confidence score (0.0 to 1.0)
 //   - Landmarks: Optional facial keypoints (eyes, nose, mouth corners, etc.)
 //   - Embedding: Optional face embedding vector for recognition/comparison
@@ -43,7 +43,7 @@ type FaceV1 struct {
 // Role in project: Individual face detection result containing location, confidence,
 // and optional biometric data for recognition tasks.
 type Face struct {
-	BBox       []float32 `json:"bbox"` //  [x, y, w, h]
+	BBox       []float32 `json:"bbox"` //  [x1, y1, x2, y2]
 	Confidence float32   `json:"confidence"`
 	Landmarks  []float32 `json:"landmarks,omitempty"`
 	Embedding  []float32 `json:"embedding,omitempty"`

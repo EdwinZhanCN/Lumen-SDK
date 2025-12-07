@@ -21,8 +21,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected service_type '_lumen._tcp', got '%s'", config.Discovery.ServiceType)
 	}
 
-	if config.Server.REST.Port != 8080 {
-		t.Errorf("Expected REST port 8080, got %d", config.Server.REST.Port)
+	if config.Server.REST.Port != 5866 {
+		t.Errorf("Expected REST port 5866, got %d", config.Server.REST.Port)
 	}
 
 	if config.Logging.Level != "info" {

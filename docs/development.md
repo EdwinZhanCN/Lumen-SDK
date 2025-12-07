@@ -375,7 +375,7 @@ let g:go_test_show_name = 1
 ```bash
 # Development environment
 export LUMENHUB_HOST=localhost
-export LUMENHUB_PORT=8080
+export LUMENHUB_PORT=5866
 
 # Go development
 export GO111MODULE=on
@@ -455,9 +455,9 @@ import (
 )
 
 func TestNewAPIClient(t *testing.T) {
-    client := NewAPIClient("localhost", 8080)
+    client := NewAPIClient("localhost", 5866)
 
-    assert.Equal(t, "http://localhost:8080", client.BaseURL)
+    assert.Equal(t, "http://localhost:5866", client.BaseURL)
     assert.NotNil(t, client.HTTPClient)
     assert.Equal(t, 30*time.Second, client.HTTPClient.Timeout)
 }
@@ -558,7 +558,7 @@ Releases are fully automated through GitHub Actions:
 
 # Debug with dlv (Go debugger)
 go run ./cmd/lumenhubd --preset minimal &
-dlv connect localhost:8080
+dlv connect localhost:5866
 ```
 
 ### Debugging CLI
@@ -572,7 +572,7 @@ export LUMENHUB_DEBUG=1
 ./dist/lumenhub status
 
 # Test with specific host/port
-./dist/lumenhub --host localhost --port 8080 status
+./dist/lumenhub --host localhost --port 5866 status
 ```
 
 ### Common Issues
@@ -580,14 +580,14 @@ export LUMENHUB_DEBUG=1
 #### Port Already in Use
 
 ```bash
-# Find process using port 8080
-lsof -i :8080
+# Find process using port 5866
+lsof -i :5866
 
 # Kill process
 kill -9 <PID>
 
 # Or use different port
-LUMENHUB_PORT=8081 ./dist/lumenhubd --preset minimal
+LUMENHUB_PORT=5867 ./dist/lumenhubd --preset minimal
 ```
 
 #### Module Issues

@@ -204,7 +204,7 @@ lumenhub infer --service <service-name> --payload-file <data>
 
 ```bash
 export LUMENHUB_HOST=localhost    # Daemon host (default: localhost)
-export LUMENHUB_PORT=8080         # Daemon port (default: 8080)
+export LUMENHUB_PORT=5866         # Daemon port (default: 5866)
 ```
 
 ### Global Flags
@@ -213,7 +213,7 @@ All commands support these global flags:
 
 ```bash
 --host <hostname>        # Daemon host (default: localhost)
---port <port>            # Daemon port (default: 8080)
+--port <port>            # Daemon port (default: 5866)
 --output <format>        # Output format (table|json|yaml)
 -v, --verbose           # Verbose output
 -h, --help              # Show help
@@ -294,8 +294,8 @@ lumenhub infer --service embedding --payload-file text.txt --metadata '{"preferr
 
 #### Connection Refused
 ```bash
-Error: failed to get nodes: HTTP request failed: Get "http://localhost:8080/api/v1/nodes":
-dial tcp [::1]:8080: connect: connection refused
+Error: failed to get nodes: HTTP request failed: Get "http://localhost:5866/v1/nodes":
+dial tcp [::1]:5866: connect: connection refused
 ```
 
 **Solution:** Ensure the daemon is running:
@@ -329,7 +329,7 @@ Enable verbose output for debugging:
 
 ```bash
 lumenhub --verbose node status
-LUMENHUB_HOST=localhost LUMENHUB_PORT=8080 lumenhub --verbose infer --service embedding --payload-b64 "SGVsbG8="
+LUMENHUB_HOST=localhost LUMENHUB_PORT=5866 lumenhub --verbose infer --service embedding --payload-b64 "SGVsbG8="
 ```
 
 ## Performance Tips

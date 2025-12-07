@@ -21,5 +21,5 @@ func getPortFromCmd(cmd *cobra.Command) int {
 	if port, _ := cmd.Flags().GetInt("port"); port != 0 {
 		return port
 	}
-	return 8080
+	return 5866
 }

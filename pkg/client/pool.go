@@ -137,19 +137,19 @@ func NewGRPCConnectionPool(config *PoolConfig, logger *zap.Logger) *GRPCConnecti
 }
 
 // GetConnection 获取连接
-func (p *GRPCConnectionPool) GetConnection(nodeID string) (*Connection, error) {
+func (p *GRPCConnectionPool) GetConnection(node *NodeInfo) (*Connection, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	conn, exists := p.connections[nodeID]
+	conn, exists := p.connections[node.ID]
 	if !exists || !p.isConnectionHealthy(conn) {
 		// 需要创建新连接
-		newConn, err := p.createConnection(nodeID)
+		newConn, err := p.createConnection(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create connection to %s: %w", nodeID, err)
+			return nil, fmt.Errorf("failed to create connection to %s: %w", node.ID, err)
 		}
 		conn = newConn
-		p.connections[nodeID] = conn
+		p.connections[node.ID] = conn
 	}
 
 	// 更新使用信息
@@ -160,7 +160,7 @@ func (p *GRPCConnectionPool) GetConnection(nodeID string) (*Connection, error) {
 	conn.mu.Unlock()
 
 	p.logger.Debug("retrieved connection from pool",
-		zap.String("node_id", nodeID),
+		zap.String("node_id", node.ID),
 		zap.Int64("usage_count", conn.UsageCount),
 	)
 
@@ -261,33 +261,33 @@ func (p *GRPCConnectionPool) Stats() map[string]interface{} {
 }
 
 // createConnection 创建新连接
-func (p *GRPCConnectionPool) createConnection(nodeID string) (*Connection, error) {
+func (p *GRPCConnectionPool) createConnection(node *NodeInfo) (*Connection, error) {
 	p.logger.Debug("creating new connection",
-		zap.String("node_id", nodeID),
+		zap.String("node_id", node.ID),
 	)
 
 	// 这里需要从节点信息中获取地址
 	// 在实际实现中，我们需要从ServiceDiscovery获取节点地址
 	// 为了简化，我们假设nodeID包含了地址信息
-	address := p.extractAddressFromNodeID(nodeID)
-	if address == "" {
-		return nil, fmt.Errorf("could not extract address from nodeID: %s", nodeID)
+	if node.Address == "" {
+		return nil, fmt.Errorf("could not extract address from nodeID: %s", node.ID)
 	}
 
 	// 配置gRPC连接选项
 	opts := []grpc.DialOption{
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
-		grpc.WithTimeout(5 * time.Second),
+		// 移除全局超时，让每个调用自己控制超时
+		// grpc.WithTimeout(5 * time.Second), // 这会导致长推理请求失败
 	}
 
 	// 建立连接
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, address, opts...)
+	conn, err := grpc.DialContext(ctx, node.Address, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial %s: %w", address, err)
+		return nil, fmt.Errorf("failed to dial %s: %w", node.Address, err)
 	}
 
 	client := pb.NewInferenceClient(conn)
@@ -303,13 +303,13 @@ func (p *GRPCConnectionPool) createConnection(nodeID string) (*Connection, error
 	}
 
 	p.logger.Info("created new connection",
-		zap.String("node_id", nodeID),
-		zap.String("address", address),
+		zap.String("node_id", node.ID),
+		zap.String("address", node.Address),
 	)
 
 	// 启动健康检查
 	if p.config.HealthCheck {
-		go p.healthCheckLoop(nodeID, connection)
+		go p.healthCheckLoop(node.ID, connection)
 	}
 
 	return connection, nil
@@ -475,7 +475,8 @@ func (p *GRPCConnectionPool) createConnectionWithAddress(nodeID, address string)
 	opts := []grpc.DialOption{
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
-		grpc.WithTimeout(5 * time.Second),
+		// 移除全局超时，让每个调用自己控制超时
+		// grpc.WithTimeout(5 * time.Second), // 这会导致长推理请求失败
 	}
 
 	// 建立连接

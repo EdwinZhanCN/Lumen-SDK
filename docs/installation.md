@@ -6,7 +6,7 @@
 - **OS**: Linux, macOS, or Windows
 - **Memory**: Minimum 512MB RAM
 - **Disk**: 100MB free space
-- **Network**: Port 8080 available for REST API
+- **Network**: Port 5866 available for REST API
 
 ## Installation Methods
 
@@ -123,11 +123,11 @@ sudo ln -s /usr/local/bin/lumenhub /usr/local/bin/lumenhubd
 
 #### Port Already in Use
 ```bash
-# Check what's using port 8080
-lsof -i :8080
+# Check what's using port 5866
+lsof -i :5866
 
 # Use different port
 lumenhubd --preset basic
 # Then update CLI
-lumenhub --port 8081 status
+lumenhub --port 5867 status
 ```

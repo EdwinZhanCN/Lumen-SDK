@@ -93,9 +93,8 @@ type ConnectionConfig struct {
 
 // ServerConfig 服务配置
 type ServerConfig struct {
-	REST     RESTConfig     `yaml:"rest" json:"rest"`
-	MCP      MCPConfig      `yaml:"mcp" json:"mcp"`
-	LLMTools LLMToolsConfig `yaml:"llmtools" json:"llmtools"`
+	REST RESTConfig `yaml:"rest" json:"rest"`
+	MCP  MCPConfig  `yaml:"mcp" json:"mcp"`
 }
 
 // RESTConfig REST API配置

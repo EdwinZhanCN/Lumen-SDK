@@ -7,7 +7,7 @@ import "time"
 // This configuration provides sensible defaults suitable for development and
 // small-scale deployments. It enables:
 //   - Service discovery via mDNS
-//   - REST API on port 8080 with CORS enabled
+//   - REST API on port 5866 with CORS enabled
 //   - Round-robin load balancing with caching
 //   - Health checking of nodes
 //   - JSON logging to stdout at info level
@@ -53,7 +53,7 @@ func DefaultConfig() *Config {
 			REST: RESTConfig{
 				Enabled: true,
 				Host:    "0.0.0.0",
-				Port:    8080,
+				Port:    5866,
 				CORS:    true,
 				Timeout: 30 * time.Second,
 			},
@@ -62,9 +62,6 @@ func DefaultConfig() *Config {
 				Enabled: true,
 				Host:    "0.0.0.0",
 				Port:    6000,
-			},
-			LLMTools: LLMToolsConfig{
-				Enabled: true,
 			},
 		},
 		LoadBalancer: LoadBalancerConfig{

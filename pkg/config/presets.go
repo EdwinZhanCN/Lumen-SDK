@@ -10,15 +10,19 @@ import (
 // Available presets are optimized for different deployment scenarios:
 //
 //   - "minimal": Edge devices with limited resources (Raspberry Pi, IoT devices)
+//
 //   - Minimal CPU/memory, longer timeouts, reduced node discovery
 //
 //   - "basic": Personal computers with standard resources (laptops, desktops)
+//
 //   - Balanced settings for development and small production use
 //
 //   - "lightweight": Small servers with moderate resources
+//
 //   - Optimized for resource-constrained servers
 //
 //   - "brave": High-performance servers (data centers, cloud deployments)
+//
 //   - Aggressive settings for maximum performance and throughput
 //
 // Parameters:
@@ -88,15 +92,12 @@ func minimalPreset() *Config {
 			REST: RESTConfig{
 				Enabled: true,
 				Host:    "0.0.0.0",
-				Port:    8080,
+				Port:    5866,
 				CORS:    false,            // Disable CORS to save CPU
 				Timeout: 60 * time.Second, // Longer timeout for slow edge processing
 			},
 			MCP: MCPConfig{
 				Enabled: false, // Disable MCP to save resources
-			},
-			LLMTools: LLMToolsConfig{
-				Enabled: false, // Disable LLM tools to save resources
 			},
 		},
 		LoadBalancer: LoadBalancerConfig{
@@ -147,15 +148,12 @@ func basicPreset() *Config {
 			REST: RESTConfig{
 				Enabled: true,
 				Host:    "0.0.0.0",
-				Port:    8080,
+				Port:    5866,
 				CORS:    true,             // Enable CORS for web interfaces
 				Timeout: 30 * time.Second, // Standard timeout
 			},
 			MCP: MCPConfig{
 				Enabled: false, // MCP disabled by default
-			},
-			LLMTools: LLMToolsConfig{
-				Enabled: false, // LLM tools disabled by default
 			},
 		},
 		LoadBalancer: LoadBalancerConfig{
@@ -206,15 +204,12 @@ func lightweightPreset() *Config {
 			REST: RESTConfig{
 				Enabled: true,
 				Host:    "0.0.0.0",
-				Port:    8080,
+				Port:    5866,
 				CORS:    true,             // Enable CORS for web interfaces
 				Timeout: 30 * time.Second, // Standard timeout
 			},
 			MCP: MCPConfig{
 				Enabled: false, // Disable MCP to save resources
-			},
-			LLMTools: LLMToolsConfig{
-				Enabled: false, // Disable LLM tools to save resources
 			},
 		},
 		LoadBalancer: LoadBalancerConfig{
@@ -265,15 +260,12 @@ func bravePreset() *Config {
 			REST: RESTConfig{
 				Enabled: true,
 				Host:    "0.0.0.0",
-				Port:    8080,
+				Port:    5866,
 				CORS:    true,             // Enable CORS for web interfaces
 				Timeout: 15 * time.Second, // Fast timeout for responsive services
 			},
 			MCP: MCPConfig{
 				Enabled: true, // Enable MCP for enterprise integration
-			},
-			LLMTools: LLMToolsConfig{
-				Enabled: true, // Enable LLM tools for advanced features
 			},
 		},
 		LoadBalancer: LoadBalancerConfig{

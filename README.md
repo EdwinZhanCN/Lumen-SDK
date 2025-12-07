@@ -64,6 +64,27 @@ func main() {
 }
 ```
 
+### Retry Support
+
+The SDK also provides automatic retry functionality for handling temporary failures, node discovery, and service availability:
+
+```go
+// Basic retry with default settings
+resp, err := lumenClient.InferWithRetry(ctx, inferReq)
+
+// Custom retry configuration
+resp, err := lumenClient.InferWithRetry(ctx, inferReq,
+    client.WithMaxWaitTime(60*time.Second),    // Wait up to 60 seconds
+    client.WithRetryInterval(3*time.Second),   // Retry every 3 seconds
+    client.WithMaxRetries(10),                  // Maximum 10 retries
+    client.WithWaitForTask(true))              // Wait for task to become available
+
+// Check task availability
+if lumenClient.IsTaskAvailable("clip_text_embed") {
+    resp, err := lumenClient.Infer(ctx, inferReq)
+}
+```
+
 ### Server Usage
 
 **Download Release Binaries**
@@ -106,7 +127,7 @@ make build && sudo make install-local
 ```mermaid
 graph TB
     subgraph "Lumen Hub Daemon (lumenhubd)"
-        REST[REST API Server<br/>Port: 8080]
+        REST[REST API Server<br/>Port: 5866]
         LB[Load Balancer]
         DISC[Service Discovery<br/>mDNS]
         POOL[Connection Pool]
@@ -159,28 +180,24 @@ graph TB
 | `GET` | `/v1/nodes/:id/capabilities` | Get capabilities of specific node |
 | `GET` | `/v1/config` | Get daemon configuration |
 | `GET` | `/v1/metrics` | Get performance metrics |
+| `GET` | `/v1/tasks` | List all available tasks across all nodes |
 
 #### Example Usage
 
 ```bash
 # Text embedding
-curl -X POST "http://localhost:8080/v1/infer?service=embedding" \
+curl -X POST "http://localhost:5866/v1/infer?service=embedding" \
   -H "Content-Type: application/json" \
   -d '{"payload": "SGVsbG8gd29ybGQ=", "payload_mime_type": "text/plain"}'
 
 # Image classification with streaming
-curl -N -X POST "http://localhost:8080/v1/infer?service=classification_stream" \
+curl -N -X POST "http://localhost:5866/v1/infer?service=classification_stream" \
   -H "Content-Type: application/json" \
   -d '{"payload": "base64-encoded-image-data", "payload_mime_type": "image/jpeg"}'
+
+# List all available tasks across all nodes
+curl -X GET "http://localhost:5866/v1/tasks" | jq '.data.services'
 ```
-
-### Interface Support
-
-| Interface | Status | Services Supported | Configuration | Default Port |
-|-----------|--------|-------------------|--------------|--------------|
-| **REST API** | ✅ Fully Implemented | embedding, classification, face_detection, face_recognition | `server.rest.enabled: true` | 8080 |
-| **MCP** | 🚧 Planned | All ML services (planned) | `server.mcp.enabled: false` | 6000 |
-| **EinoTools** | 🚧 Planned | LLM integration (planned) | `server.llmtools.enabled: false` | - |
 
 #### Interface Configuration
 
@@ -190,17 +207,13 @@ server:
   rest:
     enabled: true
     host: "0.0.0.0"
-    port: 8080
+    port: 5866
 
   # MCP (Model Context Protocol) - Coming soon
   mcp:
     enabled: false  # 🚧 Under development
     host: "0.0.0.0"
     port: 6000
-
-  # EinoTools - LLM integration tools
-  llmtools:
-    enabled: false  # 🚧 Planned feature
 ```
 
 ## Configuration
@@ -220,11 +233,6 @@ make test           # Run tests
 make ci             # Full CI pipeline
 make release        # Create release
 ```
-
-## Documentation
-
-- [Installation Guide](docs/installation.md)
-- [Configuration](docs/configuration.md)
 
 ## License
 

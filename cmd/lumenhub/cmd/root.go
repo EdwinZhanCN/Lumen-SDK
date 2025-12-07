@@ -43,7 +43,7 @@ Usage:
 
 	Environment Variables:
   LUMENHUB_HOST    Hub daemon host (default: localhost)
-  LUMENHUB_PORT    Hub daemon port (default: 8080)`,
+  LUMENHUB_PORT    Hub daemon port (default: 5866)`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildTime),
 }
 
@@ -62,7 +62,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
 	rootCmd.PersistentFlags().StringVar(&host, "host", "localhost", "lumenhub daemon host")
-	rootCmd.PersistentFlags().IntVar(&port, "port", 8080, "lumenhub daemon port")
+	rootCmd.PersistentFlags().IntVar(&port, "port", 5866, "lumenhub daemon port")
 
 	// Support environment variables
 	if hostEnv := os.Getenv("LUMENHUB_HOST"); hostEnv != "" {

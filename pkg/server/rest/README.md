@@ -66,7 +66,7 @@ In addition to JSON+base64, the REST API supports two more efficient upload styl
 
 cURL example:
 ```bash
-curl -X POST http://localhost:8080/v1/infer \
+curl -X POST http://localhost:5866/v1/infer \
   -F "service=face_detection" \
   -F "task=face_model_v1" \
   -F "payload=@image.jpg" \
@@ -78,7 +78,7 @@ curl -X POST http://localhost:8080/v1/infer \
 
 cURL example:
 ```bash
-curl -X POST "http://localhost:8080/v1/infer?service=face_detection&task=face_model_v1" \
+curl -X POST "http://localhost:5866/v1/infer?service=face_detection&task=face_model_v1" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @image.jpg
 ```
@@ -98,7 +98,7 @@ Face detection metadata keys
 Sync usage examples
 1) curl (synchronous, expects single final JSON result)
 ```bash
-curl -X POST http://localhost:8080/v1/infer \
+curl -X POST http://localhost:5866/v1/infer \
   -H "Content-Type: application/json" \
   -d '{
     "service": "face_detection",
@@ -137,12 +137,12 @@ Streaming usage examples (SSE)
 1) curl (streaming)
 ```bash
 # -N keeps curl streaming / not buffering
-curl -N -X POST http://localhost:8080/v1/infer \
+curl -N -X POST http://localhost:5866/v1/infer \
   -H "Content-Type: application/json" \
   -d '{
     "service": "face_detection_stream",
     "task": "face_detector_v1",
-    "payload": "'"$(base64 -w0 large_image.jpg)"'",
+    "payload": "'$(base64 -w0 large_image.jpg)'",
     "correlation_id": "stream-1",
     "metadata": {"detection_confidence_threshold":"0.5"}
   }'
@@ -198,7 +198,7 @@ Go client example (consuming stream)
 ```go
 // Example: POST to /v1/infer and consume streaming SSE-like JSON blocks.
 // Use net/http, read body as stream and parse JSON events separated by blank lines.
-resp, err := http.Post("http://localhost:8080/v1/infer", "application/json", bytes.NewReader(reqBytes))
+resp, err := http.Post("http://localhost:5866/v1/infer", "application/json", bytes.NewReader(reqBytes))
 // read resp.Body incrementally and split on "\n\n", parse each JSON block.
 ```
 

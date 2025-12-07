@@ -21,6 +21,7 @@ type Handlers interface {
 	GetNodeCapabilities(c *fiber.Ctx) error
 	GetConfig(c *fiber.Ctx) error
 	GetMetrics(c *fiber.Ctx) error
+	GetTasks(c *fiber.Ctx) error
 }
 
 // handler implements the Handlers interface
@@ -208,5 +209,80 @@ func (h *handler) GetMetrics(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"data":    metrics,
+	})
+}
+
+func (h *handler) GetTasks(c *fiber.Ctx) error {
+	// Get all nodes from existing client
+	nodes := h.client.GetNodes()
+
+	// TaskSummary for JSON response
+	type TaskSummary struct {
+		Name        string   `json:"name"`
+		InputMimes  []string `json:"input_mimes,omitempty"`
+		OutputMimes []string `json:"output_mime,omitempty"`
+		NodeID      string   `json:"node_id"`
+		NodeName    string   `json:"node_name"`
+		ServiceName string   `json:"service_name"`
+		NodeAddress string   `json:"node_address"`
+	}
+
+	// Group tasks by service
+	serviceTasks := make(map[string][]TaskSummary)
+	var allTasks []TaskSummary
+	activeNodes := 0
+
+	for _, node := range nodes {
+		if !node.IsActive() {
+			continue
+		}
+		activeNodes++
+
+		// Process Tasks field from NodeInfo
+		for _, task := range node.Tasks {
+			summary := TaskSummary{
+				Name:        task.Name,
+				InputMimes:  task.InputMimes,
+				OutputMimes: task.OutputMimes,
+				NodeID:      node.ID,
+				NodeName:    node.Name,
+				NodeAddress: node.Address,
+				ServiceName: "", // Will be filled from Capabilities
+			}
+
+			// Find service name from Capabilities
+			for _, capability := range node.Capabilities {
+				for _, capabilityTask := range capability.Tasks {
+					if capabilityTask.Name == task.Name {
+						summary.ServiceName = capability.ServiceName
+						break
+					}
+				}
+				if summary.ServiceName != "" {
+					break
+				}
+			}
+
+			// If still empty, use a default
+			if summary.ServiceName == "" {
+				summary.ServiceName = "unknown"
+			}
+
+			serviceTasks[summary.ServiceName] = append(serviceTasks[summary.ServiceName], summary)
+			allTasks = append(allTasks, summary)
+		}
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data": fiber.Map{
+			"services":       serviceTasks,
+			"all_tasks":      allTasks,
+			"total_nodes":    len(nodes),
+			"active_nodes":   activeNodes,
+			"total_tasks":    len(allTasks),
+			"services_count": len(serviceTasks),
+		},
+		"timestamp": time.Now(),
 	})
 }

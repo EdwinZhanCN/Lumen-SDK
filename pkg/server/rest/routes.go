@@ -28,4 +28,5 @@ func SetupRoutes(app *fiber.App, handlers Handlers) {
 	// Configuration endpoints
 	v1.Get("/config", handlers.GetConfig)
 	v1.Get("/metrics", handlers.GetMetrics)
+	v1.Get("/tasks", handlers.GetTasks)
 }

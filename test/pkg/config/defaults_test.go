@@ -54,8 +54,8 @@ func TestDefaultConfigValues(t *testing.T) {
 	if cfg.Server.REST.Host != "0.0.0.0" {
 		t.Errorf("Expected REST.Host '0.0.0.0', got %s", cfg.Server.REST.Host)
 	}
-	if cfg.Server.REST.Port != 8080 {
-		t.Errorf("Expected REST.Port 8080, got %d", cfg.Server.REST.Port)
+	if cfg.Server.REST.Port != 5866 {
+		t.Errorf("Expected REST.Port 5866, got %d", cfg.Server.REST.Port)
 	}
 	if !cfg.Server.REST.CORS {
 		t.Error("Expected REST.CORS to be true")
@@ -73,11 +73,6 @@ func TestDefaultConfigValues(t *testing.T) {
 	}
 	if cfg.Server.MCP.Port != 6000 {
 		t.Errorf("Expected MCP.Port 6000, got %d", cfg.Server.MCP.Port)
-	}
-
-	// Server LLMTools
-	if !cfg.Server.LLMTools.Enabled {
-		t.Error("Expected LLMTools.Enabled to be true")
 	}
 
 	// LoadBalancer

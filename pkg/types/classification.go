@@ -99,7 +99,7 @@ type ClassificationRequest struct {
 // WebP, and other common image formats (see SupportedImageMimeTypes).
 //
 // Parameters:
-//   - payload: The raw image bytes to classify
+//   - payload: The raw image bytes to clip_classify
 //
 // Returns:
 //   - *ClassificationRequest: Request object ready for ForClassification()
