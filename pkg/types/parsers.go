@@ -192,6 +192,28 @@ func (p *InferResponseParser) AsClassificationResponse() (*LabelsV1, error) {
 	return &result, nil
 }
 
+// AsOCRResponse parses the response as OCR results.
+//
+// This method validates that the response has the correct MIME type (application/json;schema=ocr_v1)
+// and deserializes it into an OCRV1 structure containing detected text regions.
+//
+// Returns:
+//   - *OCRV1: Parsed OCR results with all detected text items
+//   - error: Non-nil if MIME type is incorrect or JSON parsing fails
+//
+// Role in project: Type-safe conversion for OCR responses.
+func (p *InferResponseParser) AsOCRResponse() (*OCRV1, error) {
+	if p.resp.ResultMime != "application/json;schema=ocr_v1" {
+		return nil, fmt.Errorf("unexpected response type: %s", p.resp.ResultMime)
+	}
+
+	var result OCRV1
+	if err := json.Unmarshal(p.resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse OCR response: %w", err)
+	}
+	return &result, nil
+}
+
 // Raw returns the underlying protobuf response without parsing.
 //
 // Use this method when you need direct access to the raw response fields,

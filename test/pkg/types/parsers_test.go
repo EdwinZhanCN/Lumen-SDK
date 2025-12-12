@@ -243,3 +243,59 @@ func TestParseInferResponseNilResponse(t *testing.T) {
 		t.Error("Expected nil Raw() result for nil response")
 	}
 }
+
+func TestParseInferResponseAsOCRResponse(t *testing.T) {
+	ocrData := types.OCRV1{
+		Items: []types.OCRItem{
+			{
+				Box:        [][]int{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
+				Text:       "Hello",
+				Confidence: 0.99,
+			},
+		},
+		Count:   1,
+		ModelID: "ocr_model_v1",
+	}
+
+	resultBytes, err := json.Marshal(ocrData)
+	if err != nil {
+		t.Fatalf("Failed to marshal OCR data: %v", err)
+	}
+
+	resp := &pb.InferResponse{
+		Result:     resultBytes,
+		ResultMime: "application/json;schema=ocr_v1",
+	}
+
+	parser := types.ParseInferResponse(resp)
+	parsedOCR, err := parser.AsOCRResponse()
+	if err != nil {
+		t.Fatalf("AsOCRResponse() error = %v", err)
+	}
+
+	if parsedOCR.Count != 1 {
+		t.Errorf("Expected Count 1, got %d", parsedOCR.Count)
+	}
+	if parsedOCR.ModelID != "ocr_model_v1" {
+		t.Errorf("Expected ModelID 'ocr_model_v1', got %s", parsedOCR.ModelID)
+	}
+	if len(parsedOCR.Items) != 1 {
+		t.Fatalf("Expected 1 item, got %d", len(parsedOCR.Items))
+	}
+	if parsedOCR.Items[0].Text != "Hello" {
+		t.Errorf("Expected text 'Hello', got %s", parsedOCR.Items[0].Text)
+	}
+}
+
+func TestParseInferResponseAsOCRResponseWrongMime(t *testing.T) {
+	resp := &pb.InferResponse{
+		Result:     []byte("{}"),
+		ResultMime: "application/json;schema=face_v1",
+	}
+
+	parser := types.ParseInferResponse(resp)
+	_, err := parser.AsOCRResponse()
+	if err == nil {
+		t.Error("Expected error for wrong MIME type, got nil")
+	}
+}

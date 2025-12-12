@@ -292,3 +292,56 @@ func (b *InferRequestBuilder) ForFaceDetection(req *FaceRecognitionRequest, task
 
 	return b
 }
+
+// ForOCR configures the builder for an optical character recognition (OCR) request.
+//
+// OCR requests detect and recognize text in images. This method sets the appropriate
+// payload and task-specific metadata from the OCRRequest configuration.
+//
+// Supported parameters (set via metadata):
+//   - detection_threshold: Minimum confidence for text detection
+//   - recognition_threshold: Minimum confidence for text recognition
+//   - use_angle_cls: Whether to use angle classification for rotated text
+//
+// Parameters:
+//   - req: OCR request with image and optional configuration parameters
+//   - task: The OCR task name (e.g., "ocr", "text_detection")
+//
+// Returns:
+//   - *InferRequestBuilder: The builder instance for method chaining
+//
+// Role in project: Specialized builder for OCR tasks. Used in document digitization,
+// license plate recognition, and scene text understanding.
+//
+// Example:
+//
+//	// OCR with custom thresholds
+//	imageData, _ := os.ReadFile("document.jpg")
+//	ocrReq, _ := types.NewOCRRequest(imageData,
+//	    types.WithDetectionThreshold(0.7),
+//	    types.WithUseAngleCls(true),
+//	)
+//	req := types.NewInferRequest("ocr").
+//	    ForOCR(ocrReq, "ocr_system").
+//	    Build()
+//
+//	result, err := client.Infer(ctx, req)
+//	ocrResp, _ := types.ParseInferResponse(result).AsOCRResponse()
+//	fmt.Printf("Detected %d text regions\n", ocrResp.Count)
+func (b *InferRequestBuilder) ForOCR(req *OCRRequest, task string) *InferRequestBuilder {
+	payload := req.Payload
+	b.req.Payload = payload
+	b.req.PayloadMime = req.PayloadMime
+	b.req.Task = task
+
+	if req.DetectionThreshold > 0 {
+		b.WithMeta("detection_threshold", fmt.Sprintf("%.3f", req.DetectionThreshold))
+	}
+	if req.RecognitionThreshold > 0 {
+		b.WithMeta("recognition_threshold", fmt.Sprintf("%.3f", req.RecognitionThreshold))
+	}
+	if req.UseAngleCls {
+		b.WithMeta("use_angle_cls", "true")
+	}
+	return b
+}

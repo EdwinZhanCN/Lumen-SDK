@@ -258,3 +258,33 @@ func TestInferRequestBuilderChaining(t *testing.T) {
 		t.Errorf("Expected task 'embedding_task', got %s", req.Task)
 	}
 }
+
+func TestInferRequestBuilderForOCR(t *testing.T) {
+	payload := []byte{0xFF, 0xD8, 0xFF, 0xE0} // Fake JPEG
+	ocrReq := &types.OCRRequest{
+		Payload:              payload,
+		PayloadMime:          "image/jpeg",
+		DetectionThreshold:   0.6,
+		RecognitionThreshold: 0.7,
+		UseAngleCls:          true,
+	}
+
+	task := "ocr_task"
+	builder := types.NewInferRequest("").ForOCR(ocrReq, task)
+
+	req := builder.Build()
+
+	if req.Task != task {
+		t.Errorf("Expected task %s, got %s", task, req.Task)
+	}
+
+	if req.Meta["detection_threshold"] != "0.600" {
+		t.Errorf("Expected detection_threshold meta '0.600', got %s", req.Meta["detection_threshold"])
+	}
+	if req.Meta["recognition_threshold"] != "0.700" {
+		t.Errorf("Expected recognition_threshold meta '0.700', got %s", req.Meta["recognition_threshold"])
+	}
+	if req.Meta["use_angle_cls"] != "true" {
+		t.Errorf("Expected use_angle_cls meta 'true', got %s", req.Meta["use_angle_cls"])
+	}
+}

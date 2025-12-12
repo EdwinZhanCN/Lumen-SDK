@@ -52,7 +52,6 @@ func main() {
 		}
 		return
 	}
-
 	// Load configuration
 	cfg, err := internal.LoadConfig(*configFile, *preset)
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 
 func main() {
 
-	const EmbedTask = "clip_embed"
+	const EmbedTask = "clip_text_embed"
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
