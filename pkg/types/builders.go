@@ -345,3 +345,51 @@ func (b *InferRequestBuilder) ForOCR(req *OCRRequest, task string) *InferRequest
 	}
 	return b
 }
+
+// ForImageTextGeneration configures the builder for an image+text generation (VLM) request.
+//
+// Image+text generation requests process an image along with a text prompt or messages to generate
+// descriptive text about the image. This method sets the appropriate payload and transfers all
+// metadata from the ImageTextGenerationRequest to the inference request.
+//
+// Parameters:
+//   - req: The VLM request with image payload, prompt/messages, and generation parameters
+//   - task: The VLM task name from node capabilities (e.g., "vlm", "image_text_generation")
+//
+// Returns:
+//   - *InferRequestBuilder: The builder instance for method chaining
+//
+// Role in project: Specialized builder for vision-language model tasks. Used in applications
+// like image description, visual question answering, content analysis, and multimodal AI systems.
+//
+// Example:
+//
+//	// Basic VLM request with custom parameters
+//	imageData, _ := os.ReadFile("cat.jpg")
+//	vlmReq, _ := types.NewImageTextGenerationRequest(imageData, "image/jpeg",
+//	    types.WithMaxTokens(256),
+//	    types.WithTemperature(0.2),
+//	    types.WithMessages([]map[string]string{
+//	        {"role": "user", "content": "Describe what's in this image"},
+//	    }))
+//	req := types.NewInferRequest("vlm").
+//	    ForImageTextGeneration(vlmReq, "fastvlm-2b-onnx").
+//	    Build()
+//
+//	result, err := client.Infer(ctx, req)
+//	genResp, _ := types.ParseInferResponse(result).AsTextGenerationResponse()
+//	fmt.Printf("Generated text: %s\n", genResp.Text)
+//	fmt.Printf("Finish reason: %s\n", genResp.FinishReason)
+func (b *InferRequestBuilder) ForImageTextGeneration(req *ImageTextGenerationRequest, task string) *InferRequestBuilder {
+	// Set the image payload
+	b.req.Payload = req.Payload
+	b.req.PayloadMime = req.PayloadMime
+	b.req.Task = task
+
+	// Transfer all metadata from the request
+	for key, value := range req.Meta {
+		b.WithMeta(key, value)
+	}
+
+	return b
+}

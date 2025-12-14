@@ -214,6 +214,58 @@ func (p *InferResponseParser) AsOCRResponse() (*OCRV1, error) {
 	return &result, nil
 }
 
+// AsTextGenerationResponse parses the response as text generation results.
+//
+// This method validates that the response has the correct MIME type (application/json;schema=text_generation_v1)
+// and deserializes it into a TextGenerationV1 structure containing generated text, token counts,
+// finish reason, and optional metadata.
+//
+// Returns:
+//   - *TextGenerationV1: Parsed text generation results with generated text and metadata
+//   - error: Non-nil if MIME type is incorrect or JSON parsing fails
+//
+// Role in project: Type-safe conversion for text generation responses. Used extensively
+// in vision-language model applications for image description, visual question answering,
+// and multimodal content analysis.
+//
+// Example:
+//
+//	// Generate text about an image
+//	imageData, _ := os.ReadFile("cat.jpg")
+//	vlmReq, _ := types.NewImageTextGenerationRequest(imageData, "image/jpeg",
+//	    types.WithMaxTokens(256),
+//	    types.WithTemperature(0.2),
+//	    types.WithMessages([]map[string]string{
+//	        {"role": "user", "content": "Describe what's in this image"},
+//	    }))
+//	req := types.NewInferRequest("vlm").
+//	    ForImageTextGeneration(vlmReq, "fastvlm-2b-onnx").
+//	    Build()
+//
+//	result, err := client.Infer(ctx, req)
+//	genResp, err := types.ParseInferResponse(result).AsTextGenerationResponse()
+//	if err != nil {
+//	    log.Fatalf("Failed to parse text generation response: %v", err)
+//	}
+//
+//	fmt.Printf("Generated text: %s\n", genResp.Text)
+//	fmt.Printf("Tokens generated: %d\n", genResp.GeneratedTokens)
+//	fmt.Printf("Finish reason: %s\n", genResp.FinishReason)
+//	if genResp.Metadata != nil {
+//	    fmt.Printf("Generation time: %.2f ms\n", genResp.Metadata.GenerationTimeMs)
+//	}
+func (p *InferResponseParser) AsTextGenerationResponse() (*TextGenerationV1, error) {
+	if p.resp.ResultMime != "application/json;schema=text_generation_v1" {
+		return nil, fmt.Errorf("unexpected response type: %s", p.resp.ResultMime)
+	}
+
+	var result TextGenerationV1
+	if err := json.Unmarshal(p.resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse text generation response: %w", err)
+	}
+	return &result, nil
+}
+
 // Raw returns the underlying protobuf response without parsing.
 //
 // Use this method when you need direct access to the raw response fields,

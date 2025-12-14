@@ -39,10 +39,13 @@ func NewHandlers(client *client.LumenClient) Handlers {
 }
 
 func (h *handler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status":    "healthy",
-		"service":   "Lumen REST API",
-		"timestamp": time.Now(),
+	return c.Status(fiber.StatusOK).JSON(APIResponse{
+		Success:   true,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Data: fiber.Map{
+			"status":  "healthy",
+			"service": "Lumen REST API",
+		},
 	})
 }
 
@@ -169,7 +172,12 @@ func (h *handler) Infer(c *fiber.Ctx) error {
 func (h *handler) GetNodes(c *fiber.Ctx) error {
 	nodes := h.client.GetNodes()
 
-	return c.Status(fiber.StatusOK).JSON(nodes)
+	return c.Status(fiber.StatusOK).JSON(APIResponse{
+		Success: true,
+		Data: fiber.Map{
+			"nodes": nodes,
+		},
+	})
 }
 
 func (h *handler) GetNodeCapabilities(c *fiber.Ctx) error {
@@ -183,7 +191,10 @@ func (h *handler) GetNodeCapabilities(c *fiber.Ctx) error {
 		return err
 	}
 
-	return c.Status(fiber.StatusOK).JSON(caps)
+	return c.Status(fiber.StatusOK).JSON(APIResponse{
+		Success: true,
+		Data:    caps,
+	})
 }
 
 func (h *handler) GetConfig(c *fiber.Ctx) error {

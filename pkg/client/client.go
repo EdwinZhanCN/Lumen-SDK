@@ -8,6 +8,7 @@ import (
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"go.uber.org/zap"
 )
@@ -188,7 +189,46 @@ func (c *LumenClient) initializeComponents() error {
 	// 初始化连接池，使用默认配置
 	c.pool = NewGRPCConnectionPool(nil, c.logger)
 
+	// Set up gRPC-based health check function for load balancer
+	// This allows the load balancer to perform real health checks via gRPC
+	if lb, ok := c.balancer.(*SimpleLoadBalancer); ok {
+		lb.SetHealthCheckFunc(c.createGRPCHealthCheckFunc())
+	}
+
 	return nil
+}
+
+// createGRPCHealthCheckFunc creates a health check function that uses gRPC
+// to verify node health. On success, it updates the node's LastSeen timestamp.
+func (c *LumenClient) createGRPCHealthCheckFunc() HealthCheckFunc {
+	return func(node *NodeInfo) bool {
+		// Try to get or create a connection to the node
+		conn, err := c.pool.GetConnection(node)
+		if err != nil {
+			c.logger.Debug("health check failed: cannot get connection",
+				zap.String("node_id", node.ID),
+				zap.Error(err))
+			return false
+		}
+
+		// Perform gRPC health check
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_, err = conn.Client.Health(ctx, &emptypb.Empty{})
+		if err != nil {
+			c.logger.Debug("health check failed: gRPC health call failed",
+				zap.String("node_id", node.ID),
+				zap.Error(err))
+			return false
+		}
+
+		// Health check passed - update LastSeen
+		node.LastSeen = time.Now()
+		c.logger.Debug("health check passed",
+			zap.String("node_id", node.ID))
+		return true
+	}
 }
 
 // Start initializes and starts all client subsystems.

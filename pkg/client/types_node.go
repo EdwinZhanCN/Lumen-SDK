@@ -38,17 +38,17 @@ import (
 //	    }
 //	}
 type NodeInfo struct {
-	ID           string
-	Name         string
-	Address      string
-	Status       NodeStatus
-	Metadata     map[string]interface{}
-	Capabilities []*pb.Capability
-	Version      string
-	Runtime      string
-	Models       []*ModelInfo
-	LastSeen     time.Time
-	Tasks        []*pb.IOTask
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Address      string                 `json:"address"`
+	Status       NodeStatus             `json:"status"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Capabilities []*pb.Capability       `json:"capabilities,omitempty"`
+	Version      string                 `json:"version"`
+	Runtime      string                 `json:"runtime"`
+	Models       []*ModelInfo           `json:"models,omitempty"`
+	LastSeen     time.Time              `json:"last_seen"`
+	Tasks        []*pb.IOTask           `json:"tasks,omitempty"`
 
 	// Load balancing fields
 	Weight         int64           `json:"weight"`
@@ -60,10 +60,10 @@ type NodeInfo struct {
 }
 
 type ModelInfo struct {
-	ID      string
-	Name    string
-	Version string
-	Runtime string
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Runtime string `json:"runtime"`
 }
 
 // NodeStatus represents the current operational state of an ML node.
@@ -107,7 +107,7 @@ type NodeStats struct {
 	TotalRequests      int64     `json:"total_requests"`
 	SuccessfulRequests int64     `json:"successful_requests"`
 	FailedRequests     int64     `json:"failed_requests"`
-	AverageLatency     int64     `json:"average_latency_ms"`
+	AverageLatency     int64     `json:"average_latency"`
 	LastRequest        time.Time `json:"last_request"`
 }
 

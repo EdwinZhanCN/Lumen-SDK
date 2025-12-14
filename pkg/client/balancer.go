@@ -70,17 +70,23 @@ type LoadBalancingStrategy interface {
 	Name() string
 }
 
+// HealthCheckFunc is a function type for performing actual health checks on nodes.
+// It should return true if the node is healthy, false otherwise.
+// When health check succeeds, implementations should update node.LastSeen.
+type HealthCheckFunc func(node *NodeInfo) bool
+
 // SimpleLoadBalancer 简单的负载均衡器实现
 type SimpleLoadBalancer struct {
-	strategy      LoadBalancingStrategy
-	config        *config.LoadBalancerConfig
-	cache         *NodeCache
-	healthChecker *HealthChecker
-	nodes         []*NodeInfo
-	mu            sync.RWMutex
-	logger        *zap.Logger
-	stats         LoadBalancerStats
-	closed        bool
+	strategy        LoadBalancingStrategy
+	config          *config.LoadBalancerConfig
+	cache           *NodeCache
+	healthChecker   *HealthChecker
+	nodes           []*NodeInfo
+	mu              sync.RWMutex
+	logger          *zap.Logger
+	stats           LoadBalancerStats
+	closed          bool
+	healthCheckFunc HealthCheckFunc // Optional external health check function
 }
 
 // NewSimpleLoadBalancer 创建带配置的负载均衡器
@@ -198,16 +204,38 @@ func (lb *SimpleLoadBalancer) UpdateNodes(nodes []*NodeInfo) {
 		zap.String("strategy", lb.strategy.Name()))
 }
 
+// SetHealthCheckFunc sets an external health check function that performs
+// actual gRPC health checks. This should be called by LumenClient after
+// creating the load balancer.
+func (lb *SimpleLoadBalancer) SetHealthCheckFunc(fn HealthCheckFunc) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	lb.healthCheckFunc = fn
+}
+
 // createHealthCheckFunction 创建健康检查函数
 func (lb *SimpleLoadBalancer) createHealthCheckFunction() func(*NodeInfo) bool {
 	return func(node *NodeInfo) bool {
-		// 简单的健康检查：基于最后活跃时间和状态
-		if node.Status == NodeStatusUnknown || node.Status == NodeStatusError {
-			return false
+		// If an external health check function is set, use it
+		lb.mu.RLock()
+		externalCheck := lb.healthCheckFunc
+		lb.mu.RUnlock()
+
+		if externalCheck != nil {
+			healthy := externalCheck(node)
+			if healthy {
+				// Update LastSeen on successful health check
+				node.LastSeen = time.Now()
+				if node.Status == NodeStatusError {
+					node.Status = NodeStatusActive
+				}
+			}
+			return healthy
 		}
 
-		// 检查节点是否长时间未响应
-		if time.Since(node.LastSeen) > 60*time.Second {
+		// Fallback: simple status-based check (no LastSeen timeout)
+		// When no external health check is configured, trust the node status
+		if node.Status == NodeStatusUnknown || node.Status == NodeStatusError {
 			return false
 		}
 
@@ -560,13 +588,9 @@ func (hc *HealthChecker) checkNodeFunc(node *NodeInfo, checkFunc func(*NodeInfo)
 // createDefaultCheck 创建默认的健康检查函数
 func (hc *HealthChecker) createDefaultCheck() func(*NodeInfo) bool {
 	return func(node *NodeInfo) bool {
-		// 简单的健康检查：基于最后活跃时间和状态
+		// Simple status-based check without LastSeen timeout
+		// The actual health check should be done via gRPC and update LastSeen
 		if node.Status == NodeStatusUnknown || node.Status == NodeStatusError {
-			return false
-		}
-
-		// 检查节点是否长时间未响应
-		if time.Since(node.LastSeen) > 60*time.Second {
 			return false
 		}
 
@@ -724,12 +748,12 @@ func (s *TaskAwareStrategy) calculateTaskScore(node *NodeInfo, task string) floa
 type LoadBalancerType string
 
 const (
-	RoundRobin          LoadBalancerType = "round_robin"           // Sequential node selection
-	Random              LoadBalancerType = "random"                // Random node selection
-	Weighted            LoadBalancerType = "weighted"              // Weight-based selection
-	LeastConnections    LoadBalancerType = "least_connections"     // Connection-based selection
+	RoundRobin          LoadBalancerType = "round_robin"            // Sequential node selection
+	Random              LoadBalancerType = "random"                 // Random node selection
+	Weighted            LoadBalancerType = "weighted"               // Weight-based selection
+	LeastConnections    LoadBalancerType = "least_connections"      // Connection-based selection
 	TaskAwareRoundRobin LoadBalancerType = "task_aware_round_robin" // Task-aware round-robin
-	TaskAwareRandom     LoadBalancerType = "task_aware_random"     // Task-aware random
+	TaskAwareRandom     LoadBalancerType = "task_aware_random"      // Task-aware random
 )
 
 // CreateLoadBalancer creates a configured load balancer with the specified strategy.
