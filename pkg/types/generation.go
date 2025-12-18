@@ -158,14 +158,17 @@ func WithMessages(messages []map[string]string) ImageTextGenerationRequestOption
 //	if err != nil {
 //		log.Fatalf("Failed to create request: %v", err)
 //	}
-func NewImageTextGenerationRequest(payload []byte, payloadMime string, opts ...ImageTextGenerationRequestOption) (*ImageTextGenerationRequest, error) {
-	if !mimetype.EqualsAny(payloadMime, SupportedImageMimeTypes...) {
-		return nil, fmt.Errorf("unsupported payload type: %s", payloadMime)
+func NewImageTextGenerationRequest(payload []byte, opts ...ImageTextGenerationRequestOption) (*ImageTextGenerationRequest, error) {
+	mime := mimetype.Detect(payload)
+	mimeString := mime.String()
+
+	if !mimetype.EqualsAny(mimeString, SupportedImageMimeTypes...) {
+		return nil, fmt.Errorf("unsupported payload type: %s", mimeString)
 	}
 
 	req := &ImageTextGenerationRequest{
 		Payload:     payload,
-		PayloadMime: payloadMime,
+		PayloadMime: mimeString,
 		Meta:        make(map[string]string),
 	}
 

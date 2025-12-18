@@ -67,7 +67,7 @@ func testVLM(ctx context.Context, lumenClient *client.LumenClient, filename stri
 	fmt.Printf("Testing %s (%d bytes)\n", filename, len(imageData))
 
 	// Create VLM request with default parameters
-	vlmReq, err := types.NewImageTextGenerationRequest(imageData, "image/jpeg",
+	vlmReq, err := types.NewImageTextGenerationRequest(imageData,
 		types.WithMaxTokens(512),
 		// types.WithTemperature(0.2),
 		types.WithMessages([]map[string]string{
@@ -128,7 +128,7 @@ func testVLM(ctx context.Context, lumenClient *client.LumenClient, filename stri
 	// Second test with a different prompt
 	fmt.Printf("\nTrying with a different prompt...\n")
 
-	vlmReq2, err := types.NewImageTextGenerationRequest(imageData, "image/jpeg",
+	vlmReq2, err := types.NewImageTextGenerationRequest(imageData,
 		types.WithMaxTokens(200),
 		// types.WithTemperature(0.5),
 		// types.WithTopP(0.9),
@@ -163,4 +163,5 @@ func testVLM(ctx context.Context, lumenClient *client.LumenClient, filename stri
 	fmt.Printf("   Text: \"%s\"\n", genResp2.Text)
 	fmt.Printf("   Finish reason: %s\n", genResp2.FinishReason)
 	fmt.Printf("   Generated tokens: %d\n", genResp2.GeneratedTokens)
+	fmt.Println(resp2)
 }
