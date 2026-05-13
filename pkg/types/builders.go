@@ -1,7 +1,9 @@
 package types
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 )
@@ -120,6 +122,28 @@ func (b *InferRequestBuilder) WithMeta(key, value string) *InferRequestBuilder {
 	return b
 }
 
+// WithInputKind declares whether the payload is raw task input or a model-ready tensor.
+func (b *InferRequestBuilder) WithInputKind(kind string) *InferRequestBuilder {
+	return b.WithMeta(MetaInputKind, strings.ToLower(strings.TrimSpace(kind)))
+}
+
+// WithTensorDescriptor writes the v1 tensor fast-path descriptor into request metadata.
+func (b *InferRequestBuilder) WithTensorDescriptor(dtype string, shape []int64, layout string) *InferRequestBuilder {
+	shapeJSON, _ := json.Marshal(shape)
+	return b.WithInputKind(InputKindTensor).
+		WithMeta(MetaTensorDType, normalizeTensorDType(dtype)).
+		WithMeta(MetaTensorShape, string(shapeJSON)).
+		WithMeta(MetaTensorLayout, normalizeTensorLayout(layout)).
+		WithMeta(MetaTensorFormat, TensorFormatContig).
+		WithMeta(MetaTensorByteOrder, TensorByteOrderLittle)
+}
+
+// WithPreprocessID records the preprocessing contract that produced a tensor payload.
+func (b *InferRequestBuilder) WithPreprocessID(id string) *InferRequestBuilder {
+	return b.WithMeta(MetaPreprocessID, strings.TrimSpace(id)).
+		WithMeta(MetaPreprocessSkip, "true")
+}
+
 // Build finalizes and returns the constructed inference request.
 //
 // This method completes the builder chain and produces the protobuf InferRequest
@@ -220,6 +244,37 @@ func (b *InferRequestBuilder) ForClassification(req *ClassificationRequest, task
 	b.req.Payload = payload
 	b.req.PayloadMime = req.PayloadMime
 	b.req.Task = task
+	return b
+}
+
+// ForTensorInput configures the request with a model-ready tensor payload.
+// Routing still uses Task; model metadata is only a validation hint for task backends.
+func (b *InferRequestBuilder) ForTensorInput(payload []byte, mime string, descriptor TensorDescriptor) *InferRequestBuilder {
+	b.req.Payload = payload
+	if strings.TrimSpace(mime) == "" {
+		mime = DefaultTensorMIME
+	}
+	b.req.PayloadMime = mime
+
+	b.WithTensorDescriptor(descriptor.DType, descriptor.Shape, descriptor.Layout)
+	if descriptor.Format != "" {
+		b.WithMeta(MetaTensorFormat, normalizeTensorFormat(descriptor.Format))
+	}
+	if descriptor.ByteOrder != "" {
+		b.WithMeta(MetaTensorByteOrder, normalizeTensorByteOrder(descriptor.ByteOrder))
+	}
+	if descriptor.PreprocessSkip {
+		b.WithMeta(MetaPreprocessSkip, "true")
+	}
+	if descriptor.PreprocessID != "" {
+		b.WithPreprocessID(descriptor.PreprocessID)
+	}
+	if descriptor.ModelID != "" {
+		b.WithMeta(MetaModelID, strings.TrimSpace(descriptor.ModelID))
+	}
+	if descriptor.ModelVersion != "" {
+		b.WithMeta(MetaModelVersion, strings.TrimSpace(descriptor.ModelVersion))
+	}
 	return b
 }
 

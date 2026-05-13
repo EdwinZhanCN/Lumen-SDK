@@ -3,10 +3,13 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
+	sdktypes "github.com/edwinzhancn/lumen-sdk/pkg/types"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -82,7 +85,7 @@ type ClientMetrics struct {
 //	result, err := client.Infer(ctx, inferReq)
 type LumenClient struct {
 	config    *config.Config
-	discovery *MDNSDiscovery
+	discovery discovery.ServiceDiscovery
 	pool      *GRPCConnectionPool
 	balancer  LoadBalancer
 	logger    *zap.Logger
@@ -156,6 +159,7 @@ func NewLumenClientWithBalancer(cfg *config.Config, logger *zap.Logger, balancer
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
+	logger = ensureLogger(logger)
 
 	// 更新配置中的策略
 	cfg.LoadBalancer.Strategy = string(balancerType)
@@ -183,8 +187,12 @@ func NewLumenClientWithBalancer(cfg *config.Config, logger *zap.Logger, balancer
 
 // initializeComponents 初始化客户端组件
 func (c *LumenClient) initializeComponents() error {
-	// 初始化服务发现
-	c.discovery = NewMDNSDiscovery(&c.config.Discovery, c.logger)
+	// 初始化服务发现管理器，保持客户端只依赖 discovery 抽象。
+	discoveryManager := discovery.NewManager()
+	if err := discoveryManager.AddFinder("mdns", discovery.NewMDNSDiscovery(&c.config.Discovery, c.logger), 0, 0); err != nil {
+		return fmt.Errorf("failed to register mdns discovery: %w", err)
+	}
+	c.discovery = discoveryManager
 
 	// 初始化连接池，使用默认配置
 	c.pool = NewGRPCConnectionPool(nil, c.logger)
@@ -201,7 +209,7 @@ func (c *LumenClient) initializeComponents() error {
 // createGRPCHealthCheckFunc creates a health check function that uses gRPC
 // to verify node health. On success, it updates the node's LastSeen timestamp.
 func (c *LumenClient) createGRPCHealthCheckFunc() HealthCheckFunc {
-	return func(node *NodeInfo) bool {
+	return func(node *discovery.NodeInfo) bool {
 		// Try to get or create a connection to the node
 		conn, err := c.pool.GetConnection(node)
 		if err != nil {
@@ -438,6 +446,9 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
+	if _, err := sdktypes.ValidateTensorFastPath(req, sdktypes.TensorValidationOptions{}); err != nil {
+		return nil, err
+	}
 
 	// 决定使用的 chunk 配置（从 c.config 获取）
 	chCfg := c.config.Chunk
@@ -451,7 +462,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 		return c.inferSingle(ctx, req)
 	}
 
-	// 多个 chunk：使用同一节点的一个 bidi stream 发送所有 chunk，然后等待最终响应
+	// 多个 chunk：使用同一节点的一个 bidi stream 发送所有 chunk，然后等待最终语义响应
 	startTime := time.Now()
 	c.incrementTotalRequests()
 
@@ -469,11 +480,11 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
 	}
+	defer c.pool.ReturnConnection(node.ID, conn)
 
 	stream, err := conn.Client.Infer(ctx)
 	if err != nil {
 		c.incrementFailedRequests()
-		c.pool.ReturnConnection(node.ID, conn)
 		return nil, fmt.Errorf("failed to create inference stream: %w", err)
 	}
 
@@ -524,16 +535,18 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	}()
 
 	// receiver: 等待最终响应或发送失败
-	var finalResp *pb.InferResponse
+	var responses []*pb.InferResponse
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
+			if err == io.EOF && len(responses) > 0 {
+				break
+			}
 			// check send error
 			select {
 			case se := <-sendErrCh:
 				if se != nil {
 					c.incrementFailedRequests()
-					c.pool.ReturnConnection(node.ID, conn)
 					return nil, fmt.Errorf("send failed: %w", se)
 				}
 			default:
@@ -541,15 +554,19 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 			}
 
 			c.incrementFailedRequests()
-			c.pool.ReturnConnection(node.ID, conn)
 			return nil, fmt.Errorf("failed to receive response: %w", err)
 		}
 
+		responses = append(responses, resp)
 		if resp.IsFinal {
-			finalResp = resp
 			break
 		}
-		// ignore intermediate partials for synchronous Infer
+	}
+
+	finalResp, err := sdktypes.AssembleInferResponses(responses)
+	if err != nil {
+		c.incrementFailedRequests()
+		return nil, fmt.Errorf("failed to assemble response: %w", err)
 	}
 
 	// 成功
@@ -559,15 +576,14 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	conn.mu.Unlock()
 	c.incrementSuccessfulRequests()
 	c.updateLatency(time.Since(startTime))
-	c.pool.ReturnConnection(node.ID, conn)
 	return finalResp, nil
 }
 
 // InferStream performs streaming inference with automatic payload chunking.
 //
-// This method returns a channel that yields multiple responses, including partial results
-// and the final result. It's useful for tasks that produce incremental outputs or when
-// you want to receive progress updates during long-running inference operations.
+// This method returns a channel that yields raw response messages, including semantic
+// partials, transport chunks, and the final result. Use types.AssembleInferResponses
+// when a stream carries transport chunks that should be reassembled into one result.
 //
 // The method handles:
 //   - Automatic chunking of large payloads across the same bidirectional stream
@@ -618,6 +634,9 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
+	}
+	if _, err := sdktypes.ValidateTensorFastPath(req, sdktypes.TensorValidationOptions{}); err != nil {
+		return nil, err
 	}
 
 	chCfg := c.config.Chunk
@@ -744,22 +763,31 @@ func (c *LumenClient) GetCapabilities(ctx context.Context, nodeID string) ([]*pb
 		return nil, fmt.Errorf("node not found: %s", nodeID)
 	}
 
-	return node.Capabilities, nil
+	return discovery.CloneCapabilities(node.Capabilities), nil
 }
 
 // GetNodes 获取所有节点
-func (c *LumenClient) GetNodes() []*NodeInfo {
-	return c.discovery.GetNodes()
+func (c *LumenClient) GetNodes() []*discovery.NodeInfo {
+	return discovery.CloneNodeSlice(c.discovery.GetNodes())
 }
 
 // GetNode 获取指定节点
-func (c *LumenClient) GetNode(id string) (*NodeInfo, bool) {
-	return c.discovery.GetNode(id)
+func (c *LumenClient) GetNode(id string) (*discovery.NodeInfo, bool) {
+	node, ok := c.discovery.GetNode(id)
+	if !ok {
+		return nil, false
+	}
+	return discovery.CloneNode(node), true
 }
 
 // WatchNodes 监听节点变化
-func (c *LumenClient) WatchNodes(callback func([]*NodeInfo)) error {
-	return c.discovery.Watch(callback)
+func (c *LumenClient) WatchNodes(callback func([]*discovery.NodeInfo)) error {
+	if callback == nil {
+		return fmt.Errorf("callback cannot be nil")
+	}
+	return c.discovery.Watch(func(nodes []*discovery.NodeInfo) {
+		callback(discovery.CloneNodeSlice(nodes))
+	})
 }
 
 // Close 关闭客户端
@@ -769,7 +797,7 @@ func (c *LumenClient) Close() error {
 
 // 节点变化回调
 // onNodesChanged 节点变化回调
-func (c *LumenClient) onNodesChanged(nodes []*NodeInfo) {
+func (c *LumenClient) onNodesChanged(nodes []*discovery.NodeInfo) {
 	c.logger.Debug("nodes changed", zap.Int("count", len(nodes)))
 
 	// 更新负载均衡器的节点列表

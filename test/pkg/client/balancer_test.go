@@ -7,18 +7,19 @@ import (
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 	"go.uber.org/zap"
 )
 
-func createTestNodes(count int) []*client.NodeInfo {
-	nodes := make([]*client.NodeInfo, count)
+func createTestNodes(count int) []*discovery.NodeInfo {
+	nodes := make([]*discovery.NodeInfo, count)
 	for i := 0; i < count; i++ {
-		nodes[i] = &client.NodeInfo{
-			ID:      string(rune('A' + i)),
-			Name:    string(rune('A' + i)),
-			Status:  client.NodeStatusActive,
-			Weight:  int64(i + 1), // Weight increases: 1, 2, 3, ...
+		nodes[i] = &discovery.NodeInfo{
+			ID:     string(rune('A' + i)),
+			Name:   string(rune('A' + i)),
+			Status: discovery.NodeStatusActive,
+			Weight: int64(i + 1), // Weight increases: 1, 2, 3, ...
 			Tasks: []*pb.IOTask{
 				{Name: "test_task"},
 			},
@@ -57,7 +58,7 @@ func TestRoundRobinStrategyEmptyNodes(t *testing.T) {
 	strategy := client.NewRoundRobinStrategy()
 	ctx := context.Background()
 
-	_, err := strategy.Select(ctx, []*client.NodeInfo{}, "test_task")
+	_, err := strategy.Select(ctx, []*discovery.NodeInfo{}, "test_task")
 	if err == nil {
 		t.Error("Expected error for empty nodes, got nil")
 	}
@@ -153,9 +154,9 @@ func TestWeightedStrategyName(t *testing.T) {
 func TestWeightedStrategyNoWeights(t *testing.T) {
 	strategy := client.NewWeightedStrategy()
 	// Create nodes with no weights (weight = 0)
-	nodes := []*client.NodeInfo{
-		{ID: "A", Status: client.NodeStatusActive, Weight: 0, Tasks: []*pb.IOTask{{Name: "test_task"}}},
-		{ID: "B", Status: client.NodeStatusActive, Weight: 0, Tasks: []*pb.IOTask{{Name: "test_task"}}},
+	nodes := []*discovery.NodeInfo{
+		{ID: "A", Status: discovery.NodeStatusActive, Weight: 0, Tasks: []*pb.IOTask{{Name: "test_task"}}},
+		{ID: "B", Status: discovery.NodeStatusActive, Weight: 0, Tasks: []*pb.IOTask{{Name: "test_task"}}},
 	}
 	ctx := context.Background()
 
@@ -272,7 +273,7 @@ func TestSimpleLoadBalancerGetStats(t *testing.T) {
 	nodes := createTestNodes(3)
 
 	// Set one node as inactive
-	nodes[1].Status = client.NodeStatusError
+	nodes[1].Status = discovery.NodeStatusError
 
 	lb.UpdateNodes(nodes)
 

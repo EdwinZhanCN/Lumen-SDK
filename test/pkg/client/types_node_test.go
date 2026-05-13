@@ -5,25 +5,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edwinzhancn/lumen-sdk/pkg/client"
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 )
 
 func TestNodeInfoIsActive(t *testing.T) {
 	tests := []struct {
 		name     string
-		status   client.NodeStatus
+		status   discovery.NodeStatus
 		expected bool
 	}{
-		{"Active node", client.NodeStatusActive, true},
-		{"Unknown node", client.NodeStatusUnknown, false},
-		{"Starting node", client.NodeStatusStarting, false},
-		{"Error node", client.NodeStatusError, false},
+		{"Active node", discovery.NodeStatusActive, true},
+		{"Unknown node", discovery.NodeStatusUnknown, false},
+		{"Starting node", discovery.NodeStatusStarting, false},
+		{"Error node", discovery.NodeStatusError, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node := &client.NodeInfo{
+			node := &discovery.NodeInfo{
 				Status: tt.status,
 			}
 			if got := node.IsActive(); got != tt.expected {
@@ -34,7 +34,7 @@ func TestNodeInfoIsActive(t *testing.T) {
 }
 
 func TestNodeInfoSupportsTask(t *testing.T) {
-	node := &client.NodeInfo{
+	node := &discovery.NodeInfo{
 		Tasks: []*pb.IOTask{
 			{Name: "task1"},
 			{Name: "task2"},
@@ -69,7 +69,7 @@ func TestNodeInfoSupportsTask(t *testing.T) {
 }
 
 func TestNodeInfoSupportsTaskCaching(t *testing.T) {
-	node := &client.NodeInfo{
+	node := &discovery.NodeInfo{
 		Tasks: []*pb.IOTask{
 			{Name: "task1"},
 		},
@@ -92,7 +92,7 @@ func TestNodeInfoSupportsTaskCaching(t *testing.T) {
 }
 
 func TestNodeInfoGetConnections(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	if connections := node.GetConnections(); connections != 0 {
 		t.Errorf("Expected 0 connections, got %d", connections)
@@ -100,7 +100,7 @@ func TestNodeInfoGetConnections(t *testing.T) {
 }
 
 func TestNodeInfoIncrementConnections(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	node.IncrementConnections()
 	if connections := node.GetConnections(); connections != 1 {
@@ -114,7 +114,7 @@ func TestNodeInfoIncrementConnections(t *testing.T) {
 }
 
 func TestNodeInfoDecrementConnections(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	node.IncrementConnections()
 	node.IncrementConnections()
@@ -131,7 +131,7 @@ func TestNodeInfoDecrementConnections(t *testing.T) {
 }
 
 func TestNodeInfoConnectionsConcurrency(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 	var wg sync.WaitGroup
 
 	// Concurrent increments
@@ -166,9 +166,9 @@ func TestNodeInfoConnectionsConcurrency(t *testing.T) {
 }
 
 func TestNodeInfoUpdateLoad(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
-	load := &client.NodeLoad{
+	load := &discovery.NodeLoad{
 		CPU:    0.5,
 		Memory: 0.7,
 		GPU:    0.3,
@@ -196,9 +196,9 @@ func TestNodeInfoUpdateLoad(t *testing.T) {
 }
 
 func TestNodeInfoUpdateStats(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
-	stats := &client.NodeStats{
+	stats := &discovery.NodeStats{
 		TotalRequests:      100,
 		SuccessfulRequests: 90,
 		FailedRequests:     10,
@@ -224,7 +224,7 @@ func TestNodeInfoUpdateStats(t *testing.T) {
 }
 
 func TestNodeInfoRecordRequestSuccess(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	latency := 100 * time.Millisecond
 	node.RecordRequest(true, latency)
@@ -248,7 +248,7 @@ func TestNodeInfoRecordRequestSuccess(t *testing.T) {
 }
 
 func TestNodeInfoRecordRequestFailure(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	latency := 50 * time.Millisecond
 	node.RecordRequest(false, latency)
@@ -269,7 +269,7 @@ func TestNodeInfoRecordRequestFailure(t *testing.T) {
 }
 
 func TestNodeInfoRecordRequestAverageLatency(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	// Record first request
 	node.RecordRequest(true, 100*time.Millisecond)
@@ -288,7 +288,7 @@ func TestNodeInfoRecordRequestAverageLatency(t *testing.T) {
 }
 
 func TestNodeInfoGetErrorRate(t *testing.T) {
-	node := &client.NodeInfo{}
+	node := &discovery.NodeInfo{}
 
 	// No stats
 	if errorRate := node.GetErrorRate(); errorRate != 0.0 {
@@ -296,7 +296,7 @@ func TestNodeInfoGetErrorRate(t *testing.T) {
 	}
 
 	// With stats
-	node.Stats = &client.NodeStats{
+	node.Stats = &discovery.NodeStats{
 		TotalRequests:      100,
 		SuccessfulRequests: 90,
 		FailedRequests:     10,
@@ -309,8 +309,8 @@ func TestNodeInfoGetErrorRate(t *testing.T) {
 }
 
 func TestNodeInfoGetErrorRateZeroRequests(t *testing.T) {
-	node := &client.NodeInfo{
-		Stats: &client.NodeStats{
+	node := &discovery.NodeInfo{
+		Stats: &discovery.NodeStats{
 			TotalRequests: 0,
 		},
 	}
@@ -321,7 +321,7 @@ func TestNodeInfoGetErrorRateZeroRequests(t *testing.T) {
 }
 
 func TestNodeLoadStruct(t *testing.T) {
-	load := client.NodeLoad{
+	load := discovery.NodeLoad{
 		CPU:    0.75,
 		Memory: 0.85,
 		GPU:    0.50,
@@ -344,7 +344,7 @@ func TestNodeLoadStruct(t *testing.T) {
 
 func TestNodeStatsStruct(t *testing.T) {
 	now := time.Now()
-	stats := client.NodeStats{
+	stats := discovery.NodeStats{
 		TotalRequests:      1000,
 		SuccessfulRequests: 950,
 		FailedRequests:     50,
@@ -370,15 +370,15 @@ func TestNodeStatsStruct(t *testing.T) {
 }
 
 func TestNodeStatusConstants(t *testing.T) {
-	statuses := []client.NodeStatus{
-		client.NodeStatusUnknown,
-		client.NodeStatusStarting,
-		client.NodeStatusActive,
-		client.NodeStatusError,
+	statuses := []discovery.NodeStatus{
+		discovery.NodeStatusUnknown,
+		discovery.NodeStatusStarting,
+		discovery.NodeStatusActive,
+		discovery.NodeStatusError,
 	}
 
 	// Verify constants are different
-	seen := make(map[client.NodeStatus]bool)
+	seen := make(map[discovery.NodeStatus]bool)
 	for _, status := range statuses {
 		if seen[status] {
 			t.Errorf("Duplicate status value: %s", status)
@@ -395,7 +395,7 @@ func TestNodeStatusConstants(t *testing.T) {
 }
 
 func TestModelInfoStruct(t *testing.T) {
-	model := client.ModelInfo{
+	model := discovery.ModelInfo{
 		ID:      "model-123",
 		Name:    "Test Model",
 		Version: "1.0.0",

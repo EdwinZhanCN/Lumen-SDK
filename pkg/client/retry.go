@@ -13,10 +13,10 @@ import (
 type RetryOption func(*RetryConfig)
 
 type RetryConfig struct {
-	maxWaitTime     time.Duration
-	retryInterval   time.Duration
-	maxRetries      int
-	waitForTask     bool
+	maxWaitTime   time.Duration
+	retryInterval time.Duration
+	maxRetries    int
+	waitForTask   bool
 }
 
 // WithMaxWaitTime sets maximum time to wait for successful inference
@@ -59,6 +59,10 @@ func defaultRetryConfig() *RetryConfig {
 
 // InferWithRetry performs inference with automatic retry logic
 func (c *LumenClient) InferWithRetry(ctx context.Context, req *pb.InferRequest, opts ...RetryOption) (*pb.InferResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+
 	config := defaultRetryConfig()
 	for _, opt := range opts {
 		opt(config)
@@ -69,6 +73,10 @@ func (c *LumenClient) InferWithRetry(ctx context.Context, req *pb.InferRequest, 
 	var lastError error
 
 	for time.Since(startTime) < config.maxWaitTime {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		// Check max retries if specified
 		if config.maxRetries > 0 && retryCount >= config.maxRetries {
 			break
@@ -76,8 +84,9 @@ func (c *LumenClient) InferWithRetry(ctx context.Context, req *pb.InferRequest, 
 
 		// If waiting for task, check if it's available
 		if config.waitForTask && !c.IsTaskAvailable(req.Task) {
-			fmt.Printf("⏳ Task '%s' not available yet, waiting... (%d)\n", req.Task, retryCount+1)
-			time.Sleep(config.retryInterval)
+			if err := sleepWithContext(ctx, config.retryInterval); err != nil {
+				return nil, err
+			}
 			retryCount++
 			continue
 		}
@@ -85,9 +94,6 @@ func (c *LumenClient) InferWithRetry(ctx context.Context, req *pb.InferRequest, 
 		// Try inference
 		resp, err := c.Infer(ctx, req)
 		if err == nil {
-			if retryCount > 0 {
-				fmt.Printf("✅ Success after %d retries\n", retryCount)
-			}
 			return resp, nil
 		}
 
@@ -98,9 +104,10 @@ func (c *LumenClient) InferWithRetry(ctx context.Context, req *pb.InferRequest, 
 			break
 		}
 
-		fmt.Printf("⚠️  Retry %d: %v\n", retryCount+1, err)
 		retryCount++
-		time.Sleep(config.retryInterval)
+		if err := sleepWithContext(ctx, config.retryInterval); err != nil {
+			return nil, err
+		}
 	}
 
 	if lastError != nil {
@@ -168,4 +175,16 @@ func isRetryableError(err error) bool {
 
 func contains(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

@@ -266,6 +266,31 @@ func (p *InferResponseParser) AsTextGenerationResponse() (*TextGenerationV1, err
 	return &result, nil
 }
 
+// AsTensorResponse parses the response as a validated tensor output.
+func (p *InferResponseParser) AsTensorResponse() (*TensorResponse, error) {
+	if p.resp == nil {
+		return nil, fmt.Errorf("response cannot be nil")
+	}
+
+	desc, err := ValidateTensorResponse(p.resp, TensorOutputValidationOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if desc == nil {
+		return nil, fmt.Errorf("unexpected response type: %s", p.resp.ResultMime)
+	}
+
+	data := make([]byte, len(p.resp.Result))
+	copy(data, p.resp.Result)
+
+	return &TensorResponse{
+		Descriptor: desc,
+		Data:       data,
+		ResultMime: p.resp.ResultMime,
+		Meta:       cloneStringMap(p.resp.Meta),
+	}, nil
+}
+
 // Raw returns the underlying protobuf response without parsing.
 //
 // Use this method when you need direct access to the raw response fields,

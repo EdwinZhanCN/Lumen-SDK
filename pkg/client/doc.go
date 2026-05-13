@@ -41,7 +41,8 @@
 //	     ↓
 //	LumenClient (orchestrates)
 //	     ↓
-//	├─ MDNSDiscovery (finds nodes)
+//	├─ Discovery Manager (aggregates discovery backends)
+//	│  └─ MDNSDiscovery (finds nodes)
 //	├─ LoadBalancer (selects nodes)
 //	├─ ConnectionPool (manages connections)
 //	└─ Chunker (handles large payloads)

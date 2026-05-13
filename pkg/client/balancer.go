@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 
 	"go.uber.org/zap"
 )
@@ -40,10 +41,10 @@ import (
 //	node, err := balancer.SelectNode(ctx, "text_embedding")
 type LoadBalancer interface {
 	// SelectNode 选择一个合适的节点来处理指定任务
-	SelectNode(ctx context.Context, task string) (*NodeInfo, error)
+	SelectNode(ctx context.Context, task string) (*discovery.NodeInfo, error)
 
 	// UpdateNodes 更新节点列表
-	UpdateNodes(nodes []*NodeInfo)
+	UpdateNodes(nodes []*discovery.NodeInfo)
 
 	// GetStats 获取负载均衡器统计信息
 	GetStats() LoadBalancerStats
@@ -64,7 +65,7 @@ type LoadBalancerStats struct {
 // LoadBalancingStrategy 负载均衡策略接口
 type LoadBalancingStrategy interface {
 	// Select 从节点列表中选择一个节点
-	Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error)
+	Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error)
 
 	// Name 策略名称
 	Name() string
@@ -73,7 +74,7 @@ type LoadBalancingStrategy interface {
 // HealthCheckFunc is a function type for performing actual health checks on nodes.
 // It should return true if the node is healthy, false otherwise.
 // When health check succeeds, implementations should update node.LastSeen.
-type HealthCheckFunc func(node *NodeInfo) bool
+type HealthCheckFunc func(node *discovery.NodeInfo) bool
 
 // SimpleLoadBalancer 简单的负载均衡器实现
 type SimpleLoadBalancer struct {
@@ -81,7 +82,9 @@ type SimpleLoadBalancer struct {
 	config          *config.LoadBalancerConfig
 	cache           *NodeCache
 	healthChecker   *HealthChecker
-	nodes           []*NodeInfo
+	healthCancel    context.CancelFunc
+	healthStarted   bool
+	nodes           []*discovery.NodeInfo
 	mu              sync.RWMutex
 	logger          *zap.Logger
 	stats           LoadBalancerStats
@@ -91,9 +94,10 @@ type SimpleLoadBalancer struct {
 
 // NewSimpleLoadBalancer 创建带配置的负载均衡器
 func NewSimpleLoadBalancer(strategy LoadBalancingStrategy, config *config.LoadBalancerConfig, logger *zap.Logger) *SimpleLoadBalancer {
+	logger = ensureLogger(logger)
 	lb := &SimpleLoadBalancer{
 		strategy: strategy,
-		nodes:    make([]*NodeInfo, 0),
+		nodes:    make([]*discovery.NodeInfo, 0),
 		logger:   logger,
 		stats: LoadBalancerStats{
 			Strategy: strategy.Name(),
@@ -119,9 +123,9 @@ func NewSimpleLoadBalancer(strategy LoadBalancingStrategy, config *config.LoadBa
 }
 
 // SelectNode 选择节点
-func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*NodeInfo, error) {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
+func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*discovery.NodeInfo, error) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
 
 	if lb.closed {
 		return nil, fmt.Errorf("load balancer is closed")
@@ -174,11 +178,11 @@ func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*Nod
 }
 
 // UpdateNodes 更新节点列表
-func (lb *SimpleLoadBalancer) UpdateNodes(nodes []*NodeInfo) {
+func (lb *SimpleLoadBalancer) UpdateNodes(nodes []*discovery.NodeInfo) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	lb.nodes = make([]*NodeInfo, len(nodes))
+	lb.nodes = make([]*discovery.NodeInfo, len(nodes))
 	copy(lb.nodes, nodes)
 
 	lb.stats.TotalNodes = int64(len(nodes))
@@ -195,7 +199,12 @@ func (lb *SimpleLoadBalancer) UpdateNodes(nodes []*NodeInfo) {
 	// 启动健康检查（如果启用且节点列表不为空）
 	if lb.config != nil && lb.config.HealthCheck && lb.healthChecker != nil && len(nodes) > 0 {
 		lb.healthChecker.setNodes(nodes)
-		go lb.healthChecker.Start(context.Background(), lb.createHealthCheckFunction())
+		if !lb.healthStarted {
+			healthCtx, cancel := context.WithCancel(context.Background())
+			lb.healthCancel = cancel
+			lb.healthStarted = true
+			go lb.healthChecker.Start(healthCtx, lb.createHealthCheckFunction())
+		}
 	}
 
 	lb.logger.Debug("nodes updated",
@@ -214,8 +223,8 @@ func (lb *SimpleLoadBalancer) SetHealthCheckFunc(fn HealthCheckFunc) {
 }
 
 // createHealthCheckFunction 创建健康检查函数
-func (lb *SimpleLoadBalancer) createHealthCheckFunction() func(*NodeInfo) bool {
-	return func(node *NodeInfo) bool {
+func (lb *SimpleLoadBalancer) createHealthCheckFunction() func(*discovery.NodeInfo) bool {
+	return func(node *discovery.NodeInfo) bool {
 		// If an external health check function is set, use it
 		lb.mu.RLock()
 		externalCheck := lb.healthCheckFunc
@@ -226,8 +235,8 @@ func (lb *SimpleLoadBalancer) createHealthCheckFunction() func(*NodeInfo) bool {
 			if healthy {
 				// Update LastSeen on successful health check
 				node.LastSeen = time.Now()
-				if node.Status == NodeStatusError {
-					node.Status = NodeStatusActive
+				if node.Status == discovery.NodeStatusError {
+					node.Status = discovery.NodeStatusActive
 				}
 			}
 			return healthy
@@ -235,7 +244,7 @@ func (lb *SimpleLoadBalancer) createHealthCheckFunction() func(*NodeInfo) bool {
 
 		// Fallback: simple status-based check (no LastSeen timeout)
 		// When no external health check is configured, trust the node status
-		if node.Status == NodeStatusUnknown || node.Status == NodeStatusError {
+		if node.Status == discovery.NodeStatusUnknown || node.Status == discovery.NodeStatusError {
 			return false
 		}
 
@@ -277,6 +286,9 @@ func (lb *SimpleLoadBalancer) Close() error {
 
 	// 停止健康检查
 	if lb.healthChecker != nil {
+		if lb.healthCancel != nil {
+			lb.healthCancel()
+		}
 		lb.healthChecker.Stop()
 	}
 
@@ -285,8 +297,8 @@ func (lb *SimpleLoadBalancer) Close() error {
 }
 
 // filterAvailableNodes 过滤可用节点
-func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*NodeInfo, task string) []*NodeInfo {
-	available := make([]*NodeInfo, 0)
+func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*discovery.NodeInfo, task string) []*discovery.NodeInfo {
+	available := make([]*discovery.NodeInfo, 0)
 
 	for _, node := range nodes {
 		// 检查节点是否活跃
@@ -296,7 +308,7 @@ func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*NodeInfo, task strin
 
 		// 如果启用了健康检查，只选择健康节点
 		if lb.config != nil && lb.config.HealthCheck {
-			if node.Status == NodeStatusError {
+			if node.Status == discovery.NodeStatusError {
 				continue
 			}
 		}
@@ -325,7 +337,7 @@ func NewRoundRobinStrategy() *RoundRobinStrategy {
 	return &RoundRobinStrategy{}
 }
 
-func (s *RoundRobinStrategy) Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error) {
+func (s *RoundRobinStrategy) Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -356,7 +368,7 @@ func NewRandomStrategy() *RandomStrategy {
 	}
 }
 
-func (s *RandomStrategy) Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error) {
+func (s *RandomStrategy) Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -385,7 +397,7 @@ func NewWeightedStrategy() *WeightedStrategy {
 	}
 }
 
-func (s *WeightedStrategy) Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error) {
+func (s *WeightedStrategy) Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -428,7 +440,7 @@ func (s *WeightedStrategy) Name() string {
 
 // NodeCache 节点缓存
 type NodeCache struct {
-	cache  map[string]*NodeInfo
+	cache  map[string]*discovery.NodeInfo
 	ttl    time.Duration
 	mu     sync.RWMutex
 	closed bool
@@ -437,7 +449,7 @@ type NodeCache struct {
 // NewNodeCache 创建节点缓存
 func NewNodeCache(ttl time.Duration) *NodeCache {
 	cache := &NodeCache{
-		cache: make(map[string]*NodeInfo),
+		cache: make(map[string]*discovery.NodeInfo),
 		ttl:   ttl,
 	}
 
@@ -448,7 +460,7 @@ func NewNodeCache(ttl time.Duration) *NodeCache {
 }
 
 // Get 从缓存获取节点
-func (c *NodeCache) Get(task string) *NodeInfo {
+func (c *NodeCache) Get(task string) *discovery.NodeInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -456,7 +468,7 @@ func (c *NodeCache) Get(task string) *NodeInfo {
 }
 
 // Set 设置缓存
-func (c *NodeCache) Set(task string, node *NodeInfo, ttl time.Duration) {
+func (c *NodeCache) Set(task string, node *discovery.NodeInfo, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -476,7 +488,7 @@ func (c *NodeCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.cache = make(map[string]*NodeInfo)
+	c.cache = make(map[string]*discovery.NodeInfo)
 }
 
 // Close 关闭缓存
@@ -503,7 +515,7 @@ func (c *NodeCache) startCleanup() {
 			}
 
 			// 简单的过期策略：定时清空
-			c.cache = make(map[string]*NodeInfo)
+			c.cache = make(map[string]*discovery.NodeInfo)
 			c.mu.Unlock()
 		case <-time.After(c.ttl):
 			// 超时保护
@@ -517,7 +529,8 @@ type HealthChecker struct {
 	interval time.Duration
 	logger   *zap.Logger
 	stopCh   chan struct{}
-	nodes    []*NodeInfo
+	stopOnce sync.Once
+	nodes    []*discovery.NodeInfo
 	mu       sync.RWMutex
 }
 
@@ -531,7 +544,7 @@ func NewHealthChecker(interval time.Duration, logger *zap.Logger) *HealthChecker
 }
 
 // Start 启动健康检查
-func (hc *HealthChecker) Start(ctx context.Context, checkFunc func(*NodeInfo) bool) {
+func (hc *HealthChecker) Start(ctx context.Context, checkFunc func(*discovery.NodeInfo) bool) {
 	ticker := time.NewTicker(hc.interval)
 	defer ticker.Stop()
 
@@ -549,29 +562,36 @@ func (hc *HealthChecker) Start(ctx context.Context, checkFunc func(*NodeInfo) bo
 
 // Stop 停止健康检查
 func (hc *HealthChecker) Stop() {
-	close(hc.stopCh)
+	hc.stopOnce.Do(func() {
+		close(hc.stopCh)
+	})
 }
 
 // checkNodes 检查节点健康状态
-func (hc *HealthChecker) checkNodes(nodes []*NodeInfo) {
+func (hc *HealthChecker) checkNodes(nodes []*discovery.NodeInfo) {
 	for _, node := range nodes {
 		go hc.checkNodeFunc(node, hc.createDefaultCheck())
 	}
 }
 
 // checkNodesFunc 使用自定义检查函数检查节点
-func (hc *HealthChecker) checkNodesFunc(checkFunc func(*NodeInfo) bool) {
-	for _, node := range hc.nodes {
+func (hc *HealthChecker) checkNodesFunc(checkFunc func(*discovery.NodeInfo) bool) {
+	hc.mu.RLock()
+	nodes := make([]*discovery.NodeInfo, len(hc.nodes))
+	copy(nodes, hc.nodes)
+	hc.mu.RUnlock()
+
+	for _, node := range nodes {
 		go hc.checkNodeFunc(node, checkFunc)
 	}
 }
 
 // checkNodeFunc 使用自定义函数检查单个节点
-func (hc *HealthChecker) checkNodeFunc(node *NodeInfo, checkFunc func(*NodeInfo) bool) {
+func (hc *HealthChecker) checkNodeFunc(node *discovery.NodeInfo, checkFunc func(*discovery.NodeInfo) bool) {
 	if checkFunc(node) {
 		// 健康检查通过
-		if node.Status == NodeStatusError {
-			node.Status = NodeStatusActive
+		if node.Status == discovery.NodeStatusError {
+			node.Status = discovery.NodeStatusActive
 		}
 
 		hc.logger.Debug("node health check passed",
@@ -581,16 +601,16 @@ func (hc *HealthChecker) checkNodeFunc(node *NodeInfo, checkFunc func(*NodeInfo)
 			zap.String("node_id", node.ID))
 
 		// 更新节点状态
-		node.Status = NodeStatusError
+		node.Status = discovery.NodeStatusError
 	}
 }
 
 // createDefaultCheck 创建默认的健康检查函数
-func (hc *HealthChecker) createDefaultCheck() func(*NodeInfo) bool {
-	return func(node *NodeInfo) bool {
+func (hc *HealthChecker) createDefaultCheck() func(*discovery.NodeInfo) bool {
+	return func(node *discovery.NodeInfo) bool {
 		// Simple status-based check without LastSeen timeout
 		// The actual health check should be done via gRPC and update LastSeen
-		if node.Status == NodeStatusUnknown || node.Status == NodeStatusError {
+		if node.Status == discovery.NodeStatusUnknown || node.Status == discovery.NodeStatusError {
 			return false
 		}
 
@@ -599,10 +619,11 @@ func (hc *HealthChecker) createDefaultCheck() func(*NodeInfo) bool {
 }
 
 // setNodes 设置要检查的节点列表
-func (hc *HealthChecker) setNodes(nodes []*NodeInfo) {
+func (hc *HealthChecker) setNodes(nodes []*discovery.NodeInfo) {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	hc.nodes = nodes
+	hc.nodes = make([]*discovery.NodeInfo, len(nodes))
+	copy(hc.nodes, nodes)
 }
 
 // LeastConnectionsStrategy 最少连接策略
@@ -613,13 +634,13 @@ func NewLeastConnectionsStrategy() *LeastConnectionsStrategy {
 	return &LeastConnectionsStrategy{}
 }
 
-func (s *LeastConnectionsStrategy) Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error) {
+func (s *LeastConnectionsStrategy) Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("no nodes available")
 	}
 
 	// 找到连接数最少的节点
-	var selected *NodeInfo
+	var selected *discovery.NodeInfo
 	minConnections := int64(-1)
 
 	for _, node := range nodes {
@@ -649,7 +670,7 @@ func NewTaskAwareStrategy(baseStrategy LoadBalancingStrategy) *TaskAwareStrategy
 	}
 }
 
-func (s *TaskAwareStrategy) Select(ctx context.Context, nodes []*NodeInfo, task string) (*NodeInfo, error) {
+func (s *TaskAwareStrategy) Select(ctx context.Context, nodes []*discovery.NodeInfo, task string) (*discovery.NodeInfo, error) {
 	// 根据任务类型对节点进行排序和过滤
 	sortedNodes := s.rankNodesByTask(nodes, task)
 
@@ -661,9 +682,9 @@ func (s *TaskAwareStrategy) Name() string {
 }
 
 // rankNodesByTask 根据任务类型对节点排序
-func (s *TaskAwareStrategy) rankNodesByTask(nodes []*NodeInfo, task string) []*NodeInfo {
+func (s *TaskAwareStrategy) rankNodesByTask(nodes []*discovery.NodeInfo, task string) []*discovery.NodeInfo {
 	// 复制节点列表
-	sorted := make([]*NodeInfo, len(nodes))
+	sorted := make([]*discovery.NodeInfo, len(nodes))
 	copy(sorted, nodes)
 
 	// 根据节点对任务的适合度排序
@@ -677,7 +698,7 @@ func (s *TaskAwareStrategy) rankNodesByTask(nodes []*NodeInfo, task string) []*N
 }
 
 // calculateTaskScore 计算节点对任务的适合度分数
-func (s *TaskAwareStrategy) calculateTaskScore(node *NodeInfo, task string) float64 {
+func (s *TaskAwareStrategy) calculateTaskScore(node *discovery.NodeInfo, task string) float64 {
 	score := 0.0
 
 	// 检查是否支持任务
@@ -791,6 +812,7 @@ const (
 //	    logger,
 //	)
 func CreateLoadBalancer(balancerType LoadBalancerType, config *config.LoadBalancerConfig, logger *zap.Logger) LoadBalancer {
+	logger = ensureLogger(logger)
 	var strategy LoadBalancingStrategy
 
 	switch balancerType {

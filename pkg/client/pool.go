@@ -3,10 +3,13 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
+	sdktypes "github.com/edwinzhancn/lumen-sdk/pkg/types"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 	"go.uber.org/zap"
@@ -32,6 +35,8 @@ type Connection struct {
 	UsageCount  int64
 	ErrorCount  int64
 	Status      ConnectionStatus
+	healthStop  chan struct{}
+	stopOnce    sync.Once
 	mu          sync.RWMutex
 }
 
@@ -53,10 +58,26 @@ func (conn *Connection) Infer(ctx context.Context, req *pb.InferRequest) (*pb.In
 		return nil, fmt.Errorf("failed to close send: %w", err)
 	}
 
-	// 接收响应
-	resp, err := stream.Recv()
+	// 接收响应直到最终语义响应，或兼容 legacy server 在单次响应后关闭流。
+	var responses []*pb.InferResponse
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF && len(responses) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("failed to receive response: %w", err)
+		}
+
+		responses = append(responses, resp)
+		if resp.IsFinal {
+			break
+		}
+	}
+
+	resp, err := sdktypes.AssembleInferResponses(responses)
 	if err != nil {
-		return nil, fmt.Errorf("failed to receive response: %w", err)
+		return nil, fmt.Errorf("failed to assemble response: %w", err)
 	}
 
 	// 更新连接统计
@@ -128,6 +149,7 @@ func NewGRPCConnectionPool(config *PoolConfig, logger *zap.Logger) *GRPCConnecti
 			HealthInterval: 30 * time.Second,
 		}
 	}
+	logger = ensureLogger(logger)
 
 	return &GRPCConnectionPool{
 		config:      config,
@@ -137,12 +159,17 @@ func NewGRPCConnectionPool(config *PoolConfig, logger *zap.Logger) *GRPCConnecti
 }
 
 // GetConnection 获取连接
-func (p *GRPCConnectionPool) GetConnection(node *NodeInfo) (*Connection, error) {
+func (p *GRPCConnectionPool) GetConnection(node *discovery.NodeInfo) (*Connection, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	conn, exists := p.connections[node.ID]
-	if !exists || !p.isConnectionHealthy(conn) {
+	if exists && !p.isConnectionHealthy(conn) {
+		p.closeConnection(node.ID, conn)
+		delete(p.connections, node.ID)
+		exists = false
+	}
+	if !exists {
 		// 需要创建新连接
 		newConn, err := p.createConnection(node)
 		if err != nil {
@@ -195,14 +222,8 @@ func (p *GRPCConnectionPool) Close() error {
 	var closeErrors []error
 
 	for nodeID, conn := range p.connections {
-		if conn.Conn != nil {
-			if err := conn.Conn.Close(); err != nil {
-				closeErrors = append(closeErrors, err)
-				p.logger.Error("failed to close connection",
-					zap.String("node_id", nodeID),
-					zap.Error(err),
-				)
-			}
+		if err := p.closeConnection(nodeID, conn); err != nil {
+			closeErrors = append(closeErrors, err)
 		}
 	}
 
@@ -261,7 +282,7 @@ func (p *GRPCConnectionPool) Stats() map[string]interface{} {
 }
 
 // createConnection 创建新连接
-func (p *GRPCConnectionPool) createConnection(node *NodeInfo) (*Connection, error) {
+func (p *GRPCConnectionPool) createConnection(node *discovery.NodeInfo) (*Connection, error) {
 	p.logger.Debug("creating new connection",
 		zap.String("node_id", node.ID),
 	)
@@ -300,6 +321,7 @@ func (p *GRPCConnectionPool) createConnection(node *NodeInfo) (*Connection, erro
 		UsageCount:  0,
 		ErrorCount:  0,
 		Status:      ConnectionStatusConnected,
+		healthStop:  make(chan struct{}),
 	}
 
 	p.logger.Info("created new connection",
@@ -351,12 +373,9 @@ func (p *GRPCConnectionPool) healthCheckLoop(nodeID string, conn *Connection) {
 	ticker := time.NewTicker(p.config.HealthInterval)
 	defer ticker.Stop()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	for {
 		select {
-		case <-ctx.Done():
+		case <-conn.healthStop:
 			return
 		case <-ticker.C:
 			if !p.performHealthCheck(nodeID, conn) {
@@ -408,9 +427,7 @@ func (p *GRPCConnectionPool) cleanupIdleConnections() {
 
 	for _, nodeID := range toRemove {
 		if conn := p.connections[nodeID]; conn != nil {
-			if conn.Conn != nil {
-				conn.Conn.Close()
-			}
+			_ = p.closeConnection(nodeID, conn)
 			delete(p.connections, nodeID)
 
 			p.logger.Debug("removed idle connection",
@@ -428,6 +445,9 @@ func (p *GRPCConnectionPool) EnsureConnection(nodeID, address string) error {
 	// 检查连接是否已存在且健康
 	if conn, exists := p.connections[nodeID]; exists && p.isConnectionHealthy(conn) {
 		return nil
+	} else if exists {
+		p.closeConnection(nodeID, conn)
+		delete(p.connections, nodeID)
 	}
 
 	// 创建新连接
@@ -450,12 +470,10 @@ func (p *GRPCConnectionPool) RemoveConnection(nodeID string) error {
 	defer p.mu.Unlock()
 
 	if conn, exists := p.connections[nodeID]; exists {
-		if conn.Conn != nil {
-			if err := conn.Conn.Close(); err != nil {
-				p.logger.Error("failed to close connection during removal",
-					zap.String("node_id", nodeID),
-					zap.Error(err))
-			}
+		if err := p.closeConnection(nodeID, conn); err != nil {
+			p.logger.Error("failed to close connection during removal",
+				zap.String("node_id", nodeID),
+				zap.Error(err))
 		}
 		delete(p.connections, nodeID)
 		p.logger.Debug("removed connection", zap.String("node_id", nodeID))
@@ -498,6 +516,7 @@ func (p *GRPCConnectionPool) createConnectionWithAddress(nodeID, address string)
 		UsageCount:  0,
 		ErrorCount:  0,
 		Status:      ConnectionStatusConnected,
+		healthStop:  make(chan struct{}),
 	}
 
 	p.logger.Info("created new connection",
@@ -523,6 +542,31 @@ func (p *GRPCConnectionPool) extractAddressFromNodeID(nodeID string) string {
 
 	// 或者直接返回nodeID作为地址
 	return nodeID
+}
+
+func (p *GRPCConnectionPool) closeConnection(nodeID string, conn *Connection) error {
+	if conn == nil {
+		return nil
+	}
+	p.stopHealthCheck(conn)
+	if conn.Conn == nil {
+		return nil
+	}
+	if err := conn.Conn.Close(); err != nil {
+		p.logger.Error("failed to close connection",
+			zap.String("node_id", nodeID),
+			zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+func (p *GRPCConnectionPool) stopHealthCheck(conn *Connection) {
+	conn.stopOnce.Do(func() {
+		if conn.healthStop != nil {
+			close(conn.healthStop)
+		}
+	})
 }
 
 // StartMaintenanceLoop 启动维护循环
@@ -551,7 +595,7 @@ type SimpleConnectionPool struct {
 func NewSimpleConnectionPool(logger *zap.Logger) *SimpleConnectionPool {
 	return &SimpleConnectionPool{
 		connections: make(map[string]pb.InferenceClient),
-		logger:      logger,
+		logger:      ensureLogger(logger),
 	}
 }
 

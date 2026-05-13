@@ -62,6 +62,71 @@ func TestInferRequestBuilderWithMetaOverwrite(t *testing.T) {
 	}
 }
 
+func TestInferRequestBuilderTensorHelpers(t *testing.T) {
+	payload := make([]byte, 1*3*224*224*4)
+	builder := types.NewInferRequest("clip_embed").
+		WithCorrelationID("tensor-1").
+		ForTensorInput(payload, "", types.TensorDescriptor{
+			DType:        "FP32",
+			Shape:        []int64{1, 3, 224, 224},
+			Layout:       "nchw",
+			PreprocessID: "clip_image_openai_v1",
+			ModelID:      "clip_vision_encoder",
+			ModelVersion: "v1",
+		})
+
+	req := builder.Build()
+
+	if req.PayloadMime != types.DefaultTensorMIME {
+		t.Errorf("Expected tensor MIME %s, got %s", types.DefaultTensorMIME, req.PayloadMime)
+	}
+	if req.Meta[types.MetaInputKind] != types.InputKindTensor {
+		t.Errorf("Expected tensor input kind, got %s", req.Meta[types.MetaInputKind])
+	}
+	if req.Meta[types.MetaTensorDType] != "fp32" {
+		t.Errorf("Expected normalized dtype fp32, got %s", req.Meta[types.MetaTensorDType])
+	}
+	if req.Meta[types.MetaTensorShape] != "[1,3,224,224]" {
+		t.Errorf("Expected tensor shape [1,3,224,224], got %s", req.Meta[types.MetaTensorShape])
+	}
+	if req.Meta[types.MetaTensorLayout] != "NCHW" {
+		t.Errorf("Expected normalized layout NCHW, got %s", req.Meta[types.MetaTensorLayout])
+	}
+	if req.Meta[types.MetaTensorFormat] != types.TensorFormatContig {
+		t.Errorf("Expected contiguous tensor format, got %s", req.Meta[types.MetaTensorFormat])
+	}
+	if req.Meta[types.MetaTensorByteOrder] != types.TensorByteOrderLittle {
+		t.Errorf("Expected little byte order, got %s", req.Meta[types.MetaTensorByteOrder])
+	}
+	if req.Meta[types.MetaPreprocessID] != "clip_image_openai_v1" {
+		t.Errorf("Expected preprocess id, got %s", req.Meta[types.MetaPreprocessID])
+	}
+	if req.Meta[types.MetaPreprocessSkip] != "true" {
+		t.Errorf("Expected preprocess skip true, got %s", req.Meta[types.MetaPreprocessSkip])
+	}
+	if req.Meta[types.MetaModelID] != "clip_vision_encoder" {
+		t.Errorf("Expected model id, got %s", req.Meta[types.MetaModelID])
+	}
+	if req.Meta[types.MetaModelVersion] != "v1" {
+		t.Errorf("Expected model version v1, got %s", req.Meta[types.MetaModelVersion])
+	}
+}
+
+func TestInferRequestBuilderTensorPreprocessSkip(t *testing.T) {
+	req := types.NewInferRequest("clip_embed").
+		ForTensorInput([]byte{1}, "", types.TensorDescriptor{
+			DType:          "uint8",
+			Shape:          []int64{1},
+			Layout:         "CHW",
+			PreprocessSkip: true,
+		}).
+		Build()
+
+	if req.Meta[types.MetaPreprocessSkip] != "true" {
+		t.Fatalf("Expected preprocess skip true, got %s", req.Meta[types.MetaPreprocessSkip])
+	}
+}
+
 func TestInferRequestBuilderForEmbedding(t *testing.T) {
 	payload := []byte("test payload")
 	embReq := &types.EmbeddingRequest{

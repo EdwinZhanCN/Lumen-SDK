@@ -224,8 +224,10 @@ if err == nil {
 #### 2. 监控节点变化
 
 ```go
+import "github.com/edwinzhancn/lumen-sdk/pkg/discovery"
+
 // 监听节点变化
-err := client.WatchNodes(func(nodes []*client.NodeInfo) {
+err := client.WatchNodes(func(nodes []*discovery.NodeInfo) {
     fmt.Printf("Nodes updated: %d active, %d total\n",
         countActiveNodes(nodes), len(nodes))
 
@@ -238,6 +240,8 @@ err := client.WatchNodes(func(nodes []*client.NodeInfo) {
     }
 })
 ```
+
+`GetNodes`, `GetNode`, and `WatchNodes` now expose discovery-layer node types from `pkg/discovery`.
 
 #### 3. 性能指标
 

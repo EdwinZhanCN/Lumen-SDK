@@ -11,6 +11,7 @@ import (
 	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/internal"
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
+	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 
 	"go.uber.org/zap"
@@ -170,7 +171,7 @@ func (s *HubdService) GetStatus() map[string]interface{} {
 	return status
 }
 
-func countActiveNodes(nodes []*client.NodeInfo) int {
+func countActiveNodes(nodes []*discovery.NodeInfo) int {
 	count := 0
 	for _, node := range nodes {
 		if node.IsActive() {
