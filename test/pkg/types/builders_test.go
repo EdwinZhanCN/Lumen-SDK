@@ -19,8 +19,8 @@ func TestNewInferRequest(t *testing.T) {
 		t.Error("Expected Meta to be initialized")
 	}
 
-	if req.PayloadMime != "application/json" {
-		t.Errorf("Expected default PayloadMime 'application/json', got %s", req.PayloadMime)
+	if req.PayloadMime != "" {
+		t.Errorf("Expected empty default PayloadMime, got %s", req.PayloadMime)
 	}
 }
 
@@ -64,13 +64,13 @@ func TestInferRequestBuilderWithMetaOverwrite(t *testing.T) {
 
 func TestInferRequestBuilderTensorHelpers(t *testing.T) {
 	payload := make([]byte, 1*3*224*224*4)
-	builder := types.NewInferRequest("clip_embed").
+	builder := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		WithCorrelationID("tensor-1").
 		ForTensorInput(payload, "", types.TensorDescriptor{
 			DType:        "FP32",
 			Shape:        []int64{1, 3, 224, 224},
 			Layout:       "nchw",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 			ModelID:      "clip_vision_encoder",
 			ModelVersion: "v1",
 		})
@@ -98,7 +98,7 @@ func TestInferRequestBuilderTensorHelpers(t *testing.T) {
 	if req.Meta[types.MetaTensorByteOrder] != types.TensorByteOrderLittle {
 		t.Errorf("Expected little byte order, got %s", req.Meta[types.MetaTensorByteOrder])
 	}
-	if req.Meta[types.MetaPreprocessID] != "clip_image_openai_v1" {
+	if req.Meta[types.MetaPreprocessID] != types.PreprocessCLIPImage {
 		t.Errorf("Expected preprocess id, got %s", req.Meta[types.MetaPreprocessID])
 	}
 	if req.Meta[types.MetaPreprocessSkip] != "true" {
@@ -113,7 +113,7 @@ func TestInferRequestBuilderTensorHelpers(t *testing.T) {
 }
 
 func TestInferRequestBuilderTensorPreprocessSkip(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput([]byte{1}, "", types.TensorDescriptor{
 			DType:          "uint8",
 			Shape:          []int64{1},

@@ -330,7 +330,7 @@ func (c *LumenClient) inferSingle(ctx context.Context, req *pb.InferRequest) (*p
 	startTime := time.Now()
 	c.incrementTotalRequests()
 
-	node, err := c.balancer.SelectNode(ctx, req.Task)
+	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to select node: %w", err)
@@ -366,7 +366,7 @@ func (c *LumenClient) inferStreamSingle(ctx context.Context, req *pb.InferReques
 		return nil, fmt.Errorf("request cannot be nil")
 	}
 
-	node, err := c.balancer.SelectNode(ctx, req.Task)
+	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
 	if err != nil {
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}
@@ -446,7 +446,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
-	if _, err := sdktypes.ValidateTensorFastPath(req, sdktypes.TensorValidationOptions{}); err != nil {
+	if err := sdktypes.ValidateTaskRequest(req); err != nil {
 		return nil, err
 	}
 
@@ -466,7 +466,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	startTime := time.Now()
 	c.incrementTotalRequests()
 
-	node, err := c.balancer.SelectNode(ctx, req.Task)
+	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
 	if err != nil {
 		c.incrementFailedRequests()
 		return nil, fmt.Errorf("failed to select node: %w", err)
@@ -610,11 +610,11 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 //
 // Example:
 //
-//	// Streaming classification
+//	// Streaming BioCLIP classification
 //	imageData, _ := os.ReadFile("large_image.jpg")
 //	classReq, _ := types.NewClassificationRequest(imageData)
-//	inferReq := types.NewInferRequest("classification_stream").
-//	    ForClassification(classReq, "classification_stream").
+//	inferReq := types.NewInferRequest(types.TaskBioCLIPClassify).
+//	    ForBioCLIPClassify(classReq.Payload, classReq.PayloadMime, 5).
 //	    Build()
 //
 //	respChan, err := client.InferStream(ctx, inferReq)
@@ -635,7 +635,7 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
-	if _, err := sdktypes.ValidateTensorFastPath(req, sdktypes.TensorValidationOptions{}); err != nil {
+	if err := sdktypes.ValidateTaskRequest(req); err != nil {
 		return nil, err
 	}
 
@@ -651,7 +651,7 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 	}
 
 	// 多 chunk：在同一连接/stream 上发送所有 chunk，并将接收到的响应转发到返回通道
-	node, err := c.balancer.SelectNode(ctx, req.Task)
+	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
 	if err != nil {
 		return nil, fmt.Errorf("failed to select node: %w", err)
 	}

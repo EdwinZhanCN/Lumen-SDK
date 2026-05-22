@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ import (
 //	node, err := balancer.SelectNode(ctx, "text_embedding")
 type LoadBalancer interface {
 	// SelectNode 选择一个合适的节点来处理指定任务
-	SelectNode(ctx context.Context, task string) (*discovery.NodeInfo, error)
+	SelectNode(ctx context.Context, task string, service ...string) (*discovery.NodeInfo, error)
 
 	// UpdateNodes 更新节点列表
 	UpdateNodes(nodes []*discovery.NodeInfo)
@@ -123,20 +124,26 @@ func NewSimpleLoadBalancer(strategy LoadBalancingStrategy, config *config.LoadBa
 }
 
 // SelectNode 选择节点
-func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*discovery.NodeInfo, error) {
+func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string, services ...string) (*discovery.NodeInfo, error) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
+	service := ""
+	if len(services) > 0 {
+		service = services[0]
+	}
 
 	if lb.closed {
 		return nil, fmt.Errorf("load balancer is closed")
 	}
 
 	// 1. 检查缓存 (如果启用)
+	cacheKey := nodeCacheKey(service, task)
 	if lb.config != nil && lb.config.CacheEnabled && lb.cache != nil {
-		if cached := lb.cache.Get(task); cached != nil {
+		if cached := lb.cache.Get(cacheKey); cached != nil {
 			lb.logger.Debug("node selected from cache",
 				zap.String("node_id", cached.ID),
-				zap.String("task", task))
+				zap.String("task", task),
+				zap.String("service", service))
 
 			lb.stats.SelectionsCount++
 			lb.stats.LastSelection = time.Now()
@@ -149,8 +156,15 @@ func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*dis
 	}
 
 	// 2. 过滤可用节点 (包含健康检查)
-	availableNodes := lb.filterAvailableNodes(lb.nodes, task)
+	resolvedService, err := lb.resolveService(lb.nodes, task, service)
+	if err != nil {
+		return nil, err
+	}
+	availableNodes := lb.filterAvailableNodes(lb.nodes, task, resolvedService)
 	if len(availableNodes) == 0 {
+		if resolvedService != "" {
+			return nil, fmt.Errorf("no suitable nodes available for service %s task %s", resolvedService, task)
+		}
 		return nil, fmt.Errorf("no suitable nodes available for task: %s", task)
 	}
 
@@ -162,7 +176,7 @@ func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*dis
 
 	// 4. 缓存结果 (如果启用)
 	if lb.config != nil && lb.config.CacheEnabled && lb.cache != nil {
-		lb.cache.Set(task, selectedNode, lb.config.CacheTTL)
+		lb.cache.Set(nodeCacheKey(resolvedService, task), selectedNode, lb.config.CacheTTL)
 	}
 
 	// 5. 更新统计
@@ -172,6 +186,7 @@ func (lb *SimpleLoadBalancer) SelectNode(ctx context.Context, task string) (*dis
 	lb.logger.Debug("node selected",
 		zap.String("node_id", selectedNode.ID),
 		zap.String("task", task),
+		zap.String("service", resolvedService),
 		zap.String("strategy", lb.strategy.Name()))
 
 	return selectedNode, nil
@@ -297,7 +312,37 @@ func (lb *SimpleLoadBalancer) Close() error {
 }
 
 // filterAvailableNodes 过滤可用节点
-func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*discovery.NodeInfo, task string) []*discovery.NodeInfo {
+func (lb *SimpleLoadBalancer) resolveService(nodes []*discovery.NodeInfo, task, service string) (string, error) {
+	if service != "" {
+		return service, nil
+	}
+	services := make(map[string]bool)
+	for _, node := range nodes {
+		if !node.IsActive() {
+			continue
+		}
+		for _, candidate := range node.MatchingServices(task) {
+			services[candidate] = true
+		}
+	}
+	if len(services) == 0 {
+		return "", nil
+	}
+	if len(services) > 1 {
+		var names []string
+		for name := range services {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return "", fmt.Errorf("service is ambiguous for task %s: %s", task, strings.Join(names, ", "))
+	}
+	for name := range services {
+		return name, nil
+	}
+	return "", nil
+}
+
+func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*discovery.NodeInfo, task, service string) []*discovery.NodeInfo {
 	available := make([]*discovery.NodeInfo, 0)
 
 	for _, node := range nodes {
@@ -314,7 +359,7 @@ func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*discovery.NodeInfo, 
 		}
 
 		// 检查节点是否支持指定任务
-		if !node.SupportsTask(task) {
+		if !node.SupportsServiceTask(service, task) {
 			continue
 		}
 
@@ -322,6 +367,13 @@ func (lb *SimpleLoadBalancer) filterAvailableNodes(nodes []*discovery.NodeInfo, 
 	}
 
 	return available
+}
+
+func nodeCacheKey(service, task string) string {
+	if service == "" {
+		return task
+	}
+	return service + "|" + task
 }
 
 // ============== 负载均衡策略实现 ==============

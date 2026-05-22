@@ -45,7 +45,7 @@ type OCRItem struct {
 //	ocrReq, err := types.NewOCRRequest(imageData)
 type OCRRequest struct {
 	Payload              []byte  `json:"payload"`
-	PayloadMime          string  `json:"payload_mime_type"`
+	PayloadMime          string  `json:"payload_mime"`
 	DetectionThreshold   float32 `json:"detection_threshold,omitempty"`
 	RecognitionThreshold float32 `json:"recognition_threshold,omitempty"`
 	UseAngleCls          bool    `json:"use_angle_cls,omitempty"`

@@ -38,12 +38,13 @@ func TestInferStreamValidatesTensorFastPathBeforeRouting(t *testing.T) {
 }
 
 func invalidTensorFastPathRequest() *pb.InferRequest {
-	return types.NewInferRequest("clip_embed").
+	return types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput([]byte{1, 2, 3}, "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{1, 3, 224, 224},
 			Layout:       "NCHW",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 		}).
+		WithService(types.ServiceCLIP).
 		Build()
 }

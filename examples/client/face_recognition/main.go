@@ -16,7 +16,7 @@ import (
 
 func main() {
 
-	const FaceDetectEmbedTask = "face_detect_and_embed"
+	const FaceDetectEmbedTask = types.TaskFaceRecognition
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -69,8 +69,8 @@ func testFaceRecognition(ctx context.Context, lumenClient *client.LumenClient, f
 	// Create face recognition request with advanced configuration
 	faceReq, err := types.NewFaceRecognitionRequest(imageData,
 		types.WithDetectionConfidenceThreshold(0.75), // Higher confidence for recognition
-		types.WithMaxFaces(10),                     // Limit to 10 faces for performance
-		types.WithFaceSizeMin(50.0),                 // Minimum face size for quality
+		types.WithMaxFaces(10),                       // Limit to 10 faces for performance
+		types.WithFaceSizeMin(50.0),                  // Minimum face size for quality
 	)
 	if err != nil {
 		fmt.Printf("Failed to create face recognition request: %v\n", err)
@@ -79,7 +79,7 @@ func testFaceRecognition(ctx context.Context, lumenClient *client.LumenClient, f
 
 	inferReq := types.NewInferRequest(faceDetectEmbedTask).
 		WithCorrelationID("face_recognize_test").
-		ForFaceDetection(faceReq, faceDetectEmbedTask).
+		ForFaceRecognitionRaw(faceReq.Payload, faceReq.PayloadMime).
 		Build()
 
 	// Perform face detection and embedding with retry

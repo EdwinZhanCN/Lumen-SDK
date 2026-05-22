@@ -75,7 +75,7 @@ func testOCR(ctx context.Context, lumenClient *client.LumenClient, filename stri
 
 	inferReq := types.NewInferRequest(ocrTask).
 		WithCorrelationID("ocr_test").
-		ForOCR(ocrReq, ocrTask).
+		ForOCRRaw(ocrReq.Payload, ocrReq.PayloadMime).
 		Build()
 
 	// Perform OCR with retry

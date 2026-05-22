@@ -55,9 +55,8 @@ type InferRequestBuilder struct {
 func NewInferRequest(task string) *InferRequestBuilder {
 	return &InferRequestBuilder{
 		req: &pb.InferRequest{
-			Task:        task,
-			Meta:        make(map[string]string),
-			PayloadMime: "application/json",
+			Task: task,
+			Meta: make(map[string]string),
 		},
 	}
 }
@@ -175,7 +174,7 @@ func (b *InferRequestBuilder) Build() *pb.InferRequest {
 //
 // Parameters:
 //   - req: The embedding request containing the payload (use NewEmbeddingRequest for automatic MIME detection)
-//   - task: The specific embedding task name from node capabilities (e.g., "lumen_clip_embed", "text_embedding")
+//   - task: The specific embedding task name from node capabilities (e.g., TaskSemanticTextEmbed)
 //
 // Returns:
 //   - *InferRequestBuilder: The builder instance for method chaining
@@ -189,8 +188,8 @@ func (b *InferRequestBuilder) Build() *pb.InferRequest {
 //	// Text embedding
 //	textData := []byte("Machine learning is fascinating")
 //	embReq, _ := types.NewEmbeddingRequest(textData)
-//	req := types.NewInferRequest("text_embedding").
-//	    ForEmbedding(embReq, "lumen_clip_embed").
+//	req := types.NewInferRequest(types.TaskSemanticTextEmbed).
+//	    ForEmbedding(embReq, types.TaskSemanticTextEmbed).
 //	    Build()
 //
 //	// Image embedding
@@ -263,9 +262,7 @@ func (b *InferRequestBuilder) ForTensorInput(payload []byte, mime string, descri
 	if descriptor.ByteOrder != "" {
 		b.WithMeta(MetaTensorByteOrder, normalizeTensorByteOrder(descriptor.ByteOrder))
 	}
-	if descriptor.PreprocessSkip {
-		b.WithMeta(MetaPreprocessSkip, "true")
-	}
+	b.WithMeta(MetaPreprocessSkip, "true")
 	if descriptor.PreprocessID != "" {
 		b.WithPreprocessID(descriptor.PreprocessID)
 	}

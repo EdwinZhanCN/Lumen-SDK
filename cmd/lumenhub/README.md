@@ -41,10 +41,10 @@ chmod +x lumenhub
 4. **Run inference**:
    ```bash
    # Text embedding
-   lumenhub infer --service embedding --payload-b64 "SGVsbG8gd29ybGQ="
+   lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
 
-   # Face detection
-   lumenhub infer --service face_detection --payload-file image.jpg
+   # Face recognition
+   lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file image.jpg
    ```
 
 ## Commands
@@ -58,13 +58,14 @@ lumenhub infer --service <service-name> [options]
 ```
 
 **Required Flags:**
-- `--service <name>`: Service name for routing (e.g., `embedding`, `face_detection`, `classification`)
+- `--service <name>`: Service name written to `meta.service` (e.g., `clip`, `siglip`, `ppocr`, `insightface`)
 
 **Optional Flags:**
-- `--task <id>`: Task or model identifier
+- `--task <id>`: Lumen Hub task name, e.g. `semantic_text_embed`, `semantic_image_embed`, `bioclip_classify`, `ocr`, `face_recognition`
+- `--payload-mime <mime>`: Payload MIME type
 - `--payload-file <path>`: Path to binary payload file (recommended for images/audio)
 - `--payload-b64 <string>`: Base64-encoded payload string
-- `--metadata <json>`: JSON metadata object (e.g., `'{"threshold":"0.5","max_faces":"10"}'`)
+- `--meta <json>`: JSON meta object (e.g., `'{"top_k":"10"}'`)
 - `--correlation-id <id>`: Correlation ID for request tracing
 - `--output <format>`: Output format (`table`|`json`|`yaml`, default: `table`)
 
@@ -72,19 +73,16 @@ lumenhub infer --service <service-name> [options]
 
 ```bash
 # Text embedding
-echo "Hello world" | base64 | xargs -I {} lumenhub infer --service embedding --payload-b64 {}
+printf "Hello world" > text.txt
+lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
 
-# Image classification
-lumenhub infer --service classification --payload-file photo.jpg --output json
+# BioCLIP classification
+lumenhub infer --service clip --task bioclip_classify --payload-mime image/jpeg --payload-file photo.jpg --meta '{"top_k":"10"}' --output json
 
-# Face detection with metadata
-lumenhub infer --service face_detection \
+# Face recognition
+lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg \
   --payload-file selfie.jpg \
-  --metadata '{"threshold":"0.8","max_faces":"5"}' \
   --correlation-id "user-photo-analysis-001"
-
-# Streaming inference
-lumenhub infer --service embedding_stream --payload-file large_text.txt
 ```
 
 ### `node` - Node Management
@@ -178,16 +176,13 @@ lumenhub status [--nodes] [--metrics] [--health] [--output table|json|yaml]
 The Lumen Hub supports various AI services that you can use with the `infer` command:
 
 ### Text Services
-- `embedding` - Text vector embedding
-- `embedding_stream` - Streaming text embedding for large texts
-- `classification` - Text classification
-- `classification_stream` - Streaming classification
+- `semantic_text_embed` via `clip` or `siglip`
 
 ### Vision Services
-- `face_detection` - Face detection in images
-- `face_detection_stream` - Streaming face detection
-- `face_recognition` - Face recognition
-- `face_recognition_stream` - Streaming face recognition
+- `semantic_image_embed` via `clip` or `siglip`
+- `bioclip_classify` via `clip`
+- `ocr` via `ppocr`
+- `face_recognition` via `insightface`
 
 ### Generic Usage
 ```bash
@@ -250,7 +245,7 @@ lumenhub node status --output yaml > node_status.yaml
 # Process all images in a directory
 for img in *.jpg; do
   echo "Processing $img..."
-  lumenhub infer --service face_detection --payload-file "$img" --output json
+  lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file "$img" --output json
 done
 ```
 
@@ -285,7 +280,7 @@ fi
 # Check node performance before making inference
 best_node=$(lumenhub node status --output json | jq -r '.nodes | sort_by(.stats.average_latency) | .[0].id')
 
-lumenhub infer --service embedding --payload-file text.txt --metadata '{"preferred_node":"'$best_node'"}'
+lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt --meta '{"preferred_node":"'$best_node'"}'
 ```
 
 ## Troubleshooting
@@ -369,7 +364,7 @@ import json
 def run_inference(service, payload_file, metadata=None):
     cmd = ['lumenhub', 'infer', '--service', service, '--payload-file', payload_file]
     if metadata:
-        cmd.extend(['--metadata', json.dumps(metadata)])
+        cmd.extend(['--meta', json.dumps(metadata)])
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     return json.loads(result.stdout)

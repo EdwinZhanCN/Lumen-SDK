@@ -16,7 +16,7 @@ import (
 
 func main() {
 
-	const EmbedTask = "clip_text_embed"
+	const EmbedTask = types.TaskSemanticTextEmbed
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -60,30 +60,34 @@ func getContentList() []string {
 func testEmbedding(ctx context.Context, lumenClient *client.LumenClient, content string, embedTask string) {
 	var payload []byte
 	var contentType string
+	var inferReqTask string
 
 	// Try to read as file first, if fails treat as text content
 	if data, err := os.ReadFile(content); err == nil {
 		payload = data
 		contentType = fmt.Sprintf("file (%s)", content)
+		inferReqTask = types.TaskSemanticImageEmbed
 	} else {
 		// Treat as text content
 		payload = []byte(content)
 		contentType = fmt.Sprintf("text (%s)", content)
+		inferReqTask = embedTask
 	}
 
 	fmt.Printf("Testing %s (%d bytes)\n", contentType, len(payload))
 
-	// Create embedding request
-	embeddingReq, err := types.NewEmbeddingRequest(payload)
-	if err != nil {
-		fmt.Printf("Failed to create embedding request: %v\n", err)
-		return
+	builder := types.NewInferRequest(inferReqTask).WithCorrelationID("embed_test")
+	if inferReqTask == types.TaskSemanticImageEmbed {
+		embeddingReq, err := types.NewEmbeddingRequest(payload)
+		if err != nil {
+			fmt.Printf("Failed to create image embedding request: %v\n", err)
+			return
+		}
+		builder.ForSemanticImageEmbed(embeddingReq.Payload, embeddingReq.PayloadMime, types.ServiceCLIP)
+	} else {
+		builder.ForSemanticTextEmbed(string(payload), types.ServiceCLIP)
 	}
-
-	inferReq := types.NewInferRequest(embedTask).
-		WithCorrelationID("embed_test").
-		ForEmbedding(embeddingReq, embedTask).
-		Build()
+	inferReq := builder.Build()
 
 	// Perform embedding with retry
 	resp, err := lumenClient.InferWithRetry(ctx, inferReq,

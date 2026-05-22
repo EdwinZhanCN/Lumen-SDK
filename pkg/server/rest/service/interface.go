@@ -1,4 +1,3 @@
-//go:generate go run ../cmd/genconst -input=interface.go -output=../constants_gen.go
 package service
 
 import (

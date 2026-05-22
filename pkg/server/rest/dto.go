@@ -1,14 +1,16 @@
 package rest
 
-// RESTInferRequest is the unified inference request DTO used by the REST API.
-// Clients should populate `Service` (used for routing) and supply the binary
-// `Payload` (in JSON use base64; multipart and octet-stream modes are also supported).
+// RESTInferRequest mirrors the gRPC InferRequest envelope for REST callers.
+// For text/plain, Payload is UTF-8 text. For binary MIME types, Payload is base64.
 type RESTInferRequest struct {
-	Service       string            `json:"service" binding:"required"` // required service field for routing
 	Task          string            `json:"task"`
-	Payload       []byte            `json:"payload"`
+	PayloadMime   string            `json:"payload_mime"`
+	Payload       string            `json:"payload"`
 	CorrelationID string            `json:"correlation_id"`
-	Metadata      map[string]string `json:"metadata"`
+	Meta          map[string]string `json:"meta"`
+	Seq           uint64            `json:"seq,omitempty"`
+	Total         uint64            `json:"total,omitempty"`
+	Offset        uint64            `json:"offset,omitempty"`
 }
 
 // APIError represents an error object returned by the REST API.

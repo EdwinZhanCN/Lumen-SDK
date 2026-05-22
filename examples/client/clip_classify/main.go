@@ -16,7 +16,7 @@ import (
 
 func main() {
 
-	const ClassifyTask = "clip_classify"
+	const ClassifyTask = types.TaskBioCLIPClassify
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -65,7 +65,6 @@ func testImageClassification(ctx context.Context, lumenClient *client.LumenClien
 
 	fmt.Printf("Testing %s (%d bytes)\n", filename, len(imageData))
 
-	// Create classification request
 	classificationReq, err := types.NewClassificationRequest(imageData)
 	if err != nil {
 		fmt.Printf("Failed to create classification request: %v\n", err)
@@ -74,7 +73,7 @@ func testImageClassification(ctx context.Context, lumenClient *client.LumenClien
 
 	inferReq := types.NewInferRequest(classifyTask).
 		WithCorrelationID("classify_test").
-		ForClassification(classificationReq, classifyTask).
+		ForBioCLIPClassify(classificationReq.Payload, classificationReq.PayloadMime, TopK).
 		Build()
 
 	// Perform classification with retry

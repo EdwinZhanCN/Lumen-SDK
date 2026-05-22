@@ -154,6 +154,9 @@ func clonePBError(in *pb.Error) *pb.Error {
 	if in == nil {
 		return nil
 	}
-	out := *in
-	return &out
+	return &pb.Error{
+		Code:    in.GetCode(),
+		Message: in.GetMessage(),
+		Detail:  in.GetDetail(),
+	}
 }

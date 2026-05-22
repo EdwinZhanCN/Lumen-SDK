@@ -37,15 +37,9 @@ func main() {
     defer lumenClient.Close()
 
     // Text embedding inference
-    textData := []byte("Hello, world!")
-    embeddingReq, err := types.NewEmbeddingRequest(textData)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    inferReq := types.NewInferRequest("text_embedding").
+    inferReq := types.NewInferRequest(types.TaskSemanticTextEmbed).
         WithCorrelationID("my_embedding_request").
-        ForEmbedding(embeddingReq, "text_embedding").
+        ForSemanticTextEmbed("Hello, world!", types.ServiceCLIP).
         Build()
 
     result, err := lumenClient.Infer(ctx, inferReq)
@@ -80,7 +74,7 @@ resp, err := lumenClient.InferWithRetry(ctx, inferReq,
     client.WithWaitForTask(true))              // Wait for task to become available
 
 // Check task availability
-if lumenClient.IsTaskAvailable("clip_text_embed") {
+if lumenClient.IsTaskAvailable(types.TaskSemanticTextEmbed) {
     resp, err := lumenClient.Infer(ctx, inferReq)
 }
 ```
@@ -161,21 +155,22 @@ graph TB
     DISC -.->|Auto-discover| N3
 ```
 
-### Supported REST API Services
+### Supported REST API Tasks
 
-| Service Name | Endpoint | Description | MIME Types | Streaming Support |
-|--------------|----------|-------------|------------|-------------------|
-| **embedding** | `POST /v1/infer?service=embedding` | Text/image embedding generation | `text/*`, `image/*` | ✅ `embedding_stream` |
-| **classification** | `POST /v1/infer?service=classification` | Image classification | `image/*` | ✅ `classification_stream` |
-| **face_detection** | `POST /v1/infer?service=face_detection` | Face detection in images | `image/*` | ✅ `face_detection_stream` |
-| **face_recognition** | `POST /v1/infer?service=face_recognition` | Face recognition and embedding | `image/*` | ✅ `face_recognition_stream` |
+| Task | Service examples | MIME Types |
+|------|------------------|------------|
+| **semantic_text_embed** | `clip`, `siglip` | `text/plain` |
+| **semantic_image_embed** | `clip`, `siglip` | `image/jpeg`, `image/png`, `image/webp`, `image/avif`, tensor |
+| **bioclip_classify** | `clip` | image MIME types, tensor |
+| **ocr** | `ppocr` | image MIME types, detection tensor |
+| **face_recognition** | `insightface` | image MIME types, detection tensor |
 
 #### API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/v1/health` | Health check |
-| `POST` | `/v1/infer` | Universal inference endpoint (all services above) |
+| `POST` | `/v1/infer` | Universal inference endpoint using the gRPC-style envelope |
 | `GET` | `/v1/nodes` | List discovered ML nodes |
 | `GET` | `/v1/nodes/:id/capabilities` | Get capabilities of specific node |
 | `GET` | `/v1/config` | Get daemon configuration |
@@ -186,14 +181,14 @@ graph TB
 
 ```bash
 # Text embedding
-curl -X POST "http://localhost:5866/v1/infer?service=embedding" \
+curl -X POST "http://localhost:5866/v1/infer" \
   -H "Content-Type: application/json" \
-  -d '{"payload": "SGVsbG8gd29ybGQ=", "payload_mime_type": "text/plain"}'
+  -d '{"task":"semantic_text_embed","payload_mime":"text/plain","payload":"hello world","meta":{"service":"clip"}}'
 
-# Image classification with streaming
-curl -N -X POST "http://localhost:5866/v1/infer?service=classification_stream" \
+# BioCLIP classification
+curl -X POST "http://localhost:5866/v1/infer" \
   -H "Content-Type: application/json" \
-  -d '{"payload": "base64-encoded-image-data", "payload_mime_type": "image/jpeg"}'
+  -d '{"task":"bioclip_classify","payload_mime":"image/jpeg","payload":"base64-encoded-image-data","meta":{"service":"clip","top_k":"5"}}'
 
 # List all available tasks across all nodes
 curl -X GET "http://localhost:5866/v1/tasks" | jq '.data.services'

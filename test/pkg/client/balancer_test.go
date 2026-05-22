@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,6 +238,99 @@ func TestSimpleLoadBalancerSelectNodeNoNodes(t *testing.T) {
 	_, err := lb.SelectNode(ctx, "test_task")
 	if err == nil {
 		t.Error("Expected error when no nodes available, got nil")
+	}
+}
+
+func TestSimpleLoadBalancerSelectNodeWithService(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.LoadBalancerConfig{CacheEnabled: true, CacheTTL: time.Minute}
+	lb := client.NewSimpleLoadBalancer(client.NewRoundRobinStrategy(), cfg, logger)
+	lb.UpdateNodes([]*discovery.NodeInfo{
+		{
+			ID:     "clip-node",
+			Status: discovery.NodeStatusActive,
+			Tasks:  []*pb.IOTask{{Name: "semantic_image_embed"}},
+			Capabilities: []*pb.Capability{{
+				ServiceName: "clip",
+				Tasks:       []*pb.IOTask{{Name: "semantic_image_embed"}},
+			}},
+		},
+		{
+			ID:     "siglip-node",
+			Status: discovery.NodeStatusActive,
+			Tasks:  []*pb.IOTask{{Name: "semantic_image_embed"}},
+			Capabilities: []*pb.Capability{{
+				ServiceName: "siglip",
+				Tasks:       []*pb.IOTask{{Name: "semantic_image_embed"}},
+			}},
+		},
+	})
+
+	ctx := context.Background()
+	clipNode, err := lb.SelectNode(ctx, "semantic_image_embed", "clip")
+	if err != nil {
+		t.Fatalf("SelectNode(clip) error = %v", err)
+	}
+	siglipNode, err := lb.SelectNode(ctx, "semantic_image_embed", "siglip")
+	if err != nil {
+		t.Fatalf("SelectNode(siglip) error = %v", err)
+	}
+	if clipNode.ID != "clip-node" || siglipNode.ID != "siglip-node" {
+		t.Fatalf("service cache mixed nodes: clip=%s siglip=%s", clipNode.ID, siglipNode.ID)
+	}
+}
+
+func TestSimpleLoadBalancerSelectNodeServiceInference(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.LoadBalancerConfig{CacheEnabled: false}
+	lb := client.NewSimpleLoadBalancer(client.NewRoundRobinStrategy(), cfg, logger)
+	lb.UpdateNodes([]*discovery.NodeInfo{{
+		ID:     "clip-node",
+		Status: discovery.NodeStatusActive,
+		Tasks:  []*pb.IOTask{{Name: "semantic_image_embed"}},
+		Capabilities: []*pb.Capability{{
+			ServiceName: "clip",
+			Tasks:       []*pb.IOTask{{Name: "semantic_image_embed"}},
+		}},
+	}})
+
+	node, err := lb.SelectNode(context.Background(), "semantic_image_embed")
+	if err != nil {
+		t.Fatalf("SelectNode(unique service) error = %v", err)
+	}
+	if node.ID != "clip-node" {
+		t.Fatalf("unexpected node: %s", node.ID)
+	}
+}
+
+func TestSimpleLoadBalancerSelectNodeAmbiguousService(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.LoadBalancerConfig{CacheEnabled: false}
+	lb := client.NewSimpleLoadBalancer(client.NewRoundRobinStrategy(), cfg, logger)
+	lb.UpdateNodes([]*discovery.NodeInfo{
+		{
+			ID:     "clip-node",
+			Status: discovery.NodeStatusActive,
+			Tasks:  []*pb.IOTask{{Name: "semantic_image_embed"}},
+			Capabilities: []*pb.Capability{{
+				ServiceName: "clip",
+				Tasks:       []*pb.IOTask{{Name: "semantic_image_embed"}},
+			}},
+		},
+		{
+			ID:     "siglip-node",
+			Status: discovery.NodeStatusActive,
+			Tasks:  []*pb.IOTask{{Name: "semantic_image_embed"}},
+			Capabilities: []*pb.Capability{{
+				ServiceName: "siglip",
+				Tasks:       []*pb.IOTask{{Name: "semantic_image_embed"}},
+			}},
+		},
+	})
+
+	_, err := lb.SelectNode(context.Background(), "semantic_image_embed")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguous service error, got %v", err)
 	}
 }
 

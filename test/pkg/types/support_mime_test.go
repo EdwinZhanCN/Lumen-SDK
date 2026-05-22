@@ -7,7 +7,7 @@ import (
 )
 
 func TestSupportedImageMimeTypesConstant(t *testing.T) {
-	expected := []string{"image/jpeg", "image/png", "image/webp"}
+	expected := []string{"image/jpeg", "image/png", "image/webp", "image/avif"}
 
 	if len(types.SupportedImageMimeTypes) != len(expected) {
 		t.Errorf("Expected %d MIME types, got %d", len(expected), len(types.SupportedImageMimeTypes))

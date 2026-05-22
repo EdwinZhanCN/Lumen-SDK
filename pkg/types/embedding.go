@@ -266,7 +266,7 @@ func (e EmbeddingV1) ManhattanDistance(other EmbeddingV1) (float32, error) {
 //	}
 type EmbeddingRequest struct {
 	Payload     []byte `json:"payload"`
-	PayloadMime string `json:"payload_mime_type"`
+	PayloadMime string `json:"payload_mime"`
 }
 
 // NewEmbeddingRequest creates a new EmbeddingRequest with automatic MIME type detection.

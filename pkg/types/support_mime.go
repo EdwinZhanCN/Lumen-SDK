@@ -21,6 +21,7 @@ var SupportedImageMimeTypes = []string{
 	"image/jpeg",
 	"image/png",
 	"image/webp",
+	"image/avif",
 }
 
 // SupportedTextMimeTypes lists the text MIME types accepted by Lumen ML services.

@@ -73,7 +73,7 @@ type Face struct {
 //	)
 type FaceRecognitionRequest struct {
 	Payload                      []byte  `json:"payload"`
-	PayloadMime                  string  `json:"payload_mime_type"`
+	PayloadMime                  string  `json:"payload_mime"`
 	DetectionConfidenceThreshold float32 `json:"detection_confidence_threshold,omitempty"`
 	NmsThreshold                 float32 `json:"nms_threshold,omitempty"`
 	FaceSizeMin                  float32 `json:"face_size_min,omitempty"`

@@ -8,17 +8,17 @@ import (
 )
 
 func TestValidateTensorFastPathValidCLIPTensor(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput(make([]byte, 1*3*224*224*4), "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{1, 3, 224, 224},
 			Layout:       "NCHW",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 		}).
 		Build()
 
 	desc, err := types.ValidateTensorFastPath(req, types.TensorValidationOptions{
-		AllowedPreprocessIDs: []string{"clip_image_openai_v1"},
+		AllowedPreprocessIDs: []string{types.PreprocessCLIPImage},
 	})
 	if err != nil {
 		t.Fatalf("ValidateTensorFastPath() error = %v", err)
@@ -32,7 +32,7 @@ func TestValidateTensorFastPathValidCLIPTensor(t *testing.T) {
 }
 
 func TestValidateTensorFastPathRawRequestNoop(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		WithInputKind(types.InputKindRaw).
 		Build()
 
@@ -46,12 +46,12 @@ func TestValidateTensorFastPathRawRequestNoop(t *testing.T) {
 }
 
 func TestValidateTensorFastPathByteLengthMismatch(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput(make([]byte, 16), "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{1, 3, 224, 224},
 			Layout:       "NCHW",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 		}).
 		Build()
 
@@ -62,7 +62,7 @@ func TestValidateTensorFastPathByteLengthMismatch(t *testing.T) {
 }
 
 func TestValidateTensorFastPathUnknownPreprocessID(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput(make([]byte, 1*3*224*224*4), "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{1, 3, 224, 224},
@@ -72,7 +72,7 @@ func TestValidateTensorFastPathUnknownPreprocessID(t *testing.T) {
 		Build()
 
 	_, err := types.ValidateTensorFastPath(req, types.TensorValidationOptions{
-		AllowedPreprocessIDs: []string{"clip_image_openai_v1"},
+		AllowedPreprocessIDs: []string{types.PreprocessCLIPImage},
 	})
 	if err == nil || !strings.Contains(err.Error(), types.MetaPreprocessID) {
 		t.Fatalf("Expected preprocess id validation error, got %v", err)
@@ -80,7 +80,7 @@ func TestValidateTensorFastPathUnknownPreprocessID(t *testing.T) {
 }
 
 func TestValidateTensorFastPathMissingDescriptorFields(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		WithInputKind(types.InputKindTensor).
 		Build()
 
@@ -91,12 +91,12 @@ func TestValidateTensorFastPathMissingDescriptorFields(t *testing.T) {
 }
 
 func TestValidateTensorFastPathRejectsPayloadBatch(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput(make([]byte, 2*3*224*224*4), "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{2, 3, 224, 224},
 			Layout:       "NCHW",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 		}).
 		Build()
 
@@ -107,12 +107,12 @@ func TestValidateTensorFastPathRejectsPayloadBatch(t *testing.T) {
 }
 
 func TestValidateTensorFastPathAllowsUnbatchedCHW(t *testing.T) {
-	req := types.NewInferRequest("clip_embed").
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		ForTensorInput(make([]byte, 3*224*224*4), "", types.TensorDescriptor{
 			DType:        "fp32",
 			Shape:        []int64{3, 224, 224},
 			Layout:       "CHW",
-			PreprocessID: "clip_image_openai_v1",
+			PreprocessID: types.PreprocessCLIPImage,
 		}).
 		Build()
 

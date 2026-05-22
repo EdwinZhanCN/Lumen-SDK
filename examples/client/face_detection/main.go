@@ -16,7 +16,7 @@ import (
 
 func main() {
 
-	const FaceDetectTask = "face_detect"
+	const FaceDetectTask = types.TaskFaceRecognition
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -75,7 +75,7 @@ func testFaceDetection(ctx context.Context, lumenClient *client.LumenClient, fil
 
 	inferReq := types.NewInferRequest(faceDetectTask).
 		WithCorrelationID("face_detect_test").
-		ForFaceDetection(faceReq, faceDetectTask).
+		ForFaceRecognitionRaw(faceReq.Payload, faceReq.PayloadMime).
 		Build()
 
 	// Perform face detection with retry

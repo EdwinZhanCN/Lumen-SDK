@@ -23,18 +23,17 @@ func TestInferCLI_BuildsAndSendsRequest(t *testing.T) {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
 
-		// Basic assertions on received request
-		if got.Service != "test_service" {
-			t.Fatalf("unexpected service: %s", got.Service)
-		}
 		if got.Task != "test_task" {
 			t.Fatalf("unexpected task: %s", got.Task)
 		}
-		if got.Metadata == nil || got.Metadata["k"] != "v" {
-			t.Fatalf("unexpected metadata: %#v", got.Metadata)
+		if got.PayloadMime != "application/octet-stream" {
+			t.Fatalf("unexpected payload_mime: %s", got.PayloadMime)
 		}
-		if string(got.Payload) != "payload-bytes" {
-			t.Fatalf("unexpected payload: %s", string(got.Payload))
+		if got.Meta == nil || got.Meta["k"] != "v" || got.Meta["service"] != "test_service" {
+			t.Fatalf("unexpected meta: %#v", got.Meta)
+		}
+		if got.Payload != "cGF5bG9hZC1ieXRlcw==" {
+			t.Fatalf("unexpected payload: %s", got.Payload)
 		}
 
 		// Respond with a simple success envelope
@@ -77,7 +76,7 @@ func TestInferCLI_BuildsAndSendsRequest(t *testing.T) {
 	if err := cmd.Flags().Set("payload-file", payloadPath); err != nil {
 		t.Fatalf("failed to set flag: %v", err)
 	}
-	if err := cmd.Flags().Set("metadata", `{"k":"v"}`); err != nil {
+	if err := cmd.Flags().Set("meta", `{"k":"v"}`); err != nil {
 		t.Fatalf("failed to set flag: %v", err)
 	}
 	// set output to json for deterministic test (though we don't validate output here)

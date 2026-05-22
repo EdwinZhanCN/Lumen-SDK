@@ -89,7 +89,7 @@ func (l LabelsV1) TopK(k int) []Label {
 //	}
 type ClassificationRequest struct {
 	Payload     []byte `json:"payload"`
-	PayloadMime string `json:"payload_mime_type"`
+	PayloadMime string `json:"payload_mime"`
 }
 
 // NewClassificationRequest creates a new ClassificationRequest with automatic MIME detection.

@@ -418,6 +418,7 @@ func TestInferAssemblesChunkedResponseForSingleRequest(t *testing.T) {
 		CorrelationId: "corr-1",
 		Task:          "test_task",
 		Payload:       []byte("input"),
+		PayloadMime:   "text/plain",
 	})
 	if err != nil {
 		t.Fatalf("Infer() error = %v", err)
@@ -453,6 +454,7 @@ func TestInferAssemblesChunkedResponseAfterChunkedRequestUpload(t *testing.T) {
 		CorrelationId: "corr-1",
 		Task:          "test_task",
 		Payload:       []byte("abcdef"),
+		PayloadMime:   "text/plain",
 	})
 	if err != nil {
 		t.Fatalf("Infer() error = %v", err)
@@ -487,6 +489,7 @@ func TestInferStreamYieldsResponseChunksUnchanged(t *testing.T) {
 		CorrelationId: "corr-1",
 		Task:          "test_task",
 		Payload:       []byte("input"),
+		PayloadMime:   "text/plain",
 	})
 	if err != nil {
 		t.Fatalf("InferStream() error = %v", err)

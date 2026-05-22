@@ -1,7 +1,6 @@
 package rest
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -27,14 +26,12 @@ type Handlers interface {
 // handler implements the Handlers interface
 type handler struct {
 	client *client.LumenClient
-	router *ServiceRouter
 }
 
 // NewHandlers creates a new Handlers instance
 func NewHandlers(client *client.LumenClient) Handlers {
 	return &handler{
 		client: client,
-		router: NewServiceRouter(client),
 	}
 }
 
@@ -51,11 +48,12 @@ func (h *handler) HealthCheck(c *fiber.Ctx) error {
 
 func (h *handler) Infer(c *fiber.Ctx) error {
 	var req RESTInferRequest
+	var payload []byte
 
 	// Support three incoming payload styles:
 	// 1) multipart/form-data with file field `payload` (recommended for files)
-	// 2) application/octet-stream raw body with service/task in query or headers
-	// 3) application/json with base64 `payload` string (legacy)
+	// 2) application/octet-stream raw body with task/payload_mime/meta in query or headers
+	// 3) application/json using the Lumen Hub InferRequest envelope
 	contentType := c.Get("Content-Type")
 
 	if strings.HasPrefix(contentType, "multipart/form-data") {
@@ -83,83 +81,67 @@ func (h *handler) Infer(c *fiber.Ctx) error {
 				"message": err.Error(),
 			})
 		}
-		req.Payload = buf.Bytes()
-		req.Service = c.FormValue("service")
+		payload = buf.Bytes()
 		req.Task = c.FormValue("task")
+		req.PayloadMime = c.FormValue("payload_mime")
 		req.CorrelationID = c.FormValue("correlation_id")
-		// optional metadata passed as JSON string in form field `metadata`
-		if metaStr := c.FormValue("metadata"); metaStr != "" {
+		if metaStr := c.FormValue("meta"); metaStr != "" {
 			var meta map[string]string
 			if err := json.Unmarshal([]byte(metaStr), &meta); err == nil {
-				req.Metadata = meta
+				req.Meta = meta
 			}
 		}
 	} else if strings.HasPrefix(contentType, "application/octet-stream") {
-		// Raw binary body. Service/task must be provided via query params or headers.
-		req.Payload = c.Body()
-		req.Service = c.Query("service")
+		// Raw binary body. Task/payload_mime/meta must be provided via query params or headers.
+		payload = c.Body()
 		req.Task = c.Query("task")
-		// correlation id may be provided as header X-Correlation-Id
+		req.PayloadMime = c.Query("payload_mime", contentType)
 		req.CorrelationID = c.Get("X-Correlation-Id")
-		// optional metadata as JSON in query param `metadata`
-		if metaStr := c.Query("metadata"); metaStr != "" {
+		if metaStr := c.Query("meta"); metaStr != "" {
 			var meta map[string]string
 			if err := json.Unmarshal([]byte(metaStr), &meta); err == nil {
-				req.Metadata = meta
+				req.Meta = meta
 			}
 		}
 	} else {
-		// Default: expect JSON body. In JSON, `payload` should be base64 encoded string that will be decoded by BodyParser into []byte.
+		// Default: expect JSON body. In JSON, text/plain payload is raw UTF-8 text;
+		// binary payloads are base64 strings.
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error":   true,
 				"message": "Invalid request: " + err.Error(),
 			})
 		}
+		if req.PayloadMime == "text/plain" {
+			payload = []byte(req.Payload)
+		} else {
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.Payload))
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":   true,
+					"message": "Invalid base64 payload: " + err.Error(),
+				})
+			}
+			payload = decoded
+		}
 	}
 
-	// normalize service name
-	// serviceKey removed: router uses req.Service directly
-	// Route request based on service field. The router may return either a
-	// synchronous result (e.g. *pb.InferResponse) or a streaming channel
-	// (<-chan *pb.InferResponse) for services whose names map to stream handlers.
-	result, err := h.router.RouteRequest(c.Context(), req)
+	inferReq := &pb.InferRequest{
+		CorrelationId: req.CorrelationID,
+		Task:          req.Task,
+		Payload:       payload,
+		PayloadMime:   req.PayloadMime,
+		Meta:          req.Meta,
+		Seq:           req.Seq,
+		Total:         req.Total,
+		Offset:        req.Offset,
+	}
+	result, err := h.client.Infer(c.Context(), inferReq)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   true,
 			"message": err.Error(),
 		})
-	}
-
-	// If the router returned a streaming channel, forward it as SSE (text/event-stream)
-	if ch, ok := result.(<-chan *pb.InferResponse); ok {
-		c.Set("Content-Type", "text/event-stream")
-		c.Set("Cache-Control", "no-cache")
-		c.Set("Connection", "keep-alive")
-
-		// Stream responses as JSON blocks; encode binary `Result` as base64.
-		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			for resp := range ch {
-				out := map[string]interface{}{
-					"correlation_id": resp.CorrelationId,
-					"is_final":       resp.IsFinal,
-					"seq":            resp.Seq,
-					"total":          resp.Total,
-					"meta":           resp.Meta,
-					"result_b64":     base64.StdEncoding.EncodeToString(resp.Result),
-				}
-				b, _ := json.Marshal(out)
-				w.Write(b)
-				w.WriteString("\n\n")
-				w.Flush()
-
-				if resp.IsFinal {
-					break
-				}
-			}
-		})
-
-		return nil
 	}
 
 	// Otherwise return the synchronous result as JSON

@@ -83,6 +83,44 @@ func (n *NodeInfo) SupportsTask(task string) bool {
 	return n.supportedTasks[task]
 }
 
+func (n *NodeInfo) SupportsServiceTask(service, task string) bool {
+	if service == "" {
+		return n.SupportsTask(task)
+	}
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	for _, capability := range n.Capabilities {
+		if capability.GetServiceName() != service {
+			continue
+		}
+		for _, ioTask := range capability.GetTasks() {
+			if ioTask.GetName() == task {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (n *NodeInfo) MatchingServices(task string) []string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	seen := make(map[string]bool)
+	var services []string
+	for _, capability := range n.Capabilities {
+		for _, ioTask := range capability.GetTasks() {
+			if ioTask.GetName() == task {
+				service := capability.GetServiceName()
+				if service != "" && !seen[service] {
+					seen[service] = true
+					services = append(services, service)
+				}
+			}
+		}
+	}
+	return services
+}
+
 func (n *NodeInfo) rebuildSupportedTasksCacheLocked() {
 	n.supportedTasks = make(map[string]bool)
 

@@ -16,11 +16,11 @@ import (
 //
 // Users build the request with flags:
 //
-//	--service        (required) : service name used for routing, e.g. "embedding", "face_detection_stream"
+//	--service        (required) : service name written to meta.service, e.g. "clip"
 //	--task                      : optional task/model id
 //	--payload-file              : path to a binary file to use as payload (recommended for images/audio)
 //	--payload-b64               : base64-encoded payload string (alternative to file)
-//	--metadata                  : JSON object string representing metadata map[string]string
+//	--meta                      : JSON object string merged into InferRequest meta
 //	--correlation-id            : optional correlation id
 //	--output                    : json|yaml|table (default: table)
 //
@@ -37,11 +37,12 @@ Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_face
 
 func init() {
 	// Request flags
-	InferCmd.Flags().String("service", "", "Service name to route the request (required). E.g. embedding, face_detection_stream")
-	InferCmd.Flags().String("task", "", "Task/model id (optional)")
+	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. clip, siglip, ppocr, insightface")
+	InferCmd.Flags().String("task", "", "Lumen Hub task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
+	InferCmd.Flags().String("payload-mime", "application/octet-stream", "Payload MIME type, e.g. text/plain, image/jpeg, application/octet-stream")
 	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")
 	InferCmd.Flags().String("payload-b64", "", "Base64-encoded payload string (alternative to file)")
-	InferCmd.Flags().String("metadata", "", "JSON string of metadata map (e.g. '{\"threshold\":\"0.5\"}')")
+	InferCmd.Flags().String("meta", "", "JSON string of meta map (e.g. '{\"threshold\":\"0.5\"}')")
 	InferCmd.Flags().String("correlation-id", "", "Optional correlation id for tracing")
 	InferCmd.Flags().String("output", "table", "Output format: json|yaml|table")
 
@@ -53,13 +54,15 @@ func init() {
 func runInfer(cmd *cobra.Command, _ []string) error {
 	service, _ := cmd.Flags().GetString("service")
 	task, _ := cmd.Flags().GetString("task")
+	payloadMIME, _ := cmd.Flags().GetString("payload-mime")
 	payloadFile, _ := cmd.Flags().GetString("payload-file")
 	payloadB64, _ := cmd.Flags().GetString("payload-b64")
-	metadataStr, _ := cmd.Flags().GetString("metadata")
+	metaStr, _ := cmd.Flags().GetString("meta")
 	corrID, _ := cmd.Flags().GetString("correlation-id")
 	outputFormat, _ := cmd.Flags().GetString("output")
 
 	var payload []byte
+	var payloadString string
 	var err error
 
 	if payloadFile != "" {
@@ -67,33 +70,43 @@ func runInfer(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read payload file: %w", err)
 		}
+		if payloadMIME == "text/plain" {
+			payloadString = string(payload)
+		} else {
+			payloadString = base64.StdEncoding.EncodeToString(payload)
+		}
 	} else if payloadB64 != "" {
-		// decode base64 input
-		payload, err = base64.StdEncoding.DecodeString(strings.TrimSpace(payloadB64))
-		if err != nil {
-			return fmt.Errorf("failed to decode payload-b64: %w", err)
+		if payloadMIME == "text/plain" {
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payloadB64))
+			if err != nil {
+				return fmt.Errorf("failed to decode payload-b64: %w", err)
+			}
+			payloadString = string(decoded)
+		} else {
+			payloadString = strings.TrimSpace(payloadB64)
 		}
 	} else {
 		// No payload provided; allow empty payload for services that don't require it.
-		payload = nil
+		payloadString = ""
 	}
 
-	// parse metadata JSON string into map[string]string
-	var metadata map[string]string
-	if metadataStr != "" {
-		if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
-			return fmt.Errorf("invalid metadata JSON: %w", err)
+	// parse meta JSON string into map[string]string
+	var meta map[string]string
+	if metaStr != "" {
+		if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
+			return fmt.Errorf("invalid meta JSON: %w", err)
 		}
 	} else {
-		metadata = map[string]string{}
+		meta = map[string]string{}
 	}
+	meta["service"] = service
 
 	req := &rest.RESTInferRequest{
-		Service:       service,
 		Task:          task,
-		Payload:       payload,
+		PayloadMime:   payloadMIME,
+		Payload:       payloadString,
 		CorrelationID: corrID,
-		Metadata:      metadata,
+		Meta:          meta,
 	}
 
 	// Create API client (uses global flags for host/port if set on root command)
