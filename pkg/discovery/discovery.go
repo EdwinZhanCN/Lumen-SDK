@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -433,19 +434,20 @@ func (m *MDNSDiscovery) fetchNodeCapabilities(node *NodeInfo) {
 	ctx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
 	defer cancel()
 
-	capability, err := client.GetCapabilities(ctx, &emptypb.Empty{})
+	capabilities, err := m.streamNodeCapabilities(ctx, client)
 	if err != nil {
-		m.logger.Error("failed to get capabilities from node", zap.String("node_id", node.ID), zap.Error(err))
+		m.logger.Error("failed to stream capabilities from node", zap.String("node_id", node.ID), zap.Error(err))
 		m.mu.Lock()
 		node.Status = NodeStatusError
 		m.mu.Unlock()
 		return
 	}
 
-	m.applyCapability(node, capability)
+	m.applyCapabilities(node, capabilities)
 
-	m.logger.Info("successfully fetched capabilities for node",
+	m.logger.Info("successfully streamed capabilities for node",
 		zap.String("node_id", node.ID),
+		zap.Int("capabilities", len(node.Capabilities)),
 		zap.Int("tasks", len(node.Tasks)),
 		zap.Int("models", len(node.Models)))
 
@@ -467,15 +469,40 @@ func (m *MDNSDiscovery) connectToNode(address string) (*grpc.ClientConn, error) 
 	return conn, nil
 }
 
-func (m *MDNSDiscovery) applyCapability(node *NodeInfo, capability *pb.Capability) {
+func (m *MDNSDiscovery) streamNodeCapabilities(ctx context.Context, client pb.InferenceClient) ([]*pb.Capability, error) {
+	stream, err := client.StreamCapabilities(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+
+	capabilities := make([]*pb.Capability, 0)
+	for {
+		capability, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if capability != nil {
+			capabilities = append(capabilities, capability)
+		}
+	}
+	if len(capabilities) == 0 {
+		return nil, fmt.Errorf("stream capabilities returned no capabilities")
+	}
+	return capabilities, nil
+}
+
+func (m *MDNSDiscovery) applyCapabilities(node *NodeInfo, capabilities []*pb.Capability) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	node.Capabilities = []*pb.Capability{capability}
-	node.Version = m.extractVersionFromCapability(capability)
-	node.Runtime = capability.Runtime
-	node.Models = m.extractModelsFromCapability(capability)
-	node.Tasks = m.extractTasksFromCapability(capability)
+	node.Capabilities = CloneCapabilities(capabilities)
+	node.Version = m.extractVersionFromCapabilities(capabilities)
+	node.Runtime = m.extractRuntimeFromCapabilities(capabilities)
+	node.Models = m.extractModelsFromCapabilities(capabilities)
+	node.Tasks = m.extractTasksFromCapabilities(capabilities)
 	node.Status = NodeStatusActive
 	node.InvalidateTaskCache()
 }
@@ -540,36 +567,56 @@ func (m *MDNSDiscovery) generateNodeID(instance, address string) string {
 	return fmt.Sprintf("%s@%s", instance, address)
 }
 
-func (m *MDNSDiscovery) extractVersionFromCapability(capability *pb.Capability) string {
-	if capability != nil {
-		if version, ok := capability.Extra["version"]; ok {
+func (m *MDNSDiscovery) extractVersionFromCapabilities(capabilities []*pb.Capability) string {
+	for _, capability := range capabilities {
+		if capability == nil {
+			continue
+		}
+		if version, ok := capability.Extra["version"]; ok && strings.TrimSpace(version) != "" {
 			return version
 		}
 	}
 	return "unknown"
 }
 
-func (m *MDNSDiscovery) extractModelsFromCapability(capability *pb.Capability) []*ModelInfo {
-	if capability == nil {
-		return nil
+func (m *MDNSDiscovery) extractRuntimeFromCapabilities(capabilities []*pb.Capability) string {
+	runtimes := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if capability == nil || strings.TrimSpace(capability.Runtime) == "" {
+			continue
+		}
+		runtimes = append(runtimes, capability.Runtime)
 	}
+	runtimes = UniqueTrimmedStrings(runtimes)
+	return strings.Join(runtimes, ",")
+}
 
+func (m *MDNSDiscovery) extractModelsFromCapabilities(capabilities []*pb.Capability) []*ModelInfo {
 	var models []*ModelInfo
-	for _, modelID := range capability.ModelIds {
-		model := &ModelInfo{ID: modelID, Runtime: capability.Runtime}
-		models = append(models, model)
+	seen := make(map[string]struct{})
+	for _, capability := range capabilities {
+		if capability == nil {
+			continue
+		}
+		for _, modelID := range capability.ModelIds {
+			key := modelID + "\x00" + capability.Runtime
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			models = append(models, &ModelInfo{ID: modelID, Runtime: capability.Runtime})
+		}
 	}
 	return models
 }
 
-func (m *MDNSDiscovery) extractTasksFromCapability(capability *pb.Capability) []*pb.IOTask {
-	if capability == nil {
-		return nil
-	}
-
+func (m *MDNSDiscovery) extractTasksFromCapabilities(capabilities []*pb.Capability) []*pb.IOTask {
 	var tasks []*pb.IOTask
-	for _, task := range capability.Tasks {
-		tasks = append(tasks, task)
+	for _, capability := range capabilities {
+		if capability == nil {
+			continue
+		}
+		tasks = append(tasks, CloneIOTasks(capability.Tasks)...)
 	}
 	return tasks
 }
