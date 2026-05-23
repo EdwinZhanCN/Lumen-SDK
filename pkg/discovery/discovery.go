@@ -41,6 +41,8 @@ func NewMDNSDiscovery(cfg *config.DiscoveryConfig, logger *zap.Logger) *MDNSDisc
 			ScanInterval: 30 * time.Second,
 			NodeTimeout:  5 * time.Minute,
 			MaxNodes:     20,
+			MDNSEnabled:  true,
+			HubURL:       "",
 		}
 	}
 	logger = ensureLogger(logger)

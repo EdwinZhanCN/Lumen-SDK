@@ -80,6 +80,8 @@ func minimalPreset() *Config {
 			ScanInterval: 60 * time.Second, // Less frequent scans to save CPU
 			NodeTimeout:  10 * time.Minute, // Longer timeout for unstable connections
 			MaxNodes:     5,                // Limit discovered nodes to reduce memory usage
+			MDNSEnabled:  true,
+			HubURL:       "",
 		},
 		Connection: ConnectionConfig{
 			DialTimeout:    10 * time.Second, // Longer timeout for unreliable networks
@@ -136,6 +138,8 @@ func basicPreset() *Config {
 			ScanInterval: 30 * time.Second, // Standard scan frequency
 			NodeTimeout:  5 * time.Minute,  // Standard timeout
 			MaxNodes:     20,               // Good limit for personal computers
+			MDNSEnabled:  true,
+			HubURL:       "",
 		},
 		Connection: ConnectionConfig{
 			DialTimeout:    5 * time.Second,  // Standard timeout
@@ -192,6 +196,8 @@ func lightweightPreset() *Config {
 			ScanInterval: 45 * time.Second, // Moderate scan frequency
 			NodeTimeout:  5 * time.Minute,  // Standard timeout
 			MaxNodes:     10,               // Reasonable limit for small computers
+			MDNSEnabled:  true,
+			HubURL:       "",
 		},
 		Connection: ConnectionConfig{
 			DialTimeout:    5 * time.Second,  // Standard timeout
@@ -248,6 +254,8 @@ func bravePreset() *Config {
 			ScanInterval: 15 * time.Second, // Frequent scans for rapid node discovery
 			NodeTimeout:  2 * time.Minute,  // Short timeout for quick failure detection
 			MaxNodes:     50,               // High limit for enterprise deployments
+			MDNSEnabled:  true,
+			HubURL:       "",
 		},
 		Connection: ConnectionConfig{
 			DialTimeout:    3 * time.Second,  // Fast connection establishment

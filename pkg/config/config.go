@@ -80,6 +80,8 @@ type DiscoveryConfig struct {
 	ScanInterval time.Duration `yaml:"scan_interval" json:"scan_interval"`
 	NodeTimeout  time.Duration `yaml:"node_timeout" json:"node_timeout"`
 	MaxNodes     int           `yaml:"max_nodes" json:"max_nodes"`
+	MDNSEnabled  bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
+	HubURL       string        `yaml:"hub_url" json:"hub_url"`
 }
 
 // ConnectionConfig 连接配置
@@ -208,6 +210,8 @@ func LoadConfig(configPath string) (*Config, error) {
 // This method reads environment variables with the LUMEN_ prefix and overrides
 // the corresponding configuration fields. Supported variables include:
 //   - LUMEN_DISCOVERY_ENABLED: Enable/disable service discovery
+//   - LUMEN_DISCOVERY_MDNS_ENABLED: Enable/disable mDNS discovery backend
+//   - LUMEN_DISCOVERY_HUB_URL: lumenhubd base URL for HTTP discovery
 //   - LUMEN_REST_HOST: REST API host
 //   - LUMEN_REST_PORT: REST API port
 //   - LUMEN_LOAD_BALANCER_STRATEGY: Load balancing strategy
@@ -239,6 +243,12 @@ func (c *Config) LoadFromEnv() error {
 	}
 	if domain := os.Getenv("LUMEN_DISCOVERY_DOMAIN"); domain != "" {
 		c.Discovery.Domain = domain
+	}
+	if os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") != "" {
+		c.Discovery.MDNSEnabled = os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") == "true"
+	}
+	if hubURL := os.Getenv("LUMEN_DISCOVERY_HUB_URL"); hubURL != "" {
+		c.Discovery.HubURL = hubURL
 	}
 
 	// 连接配置

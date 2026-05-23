@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,9 +190,29 @@ func NewLumenClientWithBalancer(cfg *config.Config, logger *zap.Logger, balancer
 func (c *LumenClient) initializeComponents() error {
 	// 初始化服务发现管理器，保持客户端只依赖 discovery 抽象。
 	discoveryManager := discovery.NewManager()
-	if err := discoveryManager.AddFinder("mdns", discovery.NewMDNSDiscovery(&c.config.Discovery, c.logger), 0, 0); err != nil {
-		return fmt.Errorf("failed to register mdns discovery: %w", err)
+
+	if c.config.Discovery.Enabled && c.config.Discovery.MDNSEnabled {
+		if err := discoveryManager.AddFinder(
+			"mdns",
+			discovery.NewMDNSDiscovery(&c.config.Discovery, c.logger),
+			0,
+			0,
+		); err != nil {
+			return fmt.Errorf("failed to register mdns discovery: %w", err)
+		}
 	}
+
+	if c.config.Discovery.Enabled && strings.TrimSpace(c.config.Discovery.HubURL) != "" {
+		if err := discoveryManager.AddFinder(
+			"hubd",
+			discovery.NewHTTPDiscovery(&c.config.Discovery, c.logger),
+			0,
+			0,
+		); err != nil {
+			return fmt.Errorf("failed to register hubd discovery: %w", err)
+		}
+	}
+
 	c.discovery = discoveryManager
 
 	// 初始化连接池，使用默认配置
