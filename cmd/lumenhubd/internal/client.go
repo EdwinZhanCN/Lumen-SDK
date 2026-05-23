@@ -16,6 +16,7 @@ var (
 	globalClient *client.LumenClient
 	globalLogger *zap.Logger
 	globalConfig *config.Config
+	globalCancel context.CancelFunc
 	startTime    time.Time
 	mu           sync.RWMutex
 )
@@ -35,17 +36,19 @@ func InitializeClient(cfg *config.Config, logger *zap.Logger) error {
 		return fmt.Errorf("failed to create Lumen client: %w", err)
 	}
 
-	// Start client
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Start client with a long-lived lifecycle context. Discovery, connection-pool
+	// maintenance, and metrics loops run until CloseClient cancels this context.
+	ctx, cancel := context.WithCancel(context.Background())
 
 	if err := lumenClient.Start(ctx); err != nil {
+		cancel()
 		return fmt.Errorf("failed to start Lumen client: %w", err)
 	}
 
 	globalClient = lumenClient
 	globalLogger = logger
 	globalConfig = cfg
+	globalCancel = cancel
 	startTime = time.Now()
 
 	return nil
@@ -110,6 +113,11 @@ func CloseClient() error {
 		return nil
 	}
 
+	if globalCancel != nil {
+		globalCancel()
+		globalCancel = nil
+	}
+
 	if err := globalClient.Close(); err != nil {
 		return fmt.Errorf("failed to close client: %w", err)
 	}
@@ -122,6 +130,7 @@ func CloseClient() error {
 	globalClient = nil
 	globalLogger = nil
 	globalConfig = nil
+	globalCancel = nil
 
 	return nil
 }
@@ -131,8 +140,12 @@ func ResetClient() {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if globalCancel != nil {
+		globalCancel()
+	}
 	globalClient = nil
 	globalLogger = nil
 	globalConfig = nil
+	globalCancel = nil
 	startTime = time.Time{}
 }

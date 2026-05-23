@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -293,12 +294,15 @@ func (m *MDNSDiscovery) scanServices() error {
 	scanCtx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
 	defer cancel()
 
-	entries := make(chan *zeroconf.ServiceEntry)
-	var scanErr error
+	if m.resolver == nil {
+		return utils.DiscoveryFailedError("mDNS resolver is not initialized")
+	}
 
-	err := m.resolver.Lookup(scanCtx, "", m.config.ServiceType, m.config.Domain, entries)
+	entries := make(chan *zeroconf.ServiceEntry, 16)
+
+	err := m.resolver.Browse(scanCtx, m.config.ServiceType, m.config.Domain, entries)
 	if err != nil {
-		return utils.DiscoveryFailedError("mDNS lookup failed",
+		return utils.DiscoveryFailedError("mDNS browse failed",
 			map[string]interface{}{
 				"error":        err.Error(),
 				"service_type": m.config.ServiceType,
@@ -310,29 +314,24 @@ func (m *MDNSDiscovery) scanServices() error {
 		select {
 		case entry, ok := <-entries:
 			if !ok {
-				goto DONE
+				m.logger.Debug("service scan completed successfully")
+				return nil
 			}
 			if entry != nil {
 				m.processServiceEntry(entry)
 			}
 		case <-scanCtx.Done():
-			scanErr = utils.TimeoutError("mDNS scan timeout",
+			if scanCtx.Err() == context.DeadlineExceeded {
+				m.logger.Debug("service scan window completed")
+				return nil
+			}
+			return utils.TimeoutError("mDNS scan canceled",
 				map[string]interface{}{
-					"timeout":      scanCtx.Err().Error(),
+					"error":        scanCtx.Err().Error(),
 					"service_type": m.config.ServiceType,
 				})
-			goto DONE
 		}
 	}
-
-DONE:
-	if scanErr != nil {
-		m.logger.Warn("service scan completed with errors", zap.Error(scanErr))
-		return scanErr
-	}
-
-	m.logger.Debug("service scan completed successfully")
-	return nil
 }
 
 func (m *MDNSDiscovery) processServiceEntry(entry *zeroconf.ServiceEntry) {
@@ -342,12 +341,19 @@ func (m *MDNSDiscovery) processServiceEntry(entry *zeroconf.ServiceEntry) {
 		zap.Int("addr_count", len(entry.AddrIPv4)),
 	)
 
+	addresses := make([]string, 0, len(entry.AddrIPv4)+len(entry.AddrIPv6))
 	for _, addr := range entry.AddrIPv4 {
+		addresses = append(addresses, net.JoinHostPort(addr.String(), fmt.Sprintf("%d", entry.Port)))
+	}
+	for _, addr := range entry.AddrIPv6 {
+		addresses = append(addresses, net.JoinHostPort(addr.String(), fmt.Sprintf("%d", entry.Port)))
+	}
+
+	for _, address := range addresses {
 		if entry.Port == 0 {
 			continue
 		}
 
-		address := fmt.Sprintf("%s:%d", addr.String(), entry.Port)
 		nodeID := m.generateNodeID(entry.Instance, address)
 
 		m.mu.Lock()
