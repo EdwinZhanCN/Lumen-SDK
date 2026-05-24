@@ -101,7 +101,7 @@ func (b *InferRequestBuilder) ForBioCLIPTensor(payload []byte, dtype string, top
 		Layout:         "NCHW",
 		PreprocessID:   PreprocessCLIPImage,
 		PreprocessSkip: true,
-	}).WithService(ServiceCLIP)
+	}).WithService(ServiceBioCLIP)
 	b.req.Task = TaskBioCLIPClassify
 	if topK > 0 {
 		b.WithMeta(MetaTopK, strconv.Itoa(topK))
@@ -188,8 +188,8 @@ func ValidateTaskRequest(req *pb.InferRequest) error {
 		}
 		return validateRawImageMIME(mime)
 	case TaskBioCLIPClassify:
-		if service := ServiceFromMeta(req.Meta); service != "" && service != ServiceCLIP {
-			return fmt.Errorf("%s requires service %q", TaskBioCLIPClassify, ServiceCLIP)
+		if service := ServiceFromMeta(req.Meta); service != "" && service != ServiceBioCLIP {
+			return fmt.Errorf("%s requires service %q", TaskBioCLIPClassify, ServiceBioCLIP)
 		}
 		if isTensor {
 			return validateImageTensorTask(req, []string{PreprocessCLIPImage}, true)
@@ -273,8 +273,12 @@ func validateImageTensorTask(req *pb.InferRequest, preprocessIDs []string, allow
 	service := ServiceFromMeta(req.Meta)
 	switch desc.PreprocessID {
 	case PreprocessCLIPImage:
-		if service != "" && service != ServiceCLIP {
-			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, ServiceCLIP, PreprocessCLIPImage)
+		requiredService := ServiceCLIP
+		if req.Task == TaskBioCLIPClassify {
+			requiredService = ServiceBioCLIP
+		}
+		if service != "" && service != requiredService {
+			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, requiredService, PreprocessCLIPImage)
 		}
 	case PreprocessSigLIPImage:
 		if service != "" && service != ServiceSigLIP {

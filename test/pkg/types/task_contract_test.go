@@ -8,6 +8,14 @@ import (
 )
 
 func TestTaskContractRawBuilders(t *testing.T) {
+	bioCLIPReq := types.NewInferRequest("").ForBioCLIPClassify([]byte("fake"), "image/jpeg", 3).Build()
+	if bioCLIPReq.Task != types.TaskBioCLIPClassify || bioCLIPReq.Meta[types.MetaService] != types.ServiceBioCLIP || bioCLIPReq.Meta[types.MetaTopK] != "3" {
+		t.Fatalf("unexpected BioCLIP request: %+v", bioCLIPReq)
+	}
+	if err := types.ValidateTaskRequest(bioCLIPReq); err != nil {
+		t.Fatalf("ValidateTaskRequest(bioclip) error = %v", err)
+	}
+
 	textReq := types.NewInferRequest("").ForSemanticTextEmbed("a cat", types.ServiceCLIP).Build()
 	if textReq.Task != types.TaskSemanticTextEmbed || textReq.PayloadMime != "text/plain" || textReq.Meta[types.MetaService] != types.ServiceCLIP {
 		t.Fatalf("unexpected text request: %+v", textReq)
@@ -26,6 +34,16 @@ func TestTaskContractRawBuilders(t *testing.T) {
 }
 
 func TestTaskContractTensorBuilders(t *testing.T) {
+	bioCLIPReq := types.NewInferRequest("").
+		ForBioCLIPTensor(make([]byte, 1*3*224*224*4), "fp32", 5).
+		Build()
+	if bioCLIPReq.Task != types.TaskBioCLIPClassify || bioCLIPReq.Meta[types.MetaService] != types.ServiceBioCLIP {
+		t.Fatalf("unexpected BioCLIP tensor request: %+v", bioCLIPReq)
+	}
+	if err := types.ValidateTaskRequest(bioCLIPReq); err != nil {
+		t.Fatalf("ValidateTaskRequest(bioclip tensor) error = %v", err)
+	}
+
 	req := types.NewInferRequest("").
 		ForFaceRecognitionTensor(make([]byte, 1*3*640*640*4), "fp32", 640, 640, 1920, 1080, 0.3333333, 0, 140).
 		Build()
@@ -53,6 +71,14 @@ func TestTaskContractRejectsInvalidInputs(t *testing.T) {
 		Build()
 	if err := types.ValidateTaskRequest(textTensor); err == nil || !strings.Contains(err.Error(), "does not support tensor") {
 		t.Fatalf("expected text tensor rejection, got %v", err)
+	}
+
+	wrongBioCLIPService := types.NewInferRequest(types.TaskBioCLIPClassify).
+		WithPayload([]byte("fake"), "image/jpeg").
+		WithService(types.ServiceCLIP).
+		Build()
+	if err := types.ValidateTaskRequest(wrongBioCLIPService); err == nil || !strings.Contains(err.Error(), types.ServiceBioCLIP) {
+		t.Fatalf("expected BioCLIP service rejection, got %v", err)
 	}
 
 	ocrMissingSource := types.NewInferRequest("").

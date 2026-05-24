@@ -16,7 +16,7 @@ import (
 //
 // Users build the request with flags:
 //
-//	--service        (required) : service name written to meta.service, e.g. "clip"
+//	--service        (required) : service name written to meta.service, e.g. "bioclip"
 //	--task                      : optional task/model id
 //	--payload-file              : path to a binary file to use as payload (recommended for images/audio)
 //	--payload-b64               : base64-encoded payload string (alternative to file)
@@ -37,7 +37,7 @@ Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_face
 
 func init() {
 	// Request flags
-	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. clip, siglip, ocr, face")
+	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. bioclip, clip, siglip, ocr, face")
 	InferCmd.Flags().String("task", "", "Lumen Hub task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
 	InferCmd.Flags().String("payload-mime", "application/octet-stream", "Payload MIME type, e.g. text/plain, image/jpeg, application/octet-stream")
 	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")
