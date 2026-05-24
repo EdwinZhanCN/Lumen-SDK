@@ -18,10 +18,11 @@ const (
 	TaskOCR                = "ocr"
 	TaskFaceRecognition    = "face_recognition"
 
-	ServiceCLIP   = "clip"
-	ServiceSigLIP = "siglip"
-	ServiceOCR    = "ocr"
-	ServiceFace   = "face"
+	ServiceCLIP    = "clip"
+	ServiceBioCLIP = "bioclip"
+	ServiceSigLIP  = "siglip"
+	ServiceOCR     = "ocr"
+	ServiceFace    = "face"
 
 	PreprocessCLIPImage      = "clip_image_preprocess_v1"
 	PreprocessSigLIPImage    = "siglip_image_preprocess_v1"
@@ -86,7 +87,7 @@ func (b *InferRequestBuilder) ForBioCLIPClassify(payload []byte, mime string, to
 	b.req.Task = TaskBioCLIPClassify
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	b.WithService(ServiceCLIP)
+	b.WithService(ServiceBioCLIP)
 	if topK > 0 {
 		b.WithMeta(MetaTopK, strconv.Itoa(topK))
 	}
