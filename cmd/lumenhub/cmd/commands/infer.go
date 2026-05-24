@@ -37,7 +37,7 @@ Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_face
 
 func init() {
 	// Request flags
-	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. clip, siglip, ppocr, insightface")
+	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. clip, siglip, ocr, face")
 	InferCmd.Flags().String("task", "", "Lumen Hub task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
 	InferCmd.Flags().String("payload-mime", "application/octet-stream", "Payload MIME type, e.g. text/plain, image/jpeg, application/octet-stream")
 	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")

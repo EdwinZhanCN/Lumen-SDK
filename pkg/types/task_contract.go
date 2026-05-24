@@ -18,10 +18,10 @@ const (
 	TaskOCR                = "ocr"
 	TaskFaceRecognition    = "face_recognition"
 
-	ServiceCLIP        = "clip"
-	ServiceSigLIP      = "siglip"
-	ServicePPOCR       = "ppocr"
-	ServiceInsightFace = "insightface"
+	ServiceCLIP   = "clip"
+	ServiceSigLIP = "siglip"
+	ServiceOCR    = "ocr"
+	ServiceFace   = "face"
 
 	PreprocessCLIPImage      = "clip_image_preprocess_v1"
 	PreprocessSigLIPImage    = "siglip_image_preprocess_v1"
@@ -112,7 +112,7 @@ func (b *InferRequestBuilder) ForOCRRaw(payload []byte, mime string) *InferReque
 	b.req.Task = TaskOCR
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	return b.WithService(ServicePPOCR)
+	return b.WithService(ServiceOCR)
 }
 
 func (b *InferRequestBuilder) ForOCRTensor(payload []byte, dtype string, h, w int64, sourceWidth, sourceHeight int) *InferRequestBuilder {
@@ -122,7 +122,7 @@ func (b *InferRequestBuilder) ForOCRTensor(payload []byte, dtype string, h, w in
 		Layout:         "NCHW",
 		PreprocessID:   PreprocessPPOCRDetection,
 		PreprocessSkip: true,
-	}).WithService(ServicePPOCR)
+	}).WithService(ServiceOCR)
 	b.req.Task = TaskOCR
 	b.WithMeta(MetaSourceWidth, strconv.Itoa(sourceWidth))
 	b.WithMeta(MetaSourceHeight, strconv.Itoa(sourceHeight))
@@ -133,7 +133,7 @@ func (b *InferRequestBuilder) ForFaceRecognitionRaw(payload []byte, mime string)
 	b.req.Task = TaskFaceRecognition
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	return b.WithService(ServiceInsightFace)
+	return b.WithService(ServiceFace)
 }
 
 func (b *InferRequestBuilder) ForFaceRecognitionTensor(payload []byte, dtype string, h, w int64, sourceWidth, sourceHeight int, scale, padX, padY float64) *InferRequestBuilder {
@@ -143,7 +143,7 @@ func (b *InferRequestBuilder) ForFaceRecognitionTensor(payload []byte, dtype str
 		Layout:         "NCHW",
 		PreprocessID:   PreprocessInsightFaceDet,
 		PreprocessSkip: true,
-	}).WithService(ServiceInsightFace)
+	}).WithService(ServiceFace)
 	b.req.Task = TaskFaceRecognition
 	b.WithMeta(MetaSourceWidth, strconv.Itoa(sourceWidth))
 	b.WithMeta(MetaSourceHeight, strconv.Itoa(sourceHeight))

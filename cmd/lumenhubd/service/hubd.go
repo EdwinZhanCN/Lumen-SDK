@@ -19,11 +19,12 @@ import (
 
 // HubdService manages the hubd service lifecycle
 type HubdService struct {
-	config    *config.Config
-	logger    *zap.Logger
-	client    *client.LumenClient
-	servers   []func() error
-	startTime time.Time
+	config          *config.Config
+	logger          *zap.Logger
+	client          *client.LumenClient
+	servers         []func() error
+	serverShutdowns []func() error
+	startTime       time.Time
 }
 
 // NewHubdService creates a new hubd service instance
@@ -65,21 +66,33 @@ func (s *HubdService) Start(ctx context.Context) error {
 
 // startServers starts all configured servers
 func (s *HubdService) startServers(ctx context.Context) error {
-	// Clear servers slice
-	s.servers = []func() error{}
+	_ = ctx
 
-	// Start REST server if enabled
+	// Clear server lifecycle hooks.
+	s.servers = []func() error{}
+	s.serverShutdowns = []func() error{}
+
+	// Start REST server if enabled.
 	if s.config.Server.REST.Enabled {
+		handler := rest.NewHandler(s.client, nil, s.logger)
+		router := rest.NewRouter(handler, s.logger)
+		router.SetupRoutes()
+
+		addr := fmt.Sprintf("%s:%d", s.config.Server.REST.Host, s.config.Server.REST.Port)
 		s.servers = append(s.servers, func() error {
-			return s.startRESTServer()
+			s.logger.Info("Starting REST server", zap.String("address", addr))
+			return router.Start(addr)
+		})
+		s.serverShutdowns = append(s.serverShutdowns, func() error {
+			return router.ShutdownWithTimeout(5 * time.Second)
 		})
 	}
 
-	// Start all servers in goroutines
+	// Start all servers in goroutines.
 	for i, startServer := range s.servers {
 		go func(index int, startFn func() error) {
 			if err := startFn(); err != nil {
-				s.logger.Error("Server failed to start",
+				s.logger.Error("Server stopped with error",
 					zap.Int("server_index", index),
 					zap.Error(err))
 			}
@@ -89,34 +102,24 @@ func (s *HubdService) startServers(ctx context.Context) error {
 	return nil
 }
 
-// startRESTServer starts the REST API server
-func (s *HubdService) startRESTServer() error {
-	handler := rest.NewHandler(s.client, nil, s.logger)
-	router := rest.NewRouter(handler, s.logger)
-
-	router.SetupRoutes()
-
-	addr := fmt.Sprintf("%s:%d", s.config.Server.REST.Host, s.config.Server.REST.Port)
-	s.logger.Info("Starting REST server", zap.String("address", addr))
-
-	return router.Start(addr)
-}
-
 // Stop stops the hubd service gracefully
 func (s *HubdService) Stop() error {
 	s.logger.Info("Stopping Lumen Hub service...")
 
-	// Close client
-	if s.client != nil {
-		if err := s.client.Close(); err != nil {
-			s.logger.Error("Failed to close client", zap.Error(err))
+	for i := len(s.serverShutdowns) - 1; i >= 0; i-- {
+		if err := s.serverShutdowns[i](); err != nil {
+			s.logger.Error("Failed to stop server", zap.Int("server_index", i), zap.Error(err))
 		}
 	}
+	s.serverShutdowns = nil
 
-	// Close internal client
+	// Close the global client through internal.CloseClient so its lifecycle context
+	// is cancelled before client subsystems are stopped.
 	if err := internal.CloseClient(); err != nil {
 		s.logger.Error("Failed to close internal client", zap.Error(err))
 	}
+	s.client = nil
+	s.startTime = time.Time{}
 
 	s.logger.Info("Lumen Hub service stopped")
 	return nil

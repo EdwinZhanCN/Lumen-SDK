@@ -1,6 +1,8 @@
 package rest
 
 import (
+	"time"
+
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -67,4 +69,12 @@ func (r *Router) Shutdown() error {
 		r.logger.Info("Shutting down REST router")
 	}
 	return r.app.Shutdown()
+}
+
+// ShutdownWithTimeout attempts to gracefully shutdown the server within timeout.
+func (r *Router) ShutdownWithTimeout(timeout time.Duration) error {
+	if r.logger != nil {
+		r.logger.Info("Shutting down REST router", zap.Duration("timeout", timeout))
+	}
+	return r.app.ShutdownWithTimeout(timeout)
 }

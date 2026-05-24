@@ -522,30 +522,81 @@ func (m *MDNSDiscovery) cleanupLoop(ctx context.Context) {
 }
 
 func (m *MDNSDiscovery) cleanupStaleNodes() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	now := time.Now()
-	var staleNodes []string
+	type staleCandidate struct {
+		id   string
+		node *NodeInfo
+	}
+	var candidates []staleCandidate
 
+	m.mu.RLock()
 	for nodeID, node := range m.nodes {
 		if now.Sub(node.LastSeen) > m.config.NodeTimeout {
-			staleNodes = append(staleNodes, nodeID)
+			candidates = append(candidates, staleCandidate{id: nodeID, node: CloneNode(node)})
 		}
 	}
+	m.mu.RUnlock()
 
-	for _, nodeID := range staleNodes {
-		node := m.nodes[nodeID]
-		delete(m.nodes, nodeID)
-		m.logger.Info("removed stale node",
-			zap.String("node_id", nodeID),
-			zap.String("name", node.Name),
-			zap.Time("last_seen", node.LastSeen))
+	if len(candidates) == 0 {
+		return
 	}
 
-	if len(staleNodes) > 0 {
+	removed := 0
+	for _, candidate := range candidates {
+		if m.isNodeReachable(candidate.node) {
+			m.mu.Lock()
+			if node, exists := m.nodes[candidate.id]; exists {
+				node.LastSeen = time.Now()
+				if node.Status == NodeStatusError {
+					node.Status = NodeStatusActive
+				}
+			}
+			m.mu.Unlock()
+
+			m.logger.Debug("stale node is still reachable, refreshed last_seen",
+				zap.String("node_id", candidate.id),
+				zap.String("name", candidate.node.Name),
+				zap.Time("previous_last_seen", candidate.node.LastSeen))
+			continue
+		}
+
+		m.mu.Lock()
+		if node, exists := m.nodes[candidate.id]; exists && !node.LastSeen.After(candidate.node.LastSeen) {
+			delete(m.nodes, candidate.id)
+			removed++
+			m.logger.Info("removed stale node",
+				zap.String("node_id", candidate.id),
+				zap.String("name", node.Name),
+				zap.Time("last_seen", node.LastSeen))
+		}
+		m.mu.Unlock()
+	}
+
+	if removed > 0 {
 		m.notifyWatchers()
 	}
+}
+
+func (m *MDNSDiscovery) isNodeReachable(node *NodeInfo) bool {
+	if node == nil || strings.TrimSpace(node.Address) == "" {
+		return false
+	}
+
+	conn, err := m.connectToNode(node.Address)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	baseCtx := m.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+	defer cancel()
+
+	_, err = pb.NewInferenceClient(conn).Health(ctx, &emptypb.Empty{})
+	return err == nil
 }
 
 func (m *MDNSDiscovery) notifyWatchers() {

@@ -33,7 +33,7 @@ func TestTaskContractTensorBuilders(t *testing.T) {
 	if req.Task != types.TaskFaceRecognition || req.PayloadMime != types.DefaultTensorMIME {
 		t.Fatalf("unexpected face tensor request: %+v", req)
 	}
-	if req.Meta[types.MetaPreprocessID] != types.PreprocessInsightFaceDet || req.Meta[types.MetaService] != types.ServiceInsightFace {
+	if req.Meta[types.MetaPreprocessID] != types.PreprocessInsightFaceDet || req.Meta[types.MetaService] != types.ServiceFace {
 		t.Fatalf("unexpected tensor meta: %#v", req.Meta)
 	}
 	if err := types.ValidateTaskRequest(req); err != nil {
@@ -62,7 +62,7 @@ func TestTaskContractRejectsInvalidInputs(t *testing.T) {
 			Layout:       "NCHW",
 			PreprocessID: types.PreprocessPPOCRDetection,
 		}).
-		WithService(types.ServicePPOCR).
+		WithService(types.ServiceOCR).
 		Build()
 	ocrMissingSource.Task = types.TaskOCR
 	if err := types.ValidateTaskRequest(ocrMissingSource); err == nil || !strings.Contains(err.Error(), types.MetaSourceWidth) {
@@ -71,7 +71,7 @@ func TestTaskContractRejectsInvalidInputs(t *testing.T) {
 
 	deprecated := types.NewInferRequest(types.TaskFaceRecognition).
 		WithPayload([]byte("{}"), types.DeprecatedTensorJSONMIME).
-		WithService(types.ServiceInsightFace).
+		WithService(types.ServiceFace).
 		Build()
 	if err := types.ValidateTaskRequest(deprecated); err == nil || !strings.Contains(err.Error(), "deprecated") {
 		t.Fatalf("expected deprecated tensor JSON rejection, got %v", err)

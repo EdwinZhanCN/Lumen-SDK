@@ -70,25 +70,30 @@ jobs:
                   COMMIT=${{ github.sha }}
                   BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+                  EXT=""
+                  if [ "${{ matrix.goos }}" = "windows" ]; then
+                    EXT=".exe"
+                  fi
+
                   # Build lumenhubd with complete version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumenhubd \
+                    -o "dist/lumenhubd${EXT}" \
                     ./cmd/lumenhubd
 
                   # Build lumenhub with complete version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumenhub \
+                    -o "dist/lumenhub${EXT}" \
                     ./cmd/lumenhub
 
             - name: Create archive
               run: |
                   cd dist
                   if [ "${{ matrix.goos }}" = "windows" ]; then
-                    7z a lumenhub-${{ matrix.goos }}-${{ matrix.goarch }}.zip *
+                    7z a lumenhub-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip lumenhubd.exe lumenhub.exe
                   else
-                    tar -czf lumenhub-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz *
+                    tar -czf lumenhub-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz lumenhubd lumenhub
                   fi
 
             - uses: actions/upload-artifact@v4
@@ -147,20 +152,30 @@ jobs:
                       ### Download Binaries
                       ```bash
                       # Linux AMD64
-                      curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
-                      sudo mv lumenhubd lumenhub /usr/local/bin/
-
-                      # macOS AMD64
-                      curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
-                      sudo mv lumenhubd lumenhub /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
+                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
 
                       # Linux ARM64
-                      curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
-                      sudo mv lumenhubd lumenhub /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
+                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
+
+                      # macOS AMD64
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
+                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumenhubd /usr/local/bin/lumenhub 2>/dev/null || true
 
                       # macOS ARM64
-                      curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
-                      sudo mv lumenhubd lumenhub /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
+                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumenhubd /usr/local/bin/lumenhub 2>/dev/null || true
+                      ```
+
+                      macOS builds are currently unsigned/not notarized. If you download the archive with a browser or another tool that adds Gatekeeper quarantine, remove it before installing:
+
+                      ```bash
+                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
                       ```
 
 
