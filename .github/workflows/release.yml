@@ -116,7 +116,7 @@ jobs:
             - name: Setup Node
               uses: actions/setup-node@v3
               with:
-                  node-version: 18
+                  node-version: 20
 
             - name: Install Wails CLI
               run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
@@ -158,7 +158,7 @@ jobs:
             - name: Setup Node
               uses: actions/setup-node@v3
               with:
-                  node-version: 18
+                  node-version: 20
 
             - name: Install Wails CLI
               run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
