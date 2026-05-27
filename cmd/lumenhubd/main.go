@@ -19,7 +19,6 @@ import (
 
 var (
 	configFile = flag.String("config", "", "Path to configuration file")
-	preset     = flag.String("preset", "", "Use preset configuration (minimal|basic|lightweight|brave)")
 	daemon     = flag.Bool("daemon", false, "Run as daemon process")
 	version    = flag.Bool("version", false, "Show version information")
 )
@@ -53,7 +52,7 @@ func main() {
 		return
 	}
 	// Load configuration
-	cfg, err := internal.LoadConfig(*configFile, *preset)
+	cfg, err := internal.LoadConfig(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
@@ -81,7 +80,6 @@ func main() {
 	}
 
 	logger.Info("Lumen Hub daemon started successfully",
-		zap.String("preset", *preset),
 		zap.String("config", *configFile),
 		zap.String("version", "1.0.0"))
 
@@ -164,7 +162,7 @@ func daemonizeWindows() error {
 // runDaemon runs the actual daemon service
 func runDaemon() error {
 	// Load configuration
-	cfg, err := internal.LoadConfig(*configFile, *preset)
+	cfg, err := internal.LoadConfig(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		return err
@@ -194,7 +192,6 @@ func runDaemon() error {
 	}
 
 	logger.Info("Lumen Hub daemon started successfully",
-		zap.String("preset", *preset),
 		zap.String("config", *configFile),
 		zap.String("version", "1.0.0"),
 		zap.Int("pid", os.Getpid()),

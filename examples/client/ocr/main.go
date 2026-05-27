@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -78,11 +77,8 @@ func testOCR(ctx context.Context, lumenClient *client.LumenClient, filename stri
 		ForOCRRaw(ocrReq.Payload, ocrReq.PayloadMime).
 		Build()
 
-	// Perform OCR with retry
-	resp, err := lumenClient.InferWithRetry(ctx, inferReq,
-		client.WithMaxWaitTime(30*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	// Perform OCR
+	resp, err := lumenClient.Infer(ctx, inferReq)
 
 	if err != nil {
 		fmt.Printf("OCR failed: %v\n", err)

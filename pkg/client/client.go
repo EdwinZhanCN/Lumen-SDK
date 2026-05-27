@@ -4,465 +4,101 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	sdktypes "github.com/edwinzhancn/lumen-sdk/pkg/types"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"go.uber.org/zap"
 )
 
-// ClientMetrics tracks performance and operational metrics for the Lumen client.
-//
-// This structure provides real-time insights into the client's behavior and health,
-// including request statistics, error rates, latency measurements, and node availability.
-// These metrics are useful for monitoring, debugging, and optimizing client operations.
-//
-// Role in project: Provides observability and monitoring data for the client layer,
-// enabling administrators and developers to track system performance and diagnose issues.
-//
-// Example:
-//
-//	client, _ := client.NewLumenClient(cfg, logger)
-//	metrics := client.GetMetrics()
-//	fmt.Printf("Total requests: %d\n", metrics.TotalRequests)
-//	fmt.Printf("Error rate: %.2f%%\n", metrics.ErrorRate*100)
-//	fmt.Printf("Average latency: %v\n", metrics.AverageLatency)
+// ClientMetrics is a lightweight metrics snapshot for monitoring.
 type ClientMetrics struct {
-	TotalRequests      int64         `json:"total_requests"`
-	SuccessfulRequests int64         `json:"successful_requests"`
-	FailedRequests     int64         `json:"failed_requests"`
-	ErrorRate          float64       `json:"error_rate"`
-	AverageLatency     time.Duration `json:"average_latency"`
-	ThroughputQPS      float64       `json:"throughput_qps"`
-	ActiveNodes        int           `json:"active_nodes"`
-	TotalNodes         int           `json:"total_nodes"`
-	LastUpdated        time.Time     `json:"last_updated"`
+	TotalNodes      int       `json:"total_nodes"`
+	ActiveNodes     int       `json:"active_nodes"`
+	TotalRequests   int64     `json:"total_requests"`
+	SuccessRequests int64     `json:"success_requests"`
+	FailedRequests  int64     `json:"failed_requests"`
+	AverageLatency  int64     `json:"average_latency_ns"`
+	ErrorRate       float64   `json:"error_rate"`
+	LastUpdated     time.Time `json:"last_updated"`
 }
 
-// LumenClient is the main client for interacting with the Lumen distributed AI service platform.
+// LumenClient provides inference access to ML nodes.
 //
-// LumenClient handles all aspects of communication with Lumen ML nodes, including:
-//   - Service discovery and node management via mDNS
-//   - Load balancing across multiple nodes using configurable strategies
-//   - Connection pooling for efficient resource utilization
-//   - Automatic request chunking for large payloads
-//   - Metrics collection and monitoring
-//
-// Role in project: Acts as the primary entry point for applications to perform ML inference
-// operations. It abstracts away the complexity of distributed node management, load balancing,
-// and network communication, providing a simple API for users.
-//
-// Example usage:
-//
-//	// Create configuration
-//	cfg := config.DefaultConfig()
-//	logger, _ := zap.NewProduction()
-//
-//	// Create client
-//	client, err := client.NewLumenClient(cfg, logger)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//
-//	// Start the client
-//	ctx := context.Background()
-//	if err := client.Start(ctx); err != nil {
-//	    log.Fatal(err)
-//	}
-//	defer client.Close()
-//
-//	// Perform inference
-//	textData := []byte("Hello, world!")
-//	embeddingReq, _ := types.NewEmbeddingRequest(textData)
-//	inferReq := types.NewInferRequest("text_embedding").
-//	    ForEmbedding(embeddingReq, "text_embedding").
-//	    Build()
-//	result, err := client.Infer(ctx, inferReq)
+// It composes a NodeResolver (discovery) with a Pool (connection management).
+// Inference requests are sent directly to the selected gRPC connection;
+// there is no intermediate caching, health checking, or task availability polling.
 type LumenClient struct {
-	config    *config.Config
-	discovery discovery.ServiceDiscovery
-	pool      *GRPCConnectionPool
-	balancer  LoadBalancer
-	logger    *zap.Logger
-	running   bool
-	metrics   *ClientMetrics
-	mu        sync.RWMutex
+	pool     *Pool
+	resolver discovery.NodeResolver
+	config   *config.Config
+	logger   *zap.Logger
+
+	cancel context.CancelFunc
+	mu     sync.Mutex
+
+	// metrics (atomic for lock-free read)
+	totalReqs      atomic.Int64
+	successReqs    atomic.Int64
+	failedReqs     atomic.Int64
+	totalLatencyNs atomic.Int64
 }
 
-// NewLumenClient creates a new LumenClient instance with default round-robin load balancing.
+// NewLumenClient creates a new LumenClient.
 //
-// This function initializes all client components including service discovery, connection pooling,
-// and load balancing. If cfg is nil, default configuration is used. If logger is nil, you should
-// provide a valid logger for proper operation.
-//
-// Parameters:
-//   - cfg: Configuration for the client. Pass nil to use defaults.
-//   - logger: Logger instance for client operations. Should not be nil in production.
-//
-// Returns:
-//   - *LumenClient: Initialized client ready to be started
-//   - error: Initialization error if any component fails to set up
-//
-// Role in project: Factory function that creates the main client object. This is the
-// primary way applications instantiate the Lumen client.
-//
-// Example:
-//
-//	cfg := config.DefaultConfig()
-//	logger, _ := zap.NewProduction()
-//	client, err := client.NewLumenClient(cfg, logger)
-//	if err != nil {
-//	    log.Fatalf("Failed to create client: %v", err)
-//	}
+// The client selects a resolver backend based on cfg:
+//   - If cfg.Discovery.MDNSEnabled is true, a mDNS resolver is used.
+//   - Otherwise, if cfg.Discovery.HubURL is set, a Gateway push resolver is used.
 func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error) {
-	return NewLumenClientWithBalancer(cfg, logger, RoundRobin)
-}
-
-// GetConfig returns a copy of the client's current configuration in a thread-safe manner.
-//
-// This method allows REST handlers and other components to safely retrieve the runtime
-// configuration without modifying the client's internal state. The returned configuration
-// is a shallow copy to prevent external modifications from affecting the client.
-//
-// Returns:
-//   - *config.Config: A copy of the current configuration
-//
-// Role in project: Provides safe read access to client configuration for monitoring,
-// debugging, and REST API endpoints that need to expose configuration details.
-//
-// Example:
-//
-//	client, _ := client.NewLumenClient(cfg, logger)
-//	currentCfg := client.GetConfig()
-//	fmt.Printf("REST port: %d\n", currentCfg.Server.REST.Port)
-func (c *LumenClient) GetConfig() *config.Config {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.config == nil {
-		// 返回默认配置的副本
-		d := config.DefaultConfig()
-		return d
-	}
-	// 返回一个拷贝，避免调用方能修改内部结构
-	copyCfg := *c.config
-	return &copyCfg
-}
-
-// NewLumenClientWithBalancer 创建指定负载均衡策略的Lumen客户端
-func NewLumenClientWithBalancer(cfg *config.Config, logger *zap.Logger, balancerType LoadBalancerType) (*LumenClient, error) {
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	logger = ensureLogger(logger)
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 
-	// 更新配置中的策略
-	cfg.LoadBalancer.Strategy = string(balancerType)
+	pool := NewPool(logger)
 
-	// 创建负载均衡器
-	balancer := CreateLoadBalancer(balancerType, &cfg.LoadBalancer, logger)
+	var resolver discovery.NodeResolver
+	if cfg.Discovery.Enabled && cfg.Discovery.MDNSEnabled {
+		resolver = discovery.NewMDNSResolver(&cfg.Discovery, logger)
+	}
+	if resolver == nil && cfg.Discovery.Enabled && cfg.Discovery.HubURL != "" {
+		resolver = discovery.NewPushResolver(cfg.Discovery.HubURL, logger)
+	}
+	if resolver == nil {
+		return nil, fmt.Errorf("no discovery backend configured: enable mDNS or set hub_url")
+	}
 
-	client := &LumenClient{
+	return &LumenClient{
+		pool:     pool,
+		resolver: resolver,
 		config:   cfg,
-		balancer: balancer,
 		logger:   logger,
-		running:  false,
-		metrics: &ClientMetrics{
-			LastUpdated: time.Now(),
-		},
-	}
-
-	// 初始化组件
-	if err := client.initializeComponents(); err != nil {
-		return nil, fmt.Errorf("failed to initialize client components: %w", err)
-	}
-
-	return client, nil
+	}, nil
 }
 
-// initializeComponents 初始化客户端组件
-func (c *LumenClient) initializeComponents() error {
-	// 初始化服务发现管理器，保持客户端只依赖 discovery 抽象。
-	discoveryManager := discovery.NewManager()
-
-	if c.config.Discovery.Enabled && c.config.Discovery.MDNSEnabled {
-		if err := discoveryManager.AddFinder(
-			"mdns",
-			discovery.NewMDNSDiscovery(&c.config.Discovery, c.logger),
-			0,
-			0,
-		); err != nil {
-			return fmt.Errorf("failed to register mdns discovery: %w", err)
-		}
-	}
-
-	if c.config.Discovery.Enabled && strings.TrimSpace(c.config.Discovery.HubURL) != "" {
-		if err := discoveryManager.AddFinder(
-			"hubd",
-			discovery.NewHTTPDiscovery(&c.config.Discovery, c.logger),
-			0,
-			0,
-		); err != nil {
-			return fmt.Errorf("failed to register hubd discovery: %w", err)
-		}
-	}
-
-	c.discovery = discoveryManager
-
-	// 初始化连接池，使用默认配置
-	c.pool = NewGRPCConnectionPool(nil, c.logger)
-
-	// Set up gRPC-based health check function for load balancer
-	// This allows the load balancer to perform real health checks via gRPC
-	if lb, ok := c.balancer.(*SimpleLoadBalancer); ok {
-		lb.SetHealthCheckFunc(c.createGRPCHealthCheckFunc())
-	}
-
-	return nil
-}
-
-// createGRPCHealthCheckFunc creates a health check function that uses gRPC
-// to verify node health. On success, it updates the node's LastSeen timestamp.
-func (c *LumenClient) createGRPCHealthCheckFunc() HealthCheckFunc {
-	return func(node *discovery.NodeInfo) bool {
-		// Try to get or create a connection to the node
-		conn, err := c.pool.GetConnection(node)
-		if err != nil {
-			c.logger.Debug("health check failed: cannot get connection",
-				zap.String("node_id", node.ID),
-				zap.Error(err))
-			return false
-		}
-
-		// Perform gRPC health check
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		_, err = conn.Client.Health(ctx, &emptypb.Empty{})
-		if err != nil {
-			c.logger.Debug("health check failed: gRPC health call failed",
-				zap.String("node_id", node.ID),
-				zap.Error(err))
-			return false
-		}
-
-		// Health check passed - update LastSeen
-		node.LastSeen = time.Now()
-		c.logger.Debug("health check passed",
-			zap.String("node_id", node.ID))
-		return true
-	}
-}
-
-// Start initializes and starts all client subsystems.
-//
-// This method performs the following initialization steps:
-//  1. Starts the mDNS service discovery to find ML nodes
-//  2. Sets up node change monitoring callbacks
-//  3. Launches the connection pool maintenance loop
-//  4. Begins metrics collection
-//
-// The method is idempotent - calling it multiple times will return an error if already running.
-// The provided context is used for cancellation of background goroutines.
-//
-// Parameters:
-//   - ctx: Context for controlling the lifecycle of background operations
-//
-// Returns:
-//   - error: Non-nil if the client is already running or if any subsystem fails to start
-//
-// Role in project: Activates the client and makes it ready to handle inference requests.
-// Must be called before performing any inference operations.
-//
-// Example:
-//
-//	client, _ := client.NewLumenClient(cfg, logger)
-//	ctx := context.Background()
-//	if err := client.Start(ctx); err != nil {
-//	    log.Fatalf("Failed to start client: %v", err)
-//	}
-//	defer client.Close()
+// Start begins node discovery and connection management.
 func (c *LumenClient) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.running {
-		return fmt.Errorf("client is already running")
-	}
+	ctx, c.cancel = context.WithCancel(ctx)
+	go c.pool.Watch(ctx, c.resolver)
 
-	// 启动服务发现
-	if err := c.discovery.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start service discovery: %w", err)
-	}
-
-	// 监听节点变化
-	if err := c.discovery.Watch(c.onNodesChanged); err != nil {
-		c.logger.Error("failed to watch nodes", zap.Error(err))
-	}
-
-	// 启动连接池维护循环
-	go c.pool.StartMaintenanceLoop(ctx)
-
-	// 启动指标收集循环
-	go c.metricsCollectionLoop(ctx)
-
-	c.running = true
-
-	c.logger.Info("Lumen client started successfully")
+	c.logger.Info("lumen client started")
 	return nil
 }
 
-// Stop 停止客户端
-func (c *LumenClient) Stop() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !c.running {
-		return nil
-	}
-
-	// 停止服务发现
-	c.discovery.Stop()
-
-	// 关闭负载均衡器
-	if err := c.balancer.Close(); err != nil {
-		c.logger.Error("failed to close load balancer", zap.Error(err))
-	}
-
-	// 关闭连接池
-	if err := c.pool.Close(); err != nil {
-		c.logger.Error("failed to close connection pool", zap.Error(err))
-	}
-
-	c.running = false
-
-	c.logger.Info("Lumen client stopped")
-	return nil
-}
-
-// inferSingle 是原来单请求路径的实现（可复用）
-func (c *LumenClient) inferSingle(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
-	startTime := time.Now()
-	c.incrementTotalRequests()
-
-	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
-	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to select node: %w", err)
-	}
-
-	node.IncrementConnections()
-	defer node.DecrementConnections()
-
-	conn, err := c.pool.GetConnection(node)
-	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
-	}
-
-	resp, err := conn.Infer(ctx, req)
-	if err != nil {
-		c.incrementFailedRequests()
-		c.pool.ReturnConnection(node.ID, conn)
-		return nil, fmt.Errorf("inference failed: %w", err)
-	}
-
-	// 归还连接并更新统计
-	c.pool.ReturnConnection(node.ID, conn)
-	c.incrementSuccessfulRequests()
-	c.updateLatency(time.Since(startTime))
-	return resp, nil
-}
-
-// inferStreamSingle 是原来单-chunk 流式路径（原先的 InferStream 实现）
-// 返回 channel，并负责 connection 的 lifecycle
-func (c *LumenClient) inferStreamSingle(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
-	if req == nil {
-		return nil, fmt.Errorf("request cannot be nil")
-	}
-
-	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
-	if err != nil {
-		return nil, fmt.Errorf("failed to select node: %w", err)
-	}
-
-	conn, err := c.pool.GetConnection(node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
-	}
-
-	// 调用底层连接的流式方法（已有实现）
-	respChan, err := conn.InferStream(ctx, req)
-	if err != nil {
-		c.pool.ReturnConnection(node.ID, conn)
-		return nil, fmt.Errorf("stream inference failed: %w", err)
-	}
-
-	// 包装通道以便在 goroutine 结束时归还连接
-	wrapped := make(chan *pb.InferResponse, 100)
-	go func() {
-		defer close(wrapped)
-		defer c.pool.ReturnConnection(node.ID, conn)
-
-		for resp := range respChan {
-			wrapped <- resp
-			if resp.IsFinal {
-				break
-			}
-		}
-	}()
-
-	return wrapped, nil
-}
-
-// Infer performs a synchronous inference request with automatic payload chunking.
+// Infer performs a synchronous inference request.
 //
-// This method handles the complexity of large payloads by automatically splitting them into
-// chunks based on the client's configuration. For small payloads, it sends a single request.
-// For large payloads, it uses bidirectional streaming internally and returns only the final
-// aggregated response.
-//
-// The method provides a simple request-response interface that abstracts away:
-//   - Automatic payload chunking for large data
-//   - Node selection via load balancing
-//   - Connection management and pooling
-//   - Error handling and metrics collection
-//
-// Parameters:
-//   - ctx: Context for request timeout and cancellation
-//   - req: The inference request containing task, payload, and metadata
-//
-// Returns:
-//   - *pb.InferResponse: The final inference result
-//   - error: Non-nil if node selection, connection, or inference fails
-//
-// Role in project: Primary API for synchronous ML inference operations. This is the most
-// commonly used method for applications that need immediate results (e.g., embedding generation,
-// image classification).
-//
-// Example:
-//
-//	// Text embedding
-//	textData := []byte("Hello, world!")
-//	embeddingReq, _ := types.NewEmbeddingRequest(textData)
-//	inferReq := types.NewInferRequest("text_embedding").
-//	    WithCorrelationID("req-123").
-//	    ForEmbedding(embeddingReq, "text_embedding").
-//	    Build()
-//
-//	result, err := client.Infer(ctx, inferReq)
-//	if err != nil {
-//	    log.Fatalf("Inference failed: %v", err)
-//	}
-//
-//	embeddingResp, _ := types.ParseInferResponse(result).AsEmbeddingResponse()
-//	fmt.Printf("Embedding dimensions: %d\n", embeddingResp.DimValue())
+// Picks a healthy gRPC connection from the pool. On failure the connection
+// is marked unhealthy immediately so the next Pick selects a different node.
 func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
@@ -471,113 +107,43 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 		return nil, err
 	}
 
-	// 决定使用的 chunk 配置（从 c.config 获取）
-	chCfg := c.config.Chunk
-	chunks, err := ChunkPayload(req.Payload, chCfg)
+	start := time.Now()
+	c.totalReqs.Add(1)
+
+	nc, err := c.pool.Pick(req.Task)
 	if err != nil {
-		return nil, err
+		c.failedReqs.Add(1)
+		return nil, fmt.Errorf("no node for task %s: %w", req.Task, err)
 	}
 
-	// 如果只有一个 chunk，调用 helper（与以前兼容）
-	if len(chunks) == 1 {
-		return c.inferSingle(ctx, req)
-	}
-
-	// 多个 chunk：使用同一节点的一个 bidi stream 发送所有 chunk，然后等待最终语义响应
-	startTime := time.Now()
-	c.incrementTotalRequests()
-
-	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
+	stream, err := nc.cli.Infer(ctx)
 	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to select node: %w", err)
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
 	}
 
-	node.IncrementConnections()
-	defer node.DecrementConnections()
-
-	conn, err := c.pool.GetConnection(node)
-	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
+	if err := stream.Send(req); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		c.failedReqs.Add(1)
+		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
 	}
-	defer c.pool.ReturnConnection(node.ID, conn)
-
-	stream, err := conn.Client.Infer(ctx)
-	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to create inference stream: %w", err)
+	if err := stream.CloseSend(); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		c.failedReqs.Add(1)
+		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
 	}
 
-	// using cancelable context to coordinate sender/receiver
-	sendCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	sendErrCh := make(chan error, 1)
-
-	// sender goroutine
-	go func() {
-		defer func() {
-			_ = stream.CloseSend()
-		}()
-		var offset uint64
-		total := uint64(len(chunks))
-		for i, chunk := range chunks {
-			select {
-			case <-sendCtx.Done():
-				sendErrCh <- sendCtx.Err()
-				return
-			default:
-			}
-
-			sendReq := &pb.InferRequest{
-				CorrelationId: req.CorrelationId,
-				Task:          req.Task,
-				Payload:       chunk,
-				PayloadMime:   req.PayloadMime,
-				Seq:           uint64(i),
-				Total:         total,
-				Offset:        offset,
-				Meta:          req.Meta,
-			}
-			if err := stream.Send(sendReq); err != nil {
-				conn.mu.Lock()
-				conn.ErrorCount++
-				conn.mu.Unlock()
-				// notify receiver about send failure
-				sendErrCh <- err
-				cancel()
-				return
-			}
-			offset += uint64(len(chunk))
-		}
-		// indicate send completed successfully
-		sendErrCh <- nil
-	}()
-
-	// receiver: 等待最终响应或发送失败
 	var responses []*pb.InferResponse
 	for {
 		resp, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF && len(responses) > 0 {
-				break
-			}
-			// check send error
-			select {
-			case se := <-sendErrCh:
-				if se != nil {
-					c.incrementFailedRequests()
-					return nil, fmt.Errorf("send failed: %w", se)
-				}
-			default:
-				// no send error reported yet
-			}
-
-			c.incrementFailedRequests()
-			return nil, fmt.Errorf("failed to receive response: %w", err)
+		if err == io.EOF {
+			break
 		}
-
+		if err != nil {
+			c.pool.MarkUnhealthy(nc)
+			c.failedReqs.Add(1)
+			return nil, fmt.Errorf("recv from %s: %w", nc.id, err)
+		}
 		responses = append(responses, resp)
 		if resp.IsFinal {
 			break
@@ -586,72 +152,16 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 
 	finalResp, err := sdktypes.AssembleInferResponses(responses)
 	if err != nil {
-		c.incrementFailedRequests()
-		return nil, fmt.Errorf("failed to assemble response: %w", err)
+		c.failedReqs.Add(1)
+		return nil, fmt.Errorf("assemble response: %w", err)
 	}
 
-	// 成功
-	conn.mu.Lock()
-	conn.UsageCount++
-	conn.LastUsed = time.Now()
-	conn.mu.Unlock()
-	c.incrementSuccessfulRequests()
-	c.updateLatency(time.Since(startTime))
+	c.successReqs.Add(1)
+	c.totalLatencyNs.Add(time.Since(start).Nanoseconds())
 	return finalResp, nil
 }
 
-// InferStream performs streaming inference with automatic payload chunking.
-//
-// This method returns a channel that yields raw response messages, including semantic
-// partials, transport chunks, and the final result. Use types.AssembleInferResponses
-// when a stream carries transport chunks that should be reassembled into one result.
-//
-// The method handles:
-//   - Automatic chunking of large payloads across the same bidirectional stream
-//   - Progressive result delivery through a Go channel
-//   - Proper connection lifecycle management
-//   - Graceful error handling and cleanup
-//
-// The returned channel will be closed when either:
-//   - A final response (IsFinal=true) is received
-//   - An error occurs during streaming
-//   - The context is cancelled
-//
-// Parameters:
-//   - ctx: Context for request timeout and cancellation
-//   - req: The inference request with task, payload, and metadata
-//
-// Returns:
-//   - <-chan *pb.InferResponse: Read-only channel for receiving streaming responses
-//   - error: Non-nil if initial setup fails (node selection or stream creation)
-//
-// Role in project: Provides streaming API for applications that need real-time updates
-// or want to process results incrementally (e.g., real-time video processing, progressive
-// face detection in large images).
-//
-// Example:
-//
-//	// Streaming BioCLIP classification
-//	imageData, _ := os.ReadFile("large_image.jpg")
-//	classReq, _ := types.NewClassificationRequest(imageData)
-//	inferReq := types.NewInferRequest(types.TaskBioCLIPClassify).
-//	    ForBioCLIPClassify(classReq.Payload, classReq.PayloadMime, 5).
-//	    Build()
-//
-//	respChan, err := client.InferStream(ctx, inferReq)
-//	if err != nil {
-//	    log.Fatalf("Stream inference failed: %v", err)
-//	}
-//
-//	for resp := range respChan {
-//	    if resp.IsFinal {
-//	        fmt.Println("Final result received")
-//	        classResp, _ := types.ParseInferResponse(resp).AsClassificationResponse()
-//	        fmt.Printf("Top label: %v\n", classResp.TopK(1))
-//	    } else {
-//	        fmt.Println("Partial result received")
-//	    }
-//	}
+// InferStream performs a streaming inference request.
 func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
@@ -659,239 +169,107 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 	if err := sdktypes.ValidateTaskRequest(req); err != nil {
 		return nil, err
 	}
-
-	chCfg := c.config.Chunk
-	chunks, err := ChunkPayload(req.Payload, chCfg)
+	nc, err := c.pool.Pick(req.Task)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no node for task %s: %w", req.Task, err)
 	}
 
-	// 单 chunk：使用原来的单-stream helper
-	if len(chunks) == 1 {
-		return c.inferStreamSingle(ctx, req)
-	}
-
-	// 多 chunk：在同一连接/stream 上发送所有 chunk，并将接收到的响应转发到返回通道
-	node, err := c.balancer.SelectNode(ctx, req.Task, sdktypes.ServiceFromMeta(req.Meta))
+	stream, err := nc.cli.Infer(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to select node: %w", err)
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
 	}
 
-	conn, err := c.pool.GetConnection(node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection for node %s: %w", node.ID, err)
+	if err := stream.Send(req); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
 	}
 
-	stream, err := conn.Client.Infer(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create inference stream: %w", err)
-	}
-
-	out := make(chan *pb.InferResponse, 100)
-
-	sendCtx, cancel := context.WithCancel(ctx)
-
-	// sender goroutine
-	sendErrCh := make(chan error, 1)
+	respChan := make(chan *pb.InferResponse, 100)
 	go func() {
-		defer func() {
-			_ = stream.CloseSend()
-		}()
-		var offset uint64
-		total := uint64(len(chunks))
-		for i, chunk := range chunks {
-			select {
-			case <-sendCtx.Done():
-				sendErrCh <- sendCtx.Err()
-				return
-			default:
-			}
-
-			sendReq := &pb.InferRequest{
-				CorrelationId: req.CorrelationId,
-				Task:          req.Task,
-				Payload:       chunk,
-				PayloadMime:   req.PayloadMime,
-				Seq:           uint64(i),
-				Total:         total,
-				Offset:        offset,
-				Meta:          req.Meta,
-			}
-			if err := stream.Send(sendReq); err != nil {
-				conn.mu.Lock()
-				conn.ErrorCount++
-				conn.mu.Unlock()
-				sendErrCh <- err
-				cancel()
-				return
-			}
-			offset += uint64(len(chunk))
-		}
-		sendErrCh <- nil
-	}()
-
-	// receiver goroutine
-	go func() {
-		defer func() {
-			cancel()
-			close(out)
-			c.pool.ReturnConnection(node.ID, conn)
-		}()
-
+		defer close(respChan)
 		for {
 			resp, err := stream.Recv()
-			if err != nil {
-				// if send reported an error, we may want to propagate it as a final Error response;
-				// here we simply stop the stream.
+			if err == io.EOF {
 				return
 			}
-			out <- resp
+			if err != nil {
+				c.pool.MarkUnhealthy(nc)
+				return
+			}
+			respChan <- resp
 			if resp.IsFinal {
 				return
 			}
 		}
 	}()
 
-	// monitor send errors in background to cancel if necessary
-	go func() {
-		if se := <-sendErrCh; se != nil {
-			// send failed; cancel and ensure out eventually closes
-			cancel()
-		}
-	}()
-
-	return out, nil
+	return respChan, nil
 }
 
-// GetBalancerStats 获取负载均衡器统计信息
-func (c *LumenClient) GetBalancerStats() LoadBalancerStats {
-	return c.balancer.GetStats()
-}
-
-// GetMetrics 获取客户端指标
-func (c *LumenClient) GetMetrics() *ClientMetrics {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	metrics := *c.metrics
-	return &metrics
-}
-
-// GetCapabilities 获取节点能力
-func (c *LumenClient) GetCapabilities(ctx context.Context, nodeID string) ([]*pb.Capability, error) {
-	node, exists := c.discovery.GetNode(nodeID)
-	if !exists {
-		return nil, fmt.Errorf("node not found: %s", nodeID)
+// GetConfig returns a thread-safe copy of the current configuration.
+func (c *LumenClient) GetConfig() *config.Config {
+	if c.config == nil {
+		d := config.DefaultConfig()
+		return d
 	}
-
-	return discovery.CloneCapabilities(node.Capabilities), nil
+	copyCfg := *c.config
+	return &copyCfg
 }
 
-// GetNodes 获取所有节点
+// GetNodes returns summary descriptors for all pool connections.
 func (c *LumenClient) GetNodes() []*discovery.NodeInfo {
-	return discovery.CloneNodeSlice(c.discovery.GetNodes())
+	return c.pool.NodeInfos()
 }
 
-// GetNode 获取指定节点
-func (c *LumenClient) GetNode(id string) (*discovery.NodeInfo, bool) {
-	node, ok := c.discovery.GetNode(id)
-	if !ok {
-		return nil, false
+// GetMetrics returns real metrics from the current process since start.
+func (c *LumenClient) GetMetrics() *ClientMetrics {
+	s := c.pool.Stats()
+	total := c.totalReqs.Load()
+	success := c.successReqs.Load()
+	failed := c.failedReqs.Load()
+	latencyNs := c.totalLatencyNs.Load()
+
+	var avgLatency int64
+	var errorRate float64
+	if total > 0 {
+		avgLatency = latencyNs / total
+		errorRate = float64(failed) / float64(total)
 	}
-	return discovery.CloneNode(node), true
-}
 
-// WatchNodes 监听节点变化
-func (c *LumenClient) WatchNodes(callback func([]*discovery.NodeInfo)) error {
-	if callback == nil {
-		return fmt.Errorf("callback cannot be nil")
+	return &ClientMetrics{
+		TotalNodes:      s.TotalConnections,
+		ActiveNodes:     s.HealthyConnections,
+		TotalRequests:   total,
+		SuccessRequests: success,
+		FailedRequests:  failed,
+		AverageLatency:  avgLatency,
+		ErrorRate:       errorRate,
+		LastUpdated:     time.Now(),
 	}
-	return c.discovery.Watch(func(nodes []*discovery.NodeInfo) {
-		callback(discovery.CloneNodeSlice(nodes))
-	})
 }
 
-// Close 关闭客户端
+// PoolStats returns current pool statistics.
+func (c *LumenClient) PoolStats() PoolStats {
+	return c.pool.Stats()
+}
+
+// WatchNodes registers a callback that fires whenever the node list changes.
+func (c *LumenClient) WatchNodes(cb func([]*discovery.NodeInfo)) {
+	c.pool.OnNodesChanged(cb)
+}
+
+// Close stops discovery and closes all gRPC connections.
 func (c *LumenClient) Close() error {
-	return c.Stop()
-}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-// 节点变化回调
-// onNodesChanged 节点变化回调
-func (c *LumenClient) onNodesChanged(nodes []*discovery.NodeInfo) {
-	c.logger.Debug("nodes changed", zap.Int("count", len(nodes)))
-
-	// 更新负载均衡器的节点列表
-	c.balancer.UpdateNodes(nodes)
-
-	// 更新连接池中的节点
-	for _, node := range nodes {
-		if node.IsActive() {
-			// 节点变为活跃，可以预建连接
-			c.pool.EnsureConnection(node.ID, node.Address)
-		} else {
-			// 节点变为不活跃，清理连接
-			c.pool.RemoveConnection(node.ID)
-		}
+	if c.cancel != nil {
+		c.cancel()
 	}
-}
-
-// 统计方法
-func (c *LumenClient) incrementTotalRequests() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.metrics.TotalRequests++
-}
-
-func (c *LumenClient) incrementSuccessfulRequests() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.metrics.SuccessfulRequests++
-}
-
-func (c *LumenClient) incrementFailedRequests() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.metrics.FailedRequests++
-}
-
-func (c *LumenClient) updateLatency(duration time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.metrics.AverageLatency == 0 {
-		c.metrics.AverageLatency = duration
-	} else {
-		// 指数移动平均
-		alpha := 0.1
-		c.metrics.AverageLatency = time.Duration(
-			float64(c.metrics.AverageLatency)*(1-alpha) + float64(duration)*alpha)
-	}
-}
-
-func (c *LumenClient) metricsCollectionLoop(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.mu.Lock()
-			c.metrics.LastUpdated = time.Now()
-			c.metrics.ActiveNodes = len(c.discovery.GetNodes())
-			c.metrics.TotalNodes = c.metrics.ActiveNodes
-
-			// 计算错误率
-			if c.metrics.TotalRequests > 0 {
-				c.metrics.ErrorRate = float64(c.metrics.FailedRequests) / float64(c.metrics.TotalRequests)
-			}
-
-			// 计算QPS
-			c.metrics.ThroughputQPS = float64(c.metrics.SuccessfulRequests) / 10.0 // 10秒窗口
-
-			c.mu.Unlock()
-		}
-	}
+	return c.pool.Close()
 }

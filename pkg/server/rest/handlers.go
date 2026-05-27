@@ -167,10 +167,14 @@ func (h *handler) GetNodeCapabilities(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return err
 	}
-	ctx := c.Context()
-	caps, err := h.client.GetCapabilities(ctx, req.NodeID)
-	if err != nil {
-		return err
+
+	nodes := h.client.GetNodes()
+	var caps []*pb.Capability
+	for _, n := range nodes {
+		if n.ID == req.NodeID {
+			caps = n.Capabilities
+			break
+		}
 	}
 
 	return c.Status(fiber.StatusOK).JSON(APIResponse{

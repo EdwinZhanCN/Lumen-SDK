@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -83,11 +82,8 @@ func testVLM(ctx context.Context, lumenClient *client.LumenClient, filename stri
 		ForImageTextGeneration(vlmReq, vlmTask).
 		Build()
 
-	// Perform VLM inference with retry
-	resp, err := lumenClient.InferWithRetry(ctx, inferReq,
-		client.WithMaxWaitTime(120*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	// Perform VLM inference
+	resp, err := lumenClient.Infer(ctx, inferReq)
 
 	if err != nil {
 		fmt.Printf("VLM inference failed: %v\n", err)
@@ -143,10 +139,7 @@ func testVLM(ctx context.Context, lumenClient *client.LumenClient, filename stri
 		ForImageTextGeneration(vlmReq2, vlmTask).
 		Build()
 
-	resp2, err := lumenClient.InferWithRetry(ctx, inferReq2,
-		client.WithMaxWaitTime(120*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	resp2, err := lumenClient.Infer(ctx, inferReq2)
 
 	if err != nil {
 		fmt.Printf("Second VLM inference failed: %v\n", err)

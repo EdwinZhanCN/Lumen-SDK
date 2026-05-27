@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -89,11 +88,8 @@ func testEmbedding(ctx context.Context, lumenClient *client.LumenClient, content
 	}
 	inferReq := builder.Build()
 
-	// Perform embedding with retry
-	resp, err := lumenClient.InferWithRetry(ctx, inferReq,
-		client.WithMaxWaitTime(30*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	// Perform embedding
+	resp, err := lumenClient.Infer(ctx, inferReq)
 
 	if err != nil {
 		fmt.Printf("Embedding failed: %v\n", err)
