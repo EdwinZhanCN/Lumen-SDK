@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 
+	ws "github.com/gofiber/contrib/websocket"
 	"go.uber.org/zap"
 )
 
@@ -25,13 +27,20 @@ type HubdService struct {
 	servers         []func() error
 	serverShutdowns []func() error
 	startTime       time.Time
+
+	// WebSocket node watch
+	wsClients map[*ws.Conn]struct{}
+	wsMu      sync.Mutex
+	prevNodes map[string]*discovery.NodeInfo
 }
 
 // NewHubdService creates a new hubd service instance
 func NewHubdService(cfg *config.Config, logger *zap.Logger) (*HubdService, error) {
 	return &HubdService{
-		config: cfg,
-		logger: logger,
+		config:    cfg,
+		logger:    logger,
+		wsClients: make(map[*ws.Conn]struct{}),
+		prevNodes: make(map[string]*discovery.NodeInfo),
 	}, nil
 }
 
@@ -77,6 +86,9 @@ func (s *HubdService) startServers(ctx context.Context) error {
 		handler := rest.NewHandler(s.client, nil, s.logger)
 		router := rest.NewRouter(handler, s.logger)
 		router.SetupRoutes()
+
+		// WebSocket endpoint for node watch (push-based discovery).
+		router.App().Get("/v1/nodes/watch", ws.New(s.handleNodeWatch))
 
 		addr := fmt.Sprintf("%s:%d", s.config.Server.REST.Host, s.config.Server.REST.Port)
 		s.servers = append(s.servers, func() error {
@@ -182,4 +194,151 @@ func countActiveNodes(nodes []*discovery.NodeInfo) int {
 		}
 	}
 	return count
+}
+
+// ---- WebSocket Node Watch ----
+
+// handleNodeWatch is the WebSocket handler for /v1/nodes/watch.
+// It sends the current node snapshot followed by incremental diffs.
+func (s *HubdService) handleNodeWatch(conn *ws.Conn) {
+	s.wsMu.Lock()
+	s.wsClients[conn] = struct{}{}
+	s.wsMu.Unlock()
+
+	defer func() {
+		s.wsMu.Lock()
+		delete(s.wsClients, conn)
+		s.wsMu.Unlock()
+	}()
+
+	// Send current snapshot.
+	if s.client != nil {
+		nodes := s.client.GetNodes()
+		if len(nodes) > 0 {
+			snapshot := nodeSnapshotMsg(nodes)
+			if err := conn.WriteJSON(snapshot); err != nil {
+				s.logger.Debug("ws snapshot write failed", zap.Error(err))
+				return
+			}
+		}
+	}
+
+	s.startNodeWatcher()
+
+	// Keep connection alive; the watcher pushes diffs via broadcastNodeDiff.
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
+func (s *HubdService) startNodeWatcher() {
+	if s.client == nil {
+		return
+	}
+	s.logger.Info("starting node watcher for WebSocket push")
+
+	s.client.WatchNodes(func(nodes []*discovery.NodeInfo) {
+		s.broadcastNodeDiff(nodes)
+	})
+}
+
+func (s *HubdService) broadcastNodeDiff(nodes []*discovery.NodeInfo) {
+	s.wsMu.Lock()
+	clients := make([]*ws.Conn, 0, len(s.wsClients))
+	for c := range s.wsClients {
+		clients = append(clients, c)
+	}
+	s.wsMu.Unlock()
+
+	if len(clients) == 0 {
+		return
+	}
+
+	current := make(map[string]*discovery.NodeInfo, len(nodes))
+	for _, n := range nodes {
+		if n != nil && n.IsActive() {
+			current[n.ID] = n
+		}
+	}
+
+	// Find added nodes.
+	for id, node := range current {
+		if _, ok := s.prevNodes[id]; !ok {
+			s.logger.Debug("ws push: node added", zap.String("id", id))
+			s.broadcastEvent(clients, nodeAddedMsg(node))
+		}
+	}
+
+	// Find removed nodes.
+	for id := range s.prevNodes {
+		if _, ok := current[id]; !ok {
+			s.logger.Debug("ws push: node removed", zap.String("id", id))
+			s.broadcastEvent(clients, nodeRemovedMsg(id))
+		}
+	}
+
+	s.prevNodes = current
+}
+
+func (s *HubdService) broadcastEvent(clients []*ws.Conn, msg interface{}) {
+	for _, c := range clients {
+		if err := c.WriteJSON(msg); err != nil {
+			s.logger.Debug("ws event write failed", zap.Error(err))
+		}
+	}
+}
+
+// ---- WebSocket JSON messages ----
+
+type wsNodeInfo struct {
+	NodeID  string   `json:"node_id"`
+	Address string   `json:"address"`
+	Tasks   []string `json:"tasks,omitempty"`
+}
+
+type wsNodeEvent struct {
+	Type   string       `json:"type"` // "snapshot", "added", "removed"
+	Nodes  []wsNodeInfo `json:"nodes,omitempty"`
+	Node   *wsNodeInfo  `json:"node,omitempty"`
+	NodeID string       `json:"node_id,omitempty"`
+}
+
+func nodeSnapshotMsg(nodes []*discovery.NodeInfo) wsNodeEvent {
+	infos := make([]wsNodeInfo, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil || !n.IsActive() {
+			continue
+		}
+		tasks := make([]string, 0, len(n.Tasks))
+		for _, t := range n.Tasks {
+			tasks = append(tasks, t.Name)
+		}
+		infos = append(infos, wsNodeInfo{
+			NodeID:  n.ID,
+			Address: n.Address,
+			Tasks:   tasks,
+		})
+	}
+	return wsNodeEvent{Type: "snapshot", Nodes: infos}
+}
+
+func nodeAddedMsg(n *discovery.NodeInfo) wsNodeEvent {
+	tasks := make([]string, 0, len(n.Tasks))
+	for _, t := range n.Tasks {
+		tasks = append(tasks, t.Name)
+	}
+	return wsNodeEvent{
+		Type: "added",
+		Node: &wsNodeInfo{
+			NodeID:  n.ID,
+			Address: n.Address,
+			Tasks:   tasks,
+		},
+	}
+}
+
+func nodeRemovedMsg(nodeID string) wsNodeEvent {
+	return wsNodeEvent{Type: "removed", NodeID: nodeID}
 }
