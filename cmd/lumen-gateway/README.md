@@ -60,7 +60,7 @@ macOS 端支持通过自定义 Homebrew Tap 进行安装：
 
 1. 添加 Tap：
    ```bash
-   brew tap edwinzhancn/lumen
+   brew tap edwinzhancn/lumen-sdk
    ```
 2. 安装应用（忽略安全隔离限制）：
    ```bash
