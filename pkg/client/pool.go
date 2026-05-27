@@ -3,648 +3,312 @@ package client
 import (
 	"context"
 	"fmt"
-	"io"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
-	sdktypes "github.com/edwinzhancn/lumen-sdk/pkg/types"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
-// GRPCConnectionPool gRPC连接池实现
-type GRPCConnectionPool struct {
-	config      *PoolConfig
-	connections map[string]*Connection
-	mu          sync.RWMutex
-	logger      *zap.Logger
-	running     bool
+// ErrNoAvailableNode is returned when no healthy connection exists.
+var ErrNoAvailableNode = fmt.Errorf("no available node")
+
+// Pool manages gRPC connections to ML inference nodes.
+//
+// Connection health is driven entirely by gRPC's built-in connectivity state
+// and KeepAlive. There are no timers, caches, health RPCs, or polling loops.
+//
+// The pool reacts to NodeEvent values from a NodeResolver: it dials on
+// NodeAdded and closes on NodeRemoved. gRPC connectivity state transitions
+// move connections between the healthy and unhealthy subsets.
+type Pool struct {
+	mu       sync.RWMutex
+	conns    map[string]*nodeConn // all connections, keyed by node ID
+	healthy  []*nodeConn          // subset of conns in connectivity.Ready
+	watchers []func([]*discovery.NodeInfo)
+
+	logger *zap.Logger
+	rrIdx  int64 // round-robin index
 }
 
-// Connection 连接信息
-type Connection struct {
-	Client      pb.InferenceClient
-	Conn        *grpc.ClientConn
-	Established time.Time
-	LastUsed    time.Time
-	UsageCount  int64
-	ErrorCount  int64
-	Status      ConnectionStatus
-	healthStop  chan struct{}
-	stopOnce    sync.Once
-	mu          sync.RWMutex
+type nodeConn struct {
+	id    string
+	addr  string
+	tasks []string
+	conn  *grpc.ClientConn
+	cli   pb.InferenceClient
 }
 
-// Infer 执行非流式推理请求（包装双向流）
-func (conn *Connection) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
-	// 创建双向流
-	stream, err := conn.Client.Infer(ctx)
+// NewPool creates an empty connection pool.
+func NewPool(logger *zap.Logger) *Pool {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &Pool{
+		conns:  make(map[string]*nodeConn),
+		logger: logger,
+	}
+}
+
+// Watch consumes NodeEvent values from a resolver and manages connections.
+// Blocks until ctx is cancelled. Call this in a goroutine.
+func (p *Pool) Watch(ctx context.Context, resolver discovery.NodeResolver) {
+	ch, err := resolver.Watch(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create inference stream: %w", err)
+		p.logger.Error("resolver Watch failed", zap.Error(err))
+		return
 	}
-
-	// 发送请求
-	if err := stream.Send(req); err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-
-	// 关闭发送方向
-	if err := stream.CloseSend(); err != nil {
-		return nil, fmt.Errorf("failed to close send: %w", err)
-	}
-
-	// 接收响应直到最终语义响应，或兼容 legacy server 在单次响应后关闭流。
-	var responses []*pb.InferResponse
-	for {
-		resp, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF && len(responses) > 0 {
-				break
-			}
-			return nil, fmt.Errorf("failed to receive response: %w", err)
+	for ev := range ch {
+		switch ev.Type {
+		case discovery.NodeAdded:
+			p.add(ctx, ev)
+		case discovery.NodeRemoved:
+			p.remove(ev.NodeID)
 		}
-
-		responses = append(responses, resp)
-		if resp.IsFinal {
-			break
-		}
-	}
-
-	resp, err := sdktypes.AssembleInferResponses(responses)
-	if err != nil {
-		return nil, fmt.Errorf("failed to assemble response: %w", err)
-	}
-
-	// 更新连接统计
-	conn.mu.Lock()
-	conn.UsageCount++
-	conn.LastUsed = time.Now()
-	conn.mu.Unlock()
-
-	return resp, nil
-}
-
-// InferStream 执行流式推理请求
-func (conn *Connection) InferStream(ctx context.Context, req *pb.InferRequest) (<-chan *pb.InferResponse, error) {
-	// 创建双向流
-	stream, err := conn.Client.Infer(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create inference stream: %w", err)
-	}
-
-	// 创建响应通道
-	respChan := make(chan *pb.InferResponse, 100)
-
-	// 启动goroutine处理流
-	go func() {
-		defer close(respChan)
-
-		// 发送初始请求
-		if err := stream.Send(req); err != nil {
-			conn.mu.Lock()
-			conn.ErrorCount++
-			conn.mu.Unlock()
-			return
-		}
-
-		// 接收响应
-		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				break
-			}
-
-			respChan <- resp
-
-			// 如果是最终响应，退出循环
-			if resp.IsFinal {
-				break
-			}
-		}
-
-		// 更新连接统计
-		conn.mu.Lock()
-		conn.UsageCount++
-		conn.LastUsed = time.Now()
-		conn.mu.Unlock()
-	}()
-
-	return respChan, nil
-}
-
-// NewGRPCConnectionPool 创建新的gRPC连接池
-func NewGRPCConnectionPool(config *PoolConfig, logger *zap.Logger) *GRPCConnectionPool {
-	if config == nil {
-		config = &PoolConfig{
-			MaxConnections: 10,
-			MaxIdleTime:    5 * time.Minute,
-			MaxLifetime:    30 * time.Minute,
-			ConnectionTTL:  10 * time.Minute,
-			HealthCheck:    true,
-			HealthInterval: 30 * time.Second,
-		}
-	}
-	logger = ensureLogger(logger)
-
-	return &GRPCConnectionPool{
-		config:      config,
-		connections: make(map[string]*Connection),
-		logger:      logger,
 	}
 }
 
-// GetConnection 获取连接
-func (p *GRPCConnectionPool) GetConnection(node *discovery.NodeInfo) (*Connection, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	conn, exists := p.connections[node.ID]
-	if exists && !p.isConnectionHealthy(conn) {
-		p.closeConnection(node.ID, conn)
-		delete(p.connections, node.ID)
-		exists = false
-	}
-	if !exists {
-		// 需要创建新连接
-		newConn, err := p.createConnection(node)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create connection to %s: %w", node.ID, err)
-		}
-		conn = newConn
-		p.connections[node.ID] = conn
-	}
-
-	// 更新使用信息
-	conn.mu.Lock()
-	conn.LastUsed = time.Now()
-	conn.UsageCount++
-	conn.Status = ConnectionStatusConnected
-	conn.mu.Unlock()
-
-	p.logger.Debug("retrieved connection from pool",
-		zap.String("node_id", node.ID),
-		zap.Int64("usage_count", conn.UsageCount),
-	)
-
-	return conn, nil
-}
-
-// ReturnConnection 归还连接
-func (p *GRPCConnectionPool) ReturnConnection(nodeID string, conn *Connection) error {
-	// 在这个实现中，连接由池管理，不需要显式归还
-	// 但我们可以更新连接状态
-	if conn != nil {
-		conn.mu.Lock()
-		conn.Status = ConnectionStatusConnected
-		conn.mu.Unlock()
-
-		// 这里可以通过服务发现减少节点的连接计数
-		// 但由于连接池和节点管理分离，这个功能可以在上层实现
-		p.logger.Debug("connection returned to pool",
-			zap.String("node_id", nodeID))
-	}
-
-	return nil
-}
-
-// Close 关闭连接池
-func (p *GRPCConnectionPool) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.logger.Info("closing connection pool")
-
-	var closeErrors []error
-
-	for nodeID, conn := range p.connections {
-		if err := p.closeConnection(nodeID, conn); err != nil {
-			closeErrors = append(closeErrors, err)
-		}
-	}
-
-	p.connections = make(map[string]*Connection)
-	p.running = false
-
-	if len(closeErrors) > 0 {
-		return fmt.Errorf("failed to close connections: %v", closeErrors)
-	}
-
-	p.logger.Info("connection pool closed successfully")
-	return nil
-}
-
-// Stats 获取连接池统计信息
-func (p *GRPCConnectionPool) Stats() map[string]interface{} {
+func (p *Pool) add(ctx context.Context, ev discovery.NodeEvent) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	totalConnections := len(p.connections)
-	activeConnections := 0
-	idleConnections := 0
-	errorConnections := 0
-
-	totalUsage := int64(0)
-	totalErrors := int64(0)
-
-	for _, conn := range p.connections {
-		conn.mu.RLock()
-		status := conn.Status
-		totalUsage += conn.UsageCount
-		totalErrors += conn.ErrorCount
-		conn.mu.RUnlock()
-
-		switch status {
-		case ConnectionStatusConnected:
-			activeConnections++
-		case ConnectionStatusDisconnected:
-			idleConnections++
-		case ConnectionStatusError:
-			errorConnections++
-		}
+	if _, exists := p.conns[ev.NodeID]; exists {
+		p.mu.RUnlock()
+		return
 	}
+	p.mu.RUnlock()
 
-	return map[string]interface{}{
-		"total_connections":  totalConnections,
-		"active_connections": activeConnections,
-		"idle_connections":   idleConnections,
-		"error_connections":  errorConnections,
-		"total_usage":        totalUsage,
-		"total_errors":       totalErrors,
-		"max_connections":    p.config.MaxConnections,
-		"max_idle_time":      p.config.MaxIdleTime.String(),
-		"max_lifetime":       p.config.MaxLifetime.String(),
-	}
-}
-
-// createConnection 创建新连接
-func (p *GRPCConnectionPool) createConnection(node *discovery.NodeInfo) (*Connection, error) {
-	p.logger.Debug("creating new connection",
-		zap.String("node_id", node.ID),
+	conn, err := grpc.NewClient(ev.Address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 3 * time.Second,
+		}),
 	)
-
-	// 这里需要从节点信息中获取地址
-	// 在实际实现中，我们需要从ServiceDiscovery获取节点地址
-	// 为了简化，我们假设nodeID包含了地址信息
-	if node.Address == "" {
-		return nil, fmt.Errorf("could not extract address from nodeID: %s", node.ID)
-	}
-
-	// 配置gRPC连接选项
-	opts := []grpc.DialOption{
-		grpc.WithInsecure(),
-		grpc.WithBlock(),
-		// 移除全局超时，让每个调用自己控制超时
-		// grpc.WithTimeout(5 * time.Second), // 这会导致长推理请求失败
-	}
-
-	// 建立连接
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, node.Address, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial %s: %w", node.Address, err)
-	}
-
-	client := pb.NewInferenceClient(conn)
-
-	connection := &Connection{
-		Client:      client,
-		Conn:        conn,
-		Established: time.Now(),
-		LastUsed:    time.Now(),
-		UsageCount:  0,
-		ErrorCount:  0,
-		Status:      ConnectionStatusConnected,
-		healthStop:  make(chan struct{}),
-	}
-
-	p.logger.Info("created new connection",
-		zap.String("node_id", node.ID),
-		zap.String("address", node.Address),
-	)
-
-	// 启动健康检查
-	if p.config.HealthCheck {
-		go p.healthCheckLoop(node.ID, connection)
-	}
-
-	return connection, nil
-}
-
-// isConnectionHealthy 检查连接是否健康
-func (p *GRPCConnectionPool) isConnectionHealthy(conn *Connection) bool {
-	if conn == nil {
-		return false
-	}
-
-	conn.mu.RLock()
-	defer conn.mu.RUnlock()
-
-	// 检查连接状态
-	if conn.Status == ConnectionStatusError {
-		return false
-	}
-
-	// 检查连接是否过期
-	if p.config.MaxLifetime > 0 && time.Since(conn.Established) > p.config.MaxLifetime {
-		return false
-	}
-
-	// 检查连接是否空闲太久
-	if p.config.MaxIdleTime > 0 && time.Since(conn.LastUsed) > p.config.MaxIdleTime {
-		return false
-	}
-
-	return true
-}
-
-// healthCheckLoop 健康检查循环
-func (p *GRPCConnectionPool) healthCheckLoop(nodeID string, conn *Connection) {
-	if !p.config.HealthCheck {
+		p.logger.Warn("dial failed", zap.String("node_id", ev.NodeID), zap.String("addr", ev.Address), zap.Error(err))
 		return
 	}
 
-	ticker := time.NewTicker(p.config.HealthInterval)
-	defer ticker.Stop()
+	nc := &nodeConn{
+		id:    ev.NodeID,
+		addr:  ev.Address,
+		tasks: ev.Tasks,
+		conn:  conn,
+		cli:   pb.NewInferenceClient(conn),
+	}
 
-	for {
-		select {
-		case <-conn.healthStop:
+	p.mu.Lock()
+	p.conns[ev.NodeID] = nc
+	p.healthy = append(p.healthy, nc)
+	p.mu.Unlock()
+
+	go p.monitorConnectivity(nc)
+
+	p.notifyWatchers()
+
+	p.logger.Info("node connected", zap.String("id", ev.NodeID), zap.String("addr", ev.Address))
+}
+
+func (p *Pool) remove(nodeID string) {
+	p.mu.Lock()
+	nc, ok := p.conns[nodeID]
+	if !ok {
+		p.mu.Unlock()
+		return
+	}
+	delete(p.conns, nodeID)
+	p.removeFromHealthyLocked(nc)
+	p.mu.Unlock()
+
+	_ = nc.conn.Close()
+
+	p.notifyWatchers()
+
+	p.logger.Info("node removed", zap.String("id", nodeID))
+}
+
+// monitorConnectivity blocks watching gRPC connectivity state changes.
+// This replaces health-check timers and explicit Health RPCs.
+func (p *Pool) monitorConnectivity(nc *nodeConn) {
+	state := nc.conn.GetState()
+	for nc.conn.WaitForStateChange(context.Background(), state) {
+		state = nc.conn.GetState()
+
+		switch state {
+		case connectivity.Ready:
+			p.markHealthy(nc)
+		case connectivity.TransientFailure, connectivity.Shutdown:
+			p.MarkUnhealthy(nc)
+		case connectivity.Idle:
+			// KeepAlive will trigger gRPC to transition Idle → Connecting → Ready
+		}
+	}
+}
+
+func (p *Pool) markHealthy(nc *nodeConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, h := range p.healthy {
+		if h.id == nc.id {
+			return // already present
+		}
+	}
+	p.healthy = append(p.healthy, nc)
+	p.logger.Debug("node healthy", zap.String("id", nc.id))
+}
+
+// MarkUnhealthy removes the node from the healthy subset.
+// Exported so callers can react to inference failures immediately,
+// without waiting for the next connectivity state change.
+func (p *Pool) MarkUnhealthy(nc *nodeConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.removeFromHealthyLocked(nc)
+	p.logger.Debug("node marked unhealthy", zap.String("id", nc.id))
+}
+
+func (p *Pool) removeFromHealthyLocked(nc *nodeConn) {
+	for i, h := range p.healthy {
+		if h.id == nc.id {
+			p.healthy[i] = p.healthy[len(p.healthy)-1]
+			p.healthy = p.healthy[:len(p.healthy)-1]
 			return
-		case <-ticker.C:
-			if !p.performHealthCheck(nodeID, conn) {
-				// 健康检查失败，标记连接为错误状态
-				conn.mu.Lock()
-				conn.Status = ConnectionStatusError
-				conn.ErrorCount++
-				conn.mu.Unlock()
+		}
+	}
+}
 
-				p.logger.Warn("health check failed for connection",
-					zap.String("node_id", nodeID),
-				)
+// Pick returns a healthy connection. Nodes that support preferredTask are
+// prioritised. If no node explicitly advertises the task, any healthy node
+// is returned.
+func (p *Pool) Pick(preferredTask string) (*nodeConn, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if len(p.healthy) == 0 {
+		return nil, ErrNoAvailableNode
+	}
+
+	candidates := p.healthy
+	if preferredTask != "" {
+		var filtered []*nodeConn
+		for _, nc := range p.healthy {
+			for _, t := range nc.tasks {
+				if t == preferredTask {
+					filtered = append(filtered, nc)
+					break
+				}
 			}
 		}
-	}
-}
-
-// performHealthCheck 执行健康检查
-func (p *GRPCConnectionPool) performHealthCheck(nodeID string, conn *Connection) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// 调用健康检查RPC
-	_, err := conn.Client.Health(ctx, &emptypb.Empty{})
-	if err != nil {
-		p.logger.Debug("health check error",
-			zap.String("node_id", nodeID),
-			zap.Error(err),
-		)
-		return false
-	}
-
-	return true
-}
-
-// cleanupIdleConnections 清理空闲连接
-func (p *GRPCConnectionPool) cleanupIdleConnections() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	now := time.Now()
-	var toRemove []string
-
-	for nodeID, conn := range p.connections {
-		if p.config.MaxIdleTime > 0 && now.Sub(conn.LastUsed) > p.config.MaxIdleTime {
-			toRemove = append(toRemove, nodeID)
+		if len(filtered) > 0 {
+			candidates = filtered
 		}
 	}
 
-	for _, nodeID := range toRemove {
-		if conn := p.connections[nodeID]; conn != nil {
-			_ = p.closeConnection(nodeID, conn)
-			delete(p.connections, nodeID)
-
-			p.logger.Debug("removed idle connection",
-				zap.String("node_id", nodeID),
-			)
-		}
-	}
+	nc := candidates[atomic.AddInt64(&p.rrIdx, 1)%int64(len(candidates))]
+	return nc, nil
 }
 
-// EnsureConnection 确保连接存在
-func (p *GRPCConnectionPool) EnsureConnection(nodeID, address string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// Client returns the gRPC InferenceClient for the given nodeConn.
+func (nc *nodeConn) Client() pb.InferenceClient { return nc.cli }
 
-	// 检查连接是否已存在且健康
-	if conn, exists := p.connections[nodeID]; exists && p.isConnectionHealthy(conn) {
-		return nil
-	} else if exists {
-		p.closeConnection(nodeID, conn)
-		delete(p.connections, nodeID)
-	}
+// ID returns the node identifier.
+func (nc *nodeConn) ID() string { return nc.id }
 
-	// 创建新连接
-	conn, err := p.createConnectionWithAddress(nodeID, address)
-	if err != nil {
-		return fmt.Errorf("failed to create connection for %s: %w", nodeID, err)
-	}
-
-	p.connections[nodeID] = conn
-	p.logger.Debug("ensured connection",
-		zap.String("node_id", nodeID),
-		zap.String("address", address))
-
-	return nil
+// PoolStats is a read-only snapshot of pool state.
+type PoolStats struct {
+	TotalConnections   int `json:"total_connections"`
+	HealthyConnections int `json:"healthy_connections"`
 }
 
-// RemoveConnection 移除连接
-func (p *GRPCConnectionPool) RemoveConnection(nodeID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if conn, exists := p.connections[nodeID]; exists {
-		if err := p.closeConnection(nodeID, conn); err != nil {
-			p.logger.Error("failed to close connection during removal",
-				zap.String("node_id", nodeID),
-				zap.Error(err))
-		}
-		delete(p.connections, nodeID)
-		p.logger.Debug("removed connection", zap.String("node_id", nodeID))
-	}
-
-	return nil
-}
-
-// createConnectionWithAddress 使用指定地址创建连接
-func (p *GRPCConnectionPool) createConnectionWithAddress(nodeID, address string) (*Connection, error) {
-	p.logger.Debug("creating new connection with address",
-		zap.String("node_id", nodeID),
-		zap.String("address", address),
-	)
-
-	// 配置gRPC连接选项
-	opts := []grpc.DialOption{
-		grpc.WithInsecure(),
-		grpc.WithBlock(),
-		// 移除全局超时，让每个调用自己控制超时
-		// grpc.WithTimeout(5 * time.Second), // 这会导致长推理请求失败
-	}
-
-	// 建立连接
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, address, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial %s: %w", address, err)
-	}
-
-	client := pb.NewInferenceClient(conn)
-
-	connection := &Connection{
-		Client:      client,
-		Conn:        conn,
-		Established: time.Now(),
-		LastUsed:    time.Now(),
-		UsageCount:  0,
-		ErrorCount:  0,
-		Status:      ConnectionStatusConnected,
-		healthStop:  make(chan struct{}),
-	}
-
-	p.logger.Info("created new connection",
-		zap.String("node_id", nodeID),
-		zap.String("address", address),
-	)
-
-	// 启动健康检查
-	if p.config.HealthCheck {
-		go p.healthCheckLoop(nodeID, connection)
-	}
-
-	return connection, nil
-}
-
-// extractAddressFromNodeID 从节点ID中提取地址
-func (p *GRPCConnectionPool) extractAddressFromNodeID(nodeID string) string {
-	// 简化实现：假设nodeID格式为 "instance@address"
-	parts := strings.Split(nodeID, "@")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-
-	// 或者直接返回nodeID作为地址
-	return nodeID
-}
-
-func (p *GRPCConnectionPool) closeConnection(nodeID string, conn *Connection) error {
-	if conn == nil {
-		return nil
-	}
-	p.stopHealthCheck(conn)
-	if conn.Conn == nil {
-		return nil
-	}
-	if err := conn.Conn.Close(); err != nil {
-		p.logger.Error("failed to close connection",
-			zap.String("node_id", nodeID),
-			zap.Error(err))
-		return err
-	}
-	return nil
-}
-
-func (p *GRPCConnectionPool) stopHealthCheck(conn *Connection) {
-	conn.stopOnce.Do(func() {
-		if conn.healthStop != nil {
-			close(conn.healthStop)
-		}
-	})
-}
-
-// StartMaintenanceLoop 启动维护循环
-func (p *GRPCConnectionPool) StartMaintenanceLoop(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute) // 每分钟执行一次维护
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			p.cleanupIdleConnections()
-		}
-	}
-}
-
-// SimpleConnectionPool 简单连接池实现（用于测试）
-type SimpleConnectionPool struct {
-	connections map[string]pb.InferenceClient
-	mu          sync.RWMutex
-	logger      *zap.Logger
-}
-
-// NewSimpleConnectionPool 创建简单连接池
-func NewSimpleConnectionPool(logger *zap.Logger) *SimpleConnectionPool {
-	return &SimpleConnectionPool{
-		connections: make(map[string]pb.InferenceClient),
-		logger:      ensureLogger(logger),
-	}
-}
-
-// GetConnection 获取连接
-func (p *SimpleConnectionPool) GetConnection(nodeID string) (pb.InferenceClient, error) {
+// Stats returns current pool statistics.
+func (p *Pool) Stats() PoolStats {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	client, exists := p.connections[nodeID]
-	if !exists {
-		return nil, fmt.Errorf("no connection found for node: %s", nodeID)
+	return PoolStats{
+		TotalConnections:   len(p.conns),
+		HealthyConnections: len(p.healthy),
 	}
-
-	return client, nil
 }
 
-// ReturnConnection 归还连接
-func (p *SimpleConnectionPool) ReturnConnection(nodeID string, client pb.InferenceClient) error {
-	return nil // 简单实现不需要归还
-}
-
-// Close 关闭连接池
-func (p *SimpleConnectionPool) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.connections = make(map[string]pb.InferenceClient)
-	p.logger.Info("simple connection pool closed")
-	return nil
-}
-
-// Stats 获取统计信息
-func (p *SimpleConnectionPool) Stats() map[string]interface{} {
+// NodeInfos returns snapshot descriptors for all connections.
+func (p *Pool) NodeInfos() []*discovery.NodeInfo {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	return p.nodeInfosLocked()
+}
 
-	return map[string]interface{}{
-		"total_connections": len(p.connections),
-		"type":              "simple",
+func (p *Pool) nodeInfosLocked() []*discovery.NodeInfo {
+	out := make([]*discovery.NodeInfo, 0, len(p.conns))
+	for _, nc := range p.conns {
+		status := discovery.NodeStatusActive
+		healthy := false
+		for _, h := range p.healthy {
+			if h.id == nc.id {
+				healthy = true
+				break
+			}
+		}
+		if !healthy {
+			status = discovery.NodeStatusError
+		}
+		out = append(out, &discovery.NodeInfo{
+			ID:      nc.id,
+			Address: nc.addr,
+			Status:  status,
+			Tasks:   tasksToIOTasks(nc.tasks),
+		})
+	}
+	return out
+}
+
+// OnNodesChanged registers a callback invoked whenever the node list changes.
+func (p *Pool) OnNodesChanged(cb func([]*discovery.NodeInfo)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.watchers = append(p.watchers, cb)
+}
+
+func tasksToIOTasks(names []string) []*pb.IOTask {
+	out := make([]*pb.IOTask, 0, len(names))
+	for _, n := range names {
+		out = append(out, &pb.IOTask{Name: n})
+	}
+	return out
+}
+
+func (p *Pool) notifyWatchers() {
+	p.mu.RLock()
+	if len(p.watchers) == 0 {
+		p.mu.RUnlock()
+		return
+	}
+	nodes := p.nodeInfosLocked()
+	watchers := make([]func([]*discovery.NodeInfo), len(p.watchers))
+	copy(watchers, p.watchers)
+	p.mu.RUnlock()
+	for _, w := range watchers {
+		go w(nodes)
 	}
 }
 
-// AddConnection 手动添加连接
-func (p *SimpleConnectionPool) AddConnection(nodeID string, client pb.InferenceClient) {
+// Close closes all gRPC connections and clears the pool.
+func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.connections[nodeID] = client
-	p.logger.Debug("added connection to simple pool",
-		zap.String("node_id", nodeID),
-	)
+	for id, nc := range p.conns {
+		if err := nc.conn.Close(); err != nil {
+			p.logger.Error("failed to close connection", zap.String("id", id), zap.Error(err))
+		}
+	}
+	p.conns = make(map[string]*nodeConn)
+	p.healthy = nil
+	p.logger.Info("pool closed")
+	return nil
 }
