@@ -6,7 +6,7 @@ Lumen Gateway 是 Lumen-SDK 的图形化网关客户端，以系统托盘（Menu
 
 ## 核心功能
 
-- **系统托盘集成**：支持 macOS 菜单栏与 Windows 任务栏托盘。
+- **系统托盘集成**：支持 macOS 菜单栏与 Windows 任务栏托盘。macOS 端支持 Activation Policy Accessory（隐藏 Dock 图标），且托盘图标支持深浅色主题自适应。
 - **轻量级面板**：点击托盘图标弹出无边框 Webview，实时展示：
   - 核心指标（QPS、平均延迟、在线节点数、错误率）
   - 已发现节点的 CPU/GPU 负载与可用推理能力（OCR、语义向量等）

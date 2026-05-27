@@ -6,7 +6,7 @@ on:
             - "v*"
 
 env:
-    GO_VERSION: "1.24"
+    GO_VERSION: "1.25"
 
 jobs:
     test:
@@ -101,12 +101,97 @@ jobs:
                   name: lumenhub-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: dist/lumenhub-*.*
 
+    build-gateway-mac:
+        name: Build macOS Gateway App
+        runs-on: macos-14
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v4
+              with:
+                  go-version: ${{ env.GO_VERSION }}
+
+            - name: Setup Node
+              uses: actions/setup-node@v3
+              with:
+                  node-version: 18
+
+            - name: Install Wails CLI
+              run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
+
+            - name: Install Frontend Dependencies
+              run: |
+                  cd cmd/lumen-gateway/frontend
+                  npm install
+
+            - name: Build and Package macOS App (Universal)
+              run: |
+                  cd cmd/lumen-gateway
+                  wails3 task darwin:package:universal
+
+            - name: Create Archive
+              run: |
+                  cd cmd/lumen-gateway/bin
+                  VERSION=${GITHUB_REF#refs/tags/}
+                  zip -r "lumen-gateway-${VERSION}-darwin-universal.zip" "Lumen Gateway.app"
+
+            - name: Upload macOS Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: lumen-gateway-darwin-universal
+                  path: cmd/lumen-gateway/bin/lumen-gateway-*-darwin-universal.zip
+
+    build-gateway-windows:
+        name: Build Windows Gateway App
+        runs-on: windows-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v4
+              with:
+                  go-version: ${{ env.GO_VERSION }}
+
+            - name: Setup Node
+              uses: actions/setup-node@v3
+              with:
+                  node-version: 18
+
+            - name: Install Wails CLI
+              run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
+
+            - name: Install Frontend Dependencies
+              run: |
+                  cd cmd/lumen-gateway/frontend
+                  npm install
+
+            - name: Build and Package Windows App
+              run: |
+                  cd cmd/lumen-gateway
+                  wails3 task windows:build
+
+            - name: Prepare Release Executable
+              shell: bash
+              run: |
+                  cd cmd/lumen-gateway/bin
+                  VERSION=${GITHUB_REF#refs/tags/}
+                  cp "Lumen Gateway.exe" "Lumen-Gateway-${VERSION}-windows-amd64.exe"
+
+            - name: Upload Windows Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: lumen-gateway-windows-amd64
+                  path: cmd/lumen-gateway/bin/Lumen-Gateway-*-windows-amd64.exe
+
     release:
         permissions:
             contents: write
         name: Create Release
         runs-on: ubuntu-latest
-        needs: [test, build]
+        needs: [test, build, build-gateway-mac, build-gateway-windows]
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -117,7 +202,7 @@ jobs:
                   path: artifacts
 
             - name: List downloaded artifacts
-              run: find artifacts -type f -name "*.tar.gz" -o -name "*.zip"
+              run: find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \)
 
             - name: Get version
               id: version
@@ -146,6 +231,19 @@ jobs:
                   name: Release ${{ steps.version.outputs.VERSION }}
                   body: |
                       # Lumen Hub ${{ steps.version.outputs.VERSION }}
+
+                      ## 🖥️ Lumen Gateway (GUI)
+
+                      Lumen Gateway is a cross-platform system tray application that runs in the background and hosts the daemon, routing strategies, and an interactive React-based network discovery dashboard.
+
+                      ### macOS Installation (Universal)
+                      1. Download `lumen-gateway-${{ steps.version.outputs.VERSION }}-darwin-universal.zip`.
+                      2. Unzip the file and move `Lumen Gateway.app` to your `/Applications` folder.
+                      3. Right-click the app and choose **Open** (or run `xattr -d com.apple.quarantine "/Applications/Lumen Gateway.app"` to bypass Gatekeeper).
+
+                      ### Windows Installation (AMD64)
+                      1. Download `Lumen-Gateway-${{ steps.version.outputs.VERSION }}-windows-amd64.exe`.
+                      2. Double-click to run. The gateway will run in your system tray on port `5866` (configurable).
 
                       ## 🚀 Installation
 
@@ -178,8 +276,6 @@ jobs:
                       xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
                       ```
 
-
-
                       ## 📋 Changes
                       ${{ steps.release_notes.outputs.notes }}
 
@@ -190,6 +286,7 @@ jobs:
                   files: |
                       artifacts/**/*.tar.gz
                       artifacts/**/*.zip
+                      artifacts/**/*.exe
 
             - name: Update latest tag
               if: startsWith(github.ref, 'refs/tags/')

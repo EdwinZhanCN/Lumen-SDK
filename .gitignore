@@ -130,3 +130,5 @@ poetry.lock
 # Local Go modules cache
 /go/pkg/mod/cache/download/
 /go/pkg/mod/cache/vcs/
+
+.antigravitycli/

@@ -178,3 +178,34 @@ quick-start: ## Quick build and start
 ci: deps fmt vet lint test ## Run full CI pipeline
 
 ci-fast: fmt vet test ## Run fast CI pipeline (no linting)
+
+# Lumen Gateway GUI (Wails v3) targets
+.PHONY: build-gateway-mac build-gateway-win build-gateway-all release-gateway clean-gateway
+
+build-gateway-mac: ## Build and package macOS universal app bundle
+	@echo "Building Lumen Gateway for macOS (Universal)..."
+	cd cmd/lumen-gateway && wails3 package
+
+build-gateway-win: ## Build and package Windows amd64 app
+	@echo "Building Lumen Gateway for Windows (amd64)..."
+	cd cmd/lumen-gateway && wails3 task windows:build
+
+build-gateway-all: build-gateway-mac build-gateway-win ## Build for all GUI platforms
+
+release-gateway: build-gateway-all ## Create distribution archives for the GUI app
+	@echo "Creating distribution archives..."
+	@mkdir -p $(BUILD_DIR)
+	# macOS Universal Cask bundle
+	@if [ -d cmd/lumen-gateway/bin/"Lumen Gateway.app" ]; then \
+		cd cmd/lumen-gateway/bin && zip -r ../../../$(BUILD_DIR)/lumen-gateway-$(VERSION)-darwin-universal.zip "Lumen Gateway.app"; \
+	fi
+	# Windows Executable
+	@if [ -f cmd/lumen-gateway/bin/"Lumen Gateway.exe" ]; then \
+		cp cmd/lumen-gateway/bin/"Lumen Gateway.exe" $(BUILD_DIR)/Lumen-Gateway-$(VERSION)-windows-amd64.exe; \
+	fi
+	@echo "Distribution archives created in $(BUILD_DIR)/"
+
+clean-gateway: ## Clean Wails build artifacts
+	rm -rf cmd/lumen-gateway/bin
+	rm -rf cmd/lumen-gateway/frontend/dist
+	rm -rf cmd/lumen-gateway/frontend/bindings
