@@ -56,13 +56,8 @@ cd cmd/lumen-gateway
 
 ## 分发与安装 (macOS Cask)
 
-macOS 端支持通过自定义 Homebrew Tap 进行安装：
+macOS 用户可以通过 Homebrew 一键安装 Lumen Gateway（已配置忽略安全隔离限制）：
 
-1. 添加 Tap：
-   ```bash
-   brew tap edwinzhancn/lumen-sdk
-   ```
-2. 安装应用（忽略安全隔离限制）：
-   ```bash
-   brew install --cask --no-quarantine lumen-gateway
-   ```
+```bash
+brew install --cask --no-quarantine https://raw.githubusercontent.com/EdwinZhanCN/Lumen-SDK/main/lumen-gateway.rb
+```
