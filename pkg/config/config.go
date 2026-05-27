@@ -26,7 +26,6 @@ type DiscoveryConfig struct {
 	Domain       string        `yaml:"domain" json:"domain"`
 	ScanInterval time.Duration `yaml:"scan_interval" json:"scan_interval"`
 	NodeTimeout  time.Duration `yaml:"node_timeout" json:"node_timeout"`
-	MaxNodes     int           `yaml:"max_nodes" json:"max_nodes"`
 	MDNSEnabled  bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
 	HubURL       string        `yaml:"hub_url" json:"hub_url"`
 }
@@ -132,9 +131,6 @@ func (c *Config) Validate() error {
 		}
 		if c.Discovery.NodeTimeout <= 0 {
 			return fmt.Errorf("discovery.node_timeout must be positive")
-		}
-		if c.Discovery.MaxNodes <= 0 {
-			return fmt.Errorf("discovery.max_nodes must be positive")
 		}
 	}
 	if c.Server.REST.Enabled {

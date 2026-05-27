@@ -13,17 +13,7 @@ export class FrontendNodeInfo {
     "name": string;
     "address": string;
     "status": string;
-    "version": string;
-    "runtime": string;
-    "models": string[];
     "tasks": string[];
-    "cpu": number;
-    "memory": number;
-    "gpu": number;
-    "disk": number;
-    "totalRequests": number;
-    "successRate": number;
-    "avgLatencyMs": number;
 
     /** Creates a new FrontendNodeInfo instance. */
     constructor($$source: Partial<FrontendNodeInfo> = {}) {
@@ -39,38 +29,8 @@ export class FrontendNodeInfo {
         if (!("status" in $$source)) {
             this["status"] = "";
         }
-        if (!("version" in $$source)) {
-            this["version"] = "";
-        }
-        if (!("runtime" in $$source)) {
-            this["runtime"] = "";
-        }
-        if (!("models" in $$source)) {
-            this["models"] = [];
-        }
         if (!("tasks" in $$source)) {
             this["tasks"] = [];
-        }
-        if (!("cpu" in $$source)) {
-            this["cpu"] = 0;
-        }
-        if (!("memory" in $$source)) {
-            this["memory"] = 0;
-        }
-        if (!("gpu" in $$source)) {
-            this["gpu"] = 0;
-        }
-        if (!("disk" in $$source)) {
-            this["disk"] = 0;
-        }
-        if (!("totalRequests" in $$source)) {
-            this["totalRequests"] = 0;
-        }
-        if (!("successRate" in $$source)) {
-            this["successRate"] = 0;
-        }
-        if (!("avgLatencyMs" in $$source)) {
-            this["avgLatencyMs"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -80,14 +40,10 @@ export class FrontendNodeInfo {
      * Creates a new FrontendNodeInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): FrontendNodeInfo {
-        const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType0;
+        const $$createField4_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("models" in $$parsedSource) {
-            $$parsedSource["models"] = $$createField6_0($$parsedSource["models"]);
-        }
         if ("tasks" in $$parsedSource) {
-            $$parsedSource["tasks"] = $$createField7_0($$parsedSource["tasks"]);
+            $$parsedSource["tasks"] = $$createField4_0($$parsedSource["tasks"]);
         }
         return new FrontendNodeInfo($$parsedSource as Partial<FrontendNodeInfo>);
     }

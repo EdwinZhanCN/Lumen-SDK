@@ -18,28 +18,17 @@ import (
 
 // FrontendNodeInfo is a simplified DTO representation of a node for the React UI.
 type FrontendNodeInfo struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Address       string   `json:"address"`
-	Status        string   `json:"status"`
-	Version       string   `json:"version"`
-	Runtime       string   `json:"runtime"`
-	Models        []string `json:"models"`
-	Tasks         []string `json:"tasks"`
-	CPU           float64  `json:"cpu"`
-	Memory        float64  `json:"memory"`
-	GPU           float64  `json:"gpu"`
-	Disk          float64  `json:"disk"`
-	TotalRequests int64    `json:"totalRequests"`
-	SuccessRate   float64  `json:"successRate"`
-	AvgLatencyMs  float64  `json:"avgLatencyMs"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Address string   `json:"address"`
+	Status  string   `json:"status"`
+	Tasks   []string `json:"tasks"`
 }
 
 // SavedConfig represents the settings persisted to disk.
 type SavedConfig struct {
 	Port         int    `yaml:"port"`
 	ScanInterval string `yaml:"scan_interval"`
-	Strategy     string `yaml:"strategy"`
 	HubURL       string `yaml:"hub_url"`
 	LogLevel     string `yaml:"log_level"`
 	Language     string `yaml:"language"`
@@ -86,7 +75,6 @@ func (s *GatewayService) loadSavedConfig() (*SavedConfig, error) {
 		return &SavedConfig{
 			Port:         5866,
 			ScanInterval: "30s",
-			Strategy:     "round_robin",
 			HubURL:       "",
 			LogLevel:     "info",
 			Language:     "zh",
@@ -108,9 +96,6 @@ func (s *GatewayService) loadSavedConfig() (*SavedConfig, error) {
 	}
 	if sc.ScanInterval == "" {
 		sc.ScanInterval = "30s"
-	}
-	if sc.Strategy == "" {
-		sc.Strategy = "round_robin"
 	}
 	if sc.LogLevel == "" {
 		sc.LogLevel = "info"
@@ -145,7 +130,6 @@ func (s *GatewayService) Start(ctx context.Context) error {
 		sc = &SavedConfig{
 			Port:         5866,
 			ScanInterval: "30s",
-			Strategy:     "round_robin",
 			LogLevel:     "info",
 			Language:     "zh",
 		}
@@ -256,7 +240,6 @@ func (s *GatewayService) SaveConfig(cfg map[string]interface{}) error {
 	sc := SavedConfig{
 		Port:         valInt("port", 5866),
 		ScanInterval: valStr("scanInterval", "30s"),
-		Strategy:     valStr("strategy", "round_robin"),
 		HubURL:       valStr("hubUrl", ""),
 		LogLevel:     valStr("logLevel", "info"),
 		Language:     valStr("language", "zh"),
@@ -410,52 +393,17 @@ func (s *GatewayService) GetNodes() []FrontendNodeInfo {
 	res := make([]FrontendNodeInfo, 0, len(nodes))
 
 	for _, node := range nodes {
-		models := make([]string, 0, len(node.Models))
-		for _, m := range node.Models {
-			models = append(models, m.Name)
-		}
-
 		tasks := make([]string, 0, len(node.Tasks))
 		for _, t := range node.Tasks {
 			tasks = append(tasks, t.Name)
 		}
 
-		var cpu, mem, gpu, disk float64
-		if node.Load != nil {
-			cpu = node.Load.CPU * 100.0
-			mem = node.Load.Memory * 100.0
-			gpu = node.Load.GPU * 100.0
-			disk = node.Load.Disk * 100.0
-		}
-
-		var totalRequests int64
-		var successRate float64
-		var avgLatencyMs float64
-
-		if node.Stats != nil {
-			totalRequests = node.Stats.TotalRequests
-			if totalRequests > 0 {
-				successRate = (float64(node.Stats.SuccessfulRequests) / float64(totalRequests)) * 100.0
-			}
-			avgLatencyMs = float64(node.Stats.AverageLatency) / 1_000_000.0
-		}
-
 		res = append(res, FrontendNodeInfo{
-			ID:            node.ID,
-			Name:          node.Name,
-			Address:       node.Address,
-			Status:        string(node.Status),
-			Version:       node.Version,
-			Runtime:       node.Runtime,
-			Models:        models,
-			Tasks:         tasks,
-			CPU:           cpu,
-			Memory:        mem,
-			GPU:           gpu,
-			Disk:          disk,
-			TotalRequests: totalRequests,
-			SuccessRate:   successRate,
-			AvgLatencyMs:  avgLatencyMs,
+			ID:      node.ID,
+			Name:    node.Name,
+			Address: node.Address,
+			Status:  string(node.Status),
+			Tasks:   tasks,
 		})
 	}
 
@@ -469,15 +417,25 @@ func (s *GatewayService) GetMetrics() map[string]interface{} {
 
 	if s.lumenClient == nil {
 		return map[string]interface{}{
-			"qps":         0.0,
+			"totalReqs":   int64(0),
+			"successReqs": int64(0),
+			"failedReqs":  int64(0),
 			"avgLatency":  0.0,
 			"errorRate":   0.0,
 			"activeNodes": 0,
+			"totalNodes":  0,
 		}
 	}
 
 	metrics := s.lumenClient.GetMetrics()
+	uptime := time.Since(s.startTime).Seconds()
+	qps := 0.0
+	if uptime > 0 {
+		qps = float64(metrics.TotalRequests) / uptime
+	}
+
 	return map[string]interface{}{
+		"qps":         qps,
 		"totalReqs":   metrics.TotalRequests,
 		"successReqs": metrics.SuccessRequests,
 		"failedReqs":  metrics.FailedRequests,

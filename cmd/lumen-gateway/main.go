@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"log"
 	"time"
 
@@ -21,6 +22,12 @@ func main() {
 	// Create our gateway bridge service
 	gatewayService := NewGatewayService()
 
+	// Get the sub-filesystem for frontend/dist to strip the folder prefix
+	assetsFS, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Initialize the Wails application options
 	app := application.New(application.Options{
 		Name:        "Lumen Gateway",
@@ -29,7 +36,7 @@ func main() {
 			application.NewService(gatewayService),
 		},
 		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
+			Handler: application.AssetFileServerFS(assetsFS),
 		},
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory, // Hide from Dock, run as menu bar app
@@ -46,7 +53,7 @@ func main() {
 		Hidden:          true, // Start hidden, managed by tray
 		HideOnFocusLost: true, // Auto hide when user clicks elsewhere
 		HideOnEscape:    true, // Dismiss on Escape key
-		URL:             "/",
+		URL:             "",
 	})
 
 	// Create the system tray icon

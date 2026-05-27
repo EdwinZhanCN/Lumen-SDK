@@ -11,7 +11,6 @@ func DefaultConfig() *Config {
 			Domain:       "local",
 			ScanInterval: 30 * time.Second,
 			NodeTimeout:  5 * time.Minute,
-			MaxNodes:     20,
 			MDNSEnabled:  true,
 			HubURL:       "",
 		},

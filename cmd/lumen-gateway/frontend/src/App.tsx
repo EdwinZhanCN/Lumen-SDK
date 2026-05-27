@@ -38,7 +38,9 @@ interface StatusInfo {
 }
 
 interface MetricsInfo {
-  qps: number;
+  totalReqs: number;
+  successReqs: number;
+  failedReqs: number;
   avgLatency: number;
   errorRate: number;
   activeNodes: number;
@@ -65,7 +67,9 @@ function App() {
   });
   const [nodes, setNodes] = useState<FrontendNodeInfo[]>([]);
   const [metrics, setMetrics] = useState<MetricsInfo>({
-    qps: 0,
+    totalReqs: 0,
+    successReqs: 0,
+    failedReqs: 0,
     avgLatency: 0,
     errorRate: 0,
     activeNodes: 0,
@@ -75,7 +79,6 @@ function App() {
   // Settings form states
   const [formPort, setFormPort] = useState<number>(5866);
   const [formScanInterval, setFormScanInterval] = useState<string>("30s");
-  const [formStrategy, setFormStrategy] = useState<string>("round_robin");
   const [formHubUrl, setFormHubUrl] = useState<string>("");
   const [formLogLevel, setFormLogLevel] = useState<string>("info");
 
@@ -117,7 +120,6 @@ function App() {
       if (config) {
         setFormPort(config.restPort || 5866);
         setFormScanInterval(config.scanInterval || "30s");
-        setFormStrategy(config.strategy || "round_robin");
         setFormHubUrl(config.hubUrl || "");
         setFormLogLevel(config.logLevel || "info");
       }
@@ -153,7 +155,6 @@ function App() {
       await SaveConfig({
         port: formPort,
         scanInterval: formScanInterval,
-        strategy: formStrategy,
         hubUrl: formHubUrl,
         logLevel: formLogLevel,
         language: lang,
@@ -180,12 +181,6 @@ function App() {
     return name
       .replace(/_/g, " ")
       .replace(/\b\w/g, (char) => char.toUpperCase());
-  };
-
-  const getLoadColor = (value: number) => {
-    if (value < 50) return "bg-emerald-500";
-    if (value < 80) return "bg-amber-500";
-    return "bg-rose-500";
   };
 
   return (
@@ -238,28 +233,6 @@ function App() {
                 <option value="30s">30s</option>
                 <option value="60s">60s</option>
                 <option value="5m">5m</option>
-              </select>
-            </div>
-
-            {/* Strategy */}
-            <div className="space-y-1.5">
-              <label className="text-slate-400 font-medium">
-                {t("strategyLabel")}
-              </label>
-              <select
-                value={formStrategy}
-                onChange={(e) => setFormStrategy(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 transition"
-              >
-                <option value="round_robin">{t("strategyRoundRobin")}</option>
-                <option value="least_connections">
-                  {t("strategyLeastConnections")}
-                </option>
-                <option value="task_aware_round_robin">
-                  {t("strategyTaskAware")}
-                </option>
-                <option value="weighted">{t("strategyWeighted")}</option>
-                <option value="random">{t("strategyRandom")}</option>
               </select>
             </div>
 
@@ -403,14 +376,18 @@ function App() {
       <section className="p-4 grid grid-cols-2 gap-3 bg-slate-950">
         <div className="bg-slate-900/40 border border-slate-800/60 rounded-xl p-3 flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">{t("throughput")}</span>
+            <span className="text-[11px] font-medium">{t("requests")}</span>
             <Activity className="w-3.5 h-3.5 text-indigo-400" />
           </div>
           <div>
             <span className="text-lg font-bold tracking-tight">
-              {metrics.qps.toFixed(1)}
+              {metrics.totalReqs.toLocaleString()}
             </span>
-            <span className="text-[10px] text-slate-400 ml-1">req/s</span>
+            <span className="text-[10px] text-slate-400 ml-1">
+              <span className="text-emerald-400">{metrics.successReqs}</span>
+              <span className="mx-0.5">/</span>
+              <span className="text-amber-400">{metrics.failedReqs}</span>
+            </span>
           </div>
         </div>
 
@@ -520,58 +497,7 @@ function App() {
                     </span>
                   </div>
 
-                  {/* Resource Usage */}
-                  {node.status === "active" && (
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px] py-1 border-t border-b border-slate-800/40">
-                      {/* CPU Progress */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-slate-400 font-medium">
-                          <span>CPU</span>
-                          <span>{node.cpu.toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${getLoadColor(node.cpu)}`}
-                            style={{ width: `${Math.min(node.cpu, 100)}%` }}
-                          ></div>
-                        </div>
-                      </div>
-
-                      {/* GPU Progress */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-slate-400 font-medium">
-                          <span>GPU</span>
-                          <span>{node.gpu.toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${getLoadColor(node.gpu)}`}
-                            style={{ width: `${Math.min(node.gpu, 100)}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Node Metadata (Runtime, Latency) */}
-                  <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
-                    <span>
-                      {t("runtime")}:{" "}
-                      <span className="text-slate-300 font-semibold">
-                        {node.runtime || t("unknown")}
-                      </span>
-                    </span>
-                    {node.avgLatencyMs > 0 && (
-                      <span>
-                        {t("latency")}:{" "}
-                        <span className="text-emerald-400 font-semibold">
-                          {node.avgLatencyMs.toFixed(1)} ms
-                        </span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Model/Task Tags */}
+                  {/* Task Tags */}
                   {node.tasks && node.tasks.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-1.5">
                       {node.tasks.slice(0, 3).map((task) => (

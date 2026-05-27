@@ -3,13 +3,11 @@ module github.com/edwinzhancn/lumen-sdk/cmd/lumen-gateway
 go 1.25.0
 
 require (
-	github.com/edwinzhancn/lumen-sdk v1.1.11
+	github.com/edwinzhancn/lumen-sdk v1.2.4
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.96
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-replace github.com/edwinzhancn/lumen-sdk => ../../
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

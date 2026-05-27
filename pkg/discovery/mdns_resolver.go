@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 	"github.com/grandcat/zeroconf"
@@ -18,17 +17,15 @@ import (
 // It runs a continuous mDNS browse to detect new nodes and a periodic scan to
 // remove stale nodes that have disappeared from the network.
 type MDNSResolver struct {
-	serviceType  string
-	domain       string
-	scanInterval time.Duration
-	logger       *zap.Logger
+	serviceType string
+	domain      string
+	logger      *zap.Logger
 }
 
 // NewMDNSResolver creates an mDNS-based resolver.
 func NewMDNSResolver(cfg *config.DiscoveryConfig, logger *zap.Logger) *MDNSResolver {
 	serviceType := "_lumen._tcp"
 	domain := "local"
-	scanInterval := 30 * time.Second
 	if cfg != nil {
 		if cfg.ServiceType != "" {
 			serviceType = cfg.ServiceType
@@ -36,19 +33,15 @@ func NewMDNSResolver(cfg *config.DiscoveryConfig, logger *zap.Logger) *MDNSResol
 		if cfg.Domain != "" {
 			domain = cfg.Domain
 		}
-		if cfg.ScanInterval > 0 {
-			scanInterval = cfg.ScanInterval
-		}
 	}
 	return &MDNSResolver{
-		serviceType:  serviceType,
-		domain:       domain,
-		scanInterval: scanInterval,
-		logger:       ensureLogger(logger),
+		serviceType: serviceType,
+		domain:      domain,
+		logger:      ensureLogger(logger),
 	}
 }
 
-// Watch starts mDNS browsing and emits node events on the returned channel.
+// Watch starts mDNS browsing and emits NodeEvent values on the returned channel.
 func (r *MDNSResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
@@ -65,10 +58,7 @@ func (r *MDNSResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 	go func() {
 		defer close(ch)
 
-		known := make(map[string]time.Time) // nodeID → last seen
-
-		ticker := time.NewTicker(r.scanInterval)
-		defer ticker.Stop()
+		seen := make(map[string]bool)
 
 		for {
 			select {
@@ -89,41 +79,16 @@ func (r *MDNSResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 					continue
 				}
 
-				lastSeen, exists := known[nodeID]
-				known[nodeID] = time.Now()
-
-				if !exists {
-					tasks := extractTasks(entry)
+				if !seen[nodeID] {
+					seen[nodeID] = true
 					r.logger.Info("mDNS node discovered",
 						zap.String("id", nodeID),
 						zap.String("addr", addr),
-						zap.Strings("tasks", tasks),
 					)
 					ch <- NodeEvent{
 						Type:    NodeAdded,
 						NodeID:  nodeID,
 						Address: addr,
-						Tasks:   tasks,
-					}
-				} else {
-					_ = lastSeen
-					// refresh last-seen timestamp only
-				}
-
-			case <-ticker.C:
-				now := time.Now()
-				staleThreshold := r.scanInterval * 2
-				for nodeID, lastSeen := range known {
-					if now.Sub(lastSeen) > staleThreshold {
-						delete(known, nodeID)
-						r.logger.Info("mDNS node removed (stale)",
-							zap.String("id", nodeID),
-							zap.Duration("since_last_seen", now.Sub(lastSeen)),
-						)
-						ch <- NodeEvent{
-							Type:   NodeRemoved,
-							NodeID: nodeID,
-						}
 					}
 				}
 			}

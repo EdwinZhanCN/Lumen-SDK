@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,8 +14,8 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // ErrNoAvailableNode is returned when no healthy connection exists.
@@ -83,8 +84,12 @@ func (p *Pool) add(ctx context.Context, ev discovery.NodeEvent) {
 	}
 	p.mu.RUnlock()
 
-	conn, err := grpc.NewClient(ev.Address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(dialCtx, ev.Address,
+		grpc.WithInsecure(),
+		grpc.WithBlock(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    10 * time.Second,
 			Timeout: 3 * time.Second,
@@ -103,6 +108,9 @@ func (p *Pool) add(ctx context.Context, ev discovery.NodeEvent) {
 		cli:   pb.NewInferenceClient(conn),
 	}
 
+	// Fetch capabilities via gRPC to populate the task list.
+	p.queryCapabilities(ctx, nc)
+
 	p.mu.Lock()
 	p.conns[ev.NodeID] = nc
 	p.healthy = append(p.healthy, nc)
@@ -113,6 +121,45 @@ func (p *Pool) add(ctx context.Context, ev discovery.NodeEvent) {
 	p.notifyWatchers()
 
 	p.logger.Info("node connected", zap.String("id", ev.NodeID), zap.String("addr", ev.Address))
+}
+
+func (p *Pool) queryCapabilities(ctx context.Context, nc *nodeConn) {
+	capCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	stream, err := nc.cli.StreamCapabilities(capCtx, &emptypb.Empty{})
+	if err != nil {
+		p.logger.Warn("capabilities fetch failed", zap.String("id", nc.id), zap.Error(err))
+		return
+	}
+
+	for {
+		cap, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			p.logger.Debug("StreamCapabilities recv failed", zap.String("id", nc.id), zap.Error(err))
+			return
+		}
+		for _, t := range cap.Tasks {
+			found := false
+			for _, existing := range nc.tasks {
+				if existing == t.Name {
+					found = true
+					break
+				}
+			}
+			if !found && t.Name != "" {
+				nc.tasks = append(nc.tasks, t.Name)
+			}
+		}
+	}
+
+	p.logger.Info("capabilities fetched",
+		zap.String("id", nc.id),
+		zap.Strings("tasks", nc.tasks),
+	)
 }
 
 func (p *Pool) remove(nodeID string) {
@@ -213,12 +260,6 @@ func (p *Pool) Pick(preferredTask string) (*nodeConn, error) {
 	nc := candidates[atomic.AddInt64(&p.rrIdx, 1)%int64(len(candidates))]
 	return nc, nil
 }
-
-// Client returns the gRPC InferenceClient for the given nodeConn.
-func (nc *nodeConn) Client() pb.InferenceClient { return nc.cli }
-
-// ID returns the node identifier.
-func (nc *nodeConn) ID() string { return nc.id }
 
 // PoolStats is a read-only snapshot of pool state.
 type PoolStats struct {

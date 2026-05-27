@@ -99,6 +99,7 @@ func (c *LumenClient) Start(ctx context.Context) error {
 //
 // Picks a healthy gRPC connection from the pool. On failure the connection
 // is marked unhealthy immediately so the next Pick selects a different node.
+// Large payloads are automatically chunked per ChunkConfig.
 func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
@@ -110,38 +111,91 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	start := time.Now()
 	c.totalReqs.Add(1)
 
+	// Chunk large payloads.
+	chunks, err := ChunkPayload(req.Payload, c.config.Chunk)
+	if err != nil {
+		c.failedReqs.Add(1)
+		return nil, fmt.Errorf("chunk payload: %w", err)
+	}
+
 	nc, err := c.pool.Pick(req.Task)
 	if err != nil {
 		c.failedReqs.Add(1)
 		return nil, fmt.Errorf("no node for task %s: %w", req.Task, err)
 	}
 
+	// Single chunk: simple request-response.
+	if len(chunks) == 1 {
+		resp, err := c.inferSingle(ctx, nc, req)
+		if err != nil {
+			c.failedReqs.Add(1)
+			return nil, err
+		}
+		c.successReqs.Add(1)
+		c.totalLatencyNs.Add(time.Since(start).Nanoseconds())
+		return resp, nil
+	}
+
+	// Multiple chunks: send all over one bidi stream.
 	stream, err := nc.cli.Infer(ctx)
 	if err != nil {
 		c.pool.MarkUnhealthy(nc)
+		c.failedReqs.Add(1)
 		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
 	}
 
-	if err := stream.Send(req); err != nil {
-		c.pool.MarkUnhealthy(nc)
-		c.failedReqs.Add(1)
-		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
-	}
-	if err := stream.CloseSend(); err != nil {
-		c.pool.MarkUnhealthy(nc)
-		c.failedReqs.Add(1)
-		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
-	}
+	sendCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sendErrCh := make(chan error, 1)
+	go func() {
+		defer func() { _ = stream.CloseSend() }()
+		var offset uint64
+		total := uint64(len(chunks))
+		for i, chunk := range chunks {
+			select {
+			case <-sendCtx.Done():
+				sendErrCh <- sendCtx.Err()
+				return
+			default:
+			}
+			sendReq := &pb.InferRequest{
+				CorrelationId: req.CorrelationId,
+				Task:          req.Task,
+				Payload:       chunk,
+				PayloadMime:   req.PayloadMime,
+				Seq:           uint64(i),
+				Total:         total,
+				Offset:        offset,
+				Meta:          req.Meta,
+			}
+			if err := stream.Send(sendReq); err != nil {
+				sendErrCh <- err
+				cancel()
+				return
+			}
+			offset += uint64(len(chunk))
+		}
+		sendErrCh <- nil
+	}()
 
 	var responses []*pb.InferResponse
 	for {
 		resp, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
 		if err != nil {
+			if err == io.EOF && len(responses) > 0 {
+				break
+			}
 			c.pool.MarkUnhealthy(nc)
 			c.failedReqs.Add(1)
+			// Check if sender reported an error.
+			select {
+			case se := <-sendErrCh:
+				if se != nil {
+					return nil, fmt.Errorf("send failed: %w", se)
+				}
+			default:
+			}
 			return nil, fmt.Errorf("recv from %s: %w", nc.id, err)
 		}
 		responses = append(responses, resp)
@@ -159,6 +213,42 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	c.successReqs.Add(1)
 	c.totalLatencyNs.Add(time.Since(start).Nanoseconds())
 	return finalResp, nil
+}
+
+// inferSingle sends a single (non-chunked) request over a bidi stream.
+func (c *LumenClient) inferSingle(ctx context.Context, nc *nodeConn, req *pb.InferRequest) (*pb.InferResponse, error) {
+	stream, err := nc.cli.Infer(ctx)
+	if err != nil {
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
+	}
+
+	if err := stream.Send(req); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		c.pool.MarkUnhealthy(nc)
+		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
+	}
+
+	var responses []*pb.InferResponse
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			c.pool.MarkUnhealthy(nc)
+			return nil, fmt.Errorf("recv from %s: %w", nc.id, err)
+		}
+		responses = append(responses, resp)
+		if resp.IsFinal {
+			break
+		}
+	}
+
+	return sdktypes.AssembleInferResponses(responses)
 }
 
 // InferStream performs a streaming inference request.
