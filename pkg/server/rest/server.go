@@ -53,7 +53,7 @@ type Server struct {
 // After creating the server, register routes using App() and then call Start().
 //
 // Parameters:
-//   - cfg: REST server configuration (host, port, CORS, timeout)
+//   - cfg: REST server configuration (host, port, CORS)
 //
 // Returns:
 //   - *Server: Initialized REST server ready for route registration
@@ -68,7 +68,6 @@ type Server struct {
 //	    Host:    "0.0.0.0",
 //	    Port:    5866,
 //	    CORS:    true,
-//	    Timeout: 30 * time.Second,
 //	}
 //	server := rest.NewServer(cfg)
 //

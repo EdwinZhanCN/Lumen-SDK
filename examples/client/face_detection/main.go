@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -78,11 +77,8 @@ func testFaceDetection(ctx context.Context, lumenClient *client.LumenClient, fil
 		ForFaceRecognitionRaw(faceReq.Payload, faceReq.PayloadMime).
 		Build()
 
-	// Perform face detection with retry
-	resp, err := lumenClient.InferWithRetry(ctx, inferReq,
-		client.WithMaxWaitTime(30*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	// Perform face detection
+	resp, err := lumenClient.Infer(ctx, inferReq)
 
 	if err != nil {
 		fmt.Printf("Face detection failed: %v\n", err)

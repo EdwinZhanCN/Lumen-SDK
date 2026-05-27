@@ -152,17 +152,12 @@ func (s *GatewayService) Start(ctx context.Context) error {
 	}
 
 	cfg := config.DefaultConfig()
-	presetCfg, err := config.PresetConfig("basic")
-	if err == nil {
-		cfg = presetCfg
-	}
 
 	cfg.Server.REST.Port = sc.Port
 	dur, err := time.ParseDuration(sc.ScanInterval)
 	if err == nil {
 		cfg.Discovery.ScanInterval = dur
 	}
-	cfg.LoadBalancer.Strategy = sc.Strategy
 	cfg.Discovery.HubURL = sc.HubURL
 	cfg.Logging.Level = sc.LogLevel
 	cfg.Discovery.MDNSEnabled = true // Force true
@@ -318,17 +313,12 @@ func (s *GatewayService) Reload() error {
 	}
 
 	cfg := config.DefaultConfig()
-	presetCfg, err := config.PresetConfig("basic")
-	if err == nil {
-		cfg = presetCfg
-	}
 
 	cfg.Server.REST.Port = sc.Port
 	dur, err := time.ParseDuration(sc.ScanInterval)
 	if err == nil {
 		cfg.Discovery.ScanInterval = dur
 	}
-	cfg.LoadBalancer.Strategy = sc.Strategy
 	cfg.Discovery.HubURL = sc.HubURL
 	cfg.Logging.Level = sc.LogLevel
 	cfg.Discovery.MDNSEnabled = true // Force true
@@ -488,10 +478,13 @@ func (s *GatewayService) GetMetrics() map[string]interface{} {
 
 	metrics := s.lumenClient.GetMetrics()
 	return map[string]interface{}{
-		"qps":         metrics.ThroughputQPS,
+		"totalReqs":   metrics.TotalRequests,
+		"successReqs": metrics.SuccessRequests,
+		"failedReqs":  metrics.FailedRequests,
 		"avgLatency":  float64(metrics.AverageLatency) / 1_000_000.0,
 		"errorRate":   metrics.ErrorRate * 100.0,
 		"activeNodes": metrics.ActiveNodes,
+		"totalNodes":  metrics.TotalNodes,
 	}
 }
 
@@ -570,7 +563,6 @@ func (s *GatewayService) GetConfig() map[string]interface{} {
 		"restPort":     s.cfg.Server.REST.Port,
 		"restHost":     s.cfg.Server.REST.Host,
 		"scanInterval": s.cfg.Discovery.ScanInterval.String(),
-		"strategy":     s.cfg.LoadBalancer.Strategy,
 		"hubUrl":       s.cfg.Discovery.HubURL,
 		"logLevel":     s.cfg.Logging.Level,
 		"language":     language,

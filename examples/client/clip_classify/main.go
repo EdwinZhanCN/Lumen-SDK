@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -76,11 +75,8 @@ func testImageClassification(ctx context.Context, lumenClient *client.LumenClien
 		ForBioCLIPClassify(classificationReq.Payload, classificationReq.PayloadMime, TopK).
 		Build()
 
-	// Perform classification with retry
-	resp, err := lumenClient.InferWithRetry(ctx, inferReq,
-		client.WithMaxWaitTime(30*time.Second),
-		client.WithRetryInterval(3*time.Second),
-		client.WithWaitForTask(true))
+	// Perform classification
+	resp, err := lumenClient.Infer(ctx, inferReq)
 
 	if err != nil {
 		fmt.Printf("Classification failed: %v\n", err)
