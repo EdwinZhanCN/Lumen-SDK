@@ -252,9 +252,10 @@ func (p *Pool) Pick(preferredTask string) (*nodeConn, error) {
 				}
 			}
 		}
-		if len(filtered) > 0 {
-			candidates = filtered
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("no node supports task %q", preferredTask)
 		}
+		candidates = filtered
 	}
 
 	nc := candidates[atomic.AddInt64(&p.rrIdx, 1)%int64(len(candidates))]
