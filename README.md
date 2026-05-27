@@ -56,10 +56,15 @@ cd cmd/lumen-gateway
 
 ## 分发与安装
 
-macOS 用户可以通过 Homebrew 一键安装 Lumen Gateway（已配置忽略安全隔离限制）：
+macOS 用户可以通过 Homebrew 安装 Lumen Gateway：
 
-```bash
-brew install --cask --no-quarantine https://raw.githubusercontent.com/EdwinZhanCN/Lumen-SDK/main/lumen-gateway.rb
-```
+1. 使用 Homebrew 安装：
+   ```bash
+   brew install --cask https://raw.githubusercontent.com/EdwinZhanCN/Lumen-SDK/main/lumen-gateway.rb
+   ```
+2. 首次启动前在终端运行以下命令以解除 macOS 安全隔离限制：
+   ```bash
+   xattr -d com.apple.quarantine "/Applications/Lumen Gateway.app"
+   ```
 
 Windows 用户可以从 [GitHub Releases](https://github.com/EdwinZhanCN/Lumen-SDK/releases) 下载最新的 `.exe` 安装包。
