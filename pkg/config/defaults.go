@@ -6,13 +6,18 @@ import "time"
 func DefaultConfig() *Config {
 	return &Config{
 		Discovery: DiscoveryConfig{
-			Enabled:      true,
-			ServiceType:  "_lumen._tcp",
-			Domain:       "local",
-			ScanInterval: 30 * time.Second,
-			NodeTimeout:  5 * time.Minute,
-			MDNSEnabled:  true,
-			HubURL:       "",
+			Enabled:               true,
+			ServiceType:           "_lumen._tcp",
+			Domain:                "local",
+			DeploymentID:          "local",
+			ResolveTimeout:        10 * time.Second,
+			ConnectTimeout:        10 * time.Second,
+			RediscoveryBackoffMin: 10 * time.Second,
+			RediscoveryBackoffMax: 2 * time.Minute,
+			ScanInterval:          30 * time.Second,
+			NodeTimeout:           5 * time.Minute,
+			MDNSEnabled:           true,
+			HubURL:                "",
 		},
 		Server: ServerConfig{
 			REST: RESTConfig{

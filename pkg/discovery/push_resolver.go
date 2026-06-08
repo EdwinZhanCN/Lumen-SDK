@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -14,17 +17,26 @@ import (
 // PushResolver subscribes to a Gateway WebSocket endpoint for node change
 // events. It implements the NodeResolver interface.
 type PushResolver struct {
-	hubURL string
-	logger *zap.Logger
+	hubURL       string
+	deploymentID string
+	logger       *zap.Logger
 }
 
 // NewPushResolver creates a Gateway-push-based resolver.
 // hubURL is the base URL of the Gateway (e.g. "http://localhost:5866").
 // The resolver connects to hubURL + "/v1/nodes/watch" via WebSocket.
 func NewPushResolver(hubURL string, logger *zap.Logger) *PushResolver {
+	return NewPushResolverWithDeployment(hubURL, DefaultDeploymentID, logger)
+}
+
+func NewPushResolverWithDeployment(hubURL, deploymentID string, logger *zap.Logger) *PushResolver {
+	if deploymentID == "" {
+		deploymentID = DefaultDeploymentID
+	}
 	return &PushResolver{
-		hubURL: hubURL,
-		logger: ensureLogger(logger),
+		hubURL:       hubURL,
+		deploymentID: deploymentID,
+		logger:       ensureLogger(logger),
 	}
 }
 
@@ -95,7 +107,7 @@ func (r *PushResolver) connect(ctx context.Context, wsURL string, ch chan<- Node
 			return fmt.Errorf("read ws: %w", err)
 		}
 
-		events, err := parseNodeEvents(raw)
+		events, err := parseNodeEventsWithDeployment(raw, r.deploymentID)
 		if err != nil {
 			r.logger.Warn("failed to parse node event", zap.Error(err))
 			continue
@@ -120,12 +132,20 @@ type pushNodeEvent struct {
 }
 
 type pushNode struct {
-	NodeID  string   `json:"node_id"`
-	Address string   `json:"address"`
-	Tasks   []string `json:"tasks,omitempty"`
+	NodeID       string            `json:"node_id"`
+	DeploymentID string            `json:"deployment_id,omitempty"`
+	Address      string            `json:"address"`
+	Addresses    []string          `json:"addresses,omitempty"`
+	Port         int               `json:"port,omitempty"`
+	Tasks        []string          `json:"tasks,omitempty"`
+	Txt          map[string]string `json:"txt,omitempty"`
 }
 
 func parseNodeEvents(raw []byte) ([]NodeEvent, error) {
+	return parseNodeEventsWithDeployment(raw, DefaultDeploymentID)
+}
+
+func parseNodeEventsWithDeployment(raw []byte, deploymentID string) ([]NodeEvent, error) {
 	var msg pushNodeEvent
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return nil, fmt.Errorf("unmarshal node event: %w", err)
@@ -135,12 +155,7 @@ func parseNodeEvents(raw []byte) ([]NodeEvent, error) {
 	case "snapshot":
 		events := make([]NodeEvent, 0, len(msg.Nodes))
 		for _, n := range msg.Nodes {
-			events = append(events, NodeEvent{
-				Type:    NodeAdded,
-				NodeID:  n.NodeID,
-				Address: n.Address,
-				Tasks:   n.Tasks,
-			})
+			events = append(events, nodeEventFromPush(NodeDiscovered, n, deploymentID, false))
 		}
 		return events, nil
 
@@ -148,25 +163,89 @@ func parseNodeEvents(raw []byte) ([]NodeEvent, error) {
 		if msg.Node == nil {
 			return nil, fmt.Errorf("added event missing node")
 		}
-		return []NodeEvent{{
-			Type:    NodeAdded,
-			NodeID:  msg.Node.NodeID,
-			Address: msg.Node.Address,
-			Tasks:   msg.Node.Tasks,
-		}}, nil
+		return []NodeEvent{nodeEventFromPush(NodeDiscovered, *msg.Node, deploymentID, false)}, nil
 
 	case "removed":
 		if msg.NodeID == "" {
 			return nil, fmt.Errorf("removed event missing node_id")
 		}
-		return []NodeEvent{{
-			Type:   NodeRemoved,
-			NodeID: msg.NodeID,
-		}}, nil
+		return []NodeEvent{nodeEventFromPush(NodeExpired, pushNode{NodeID: msg.NodeID}, deploymentID, true)}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown event type: %s", msg.Type)
 	}
+}
+
+func nodeEventFromPush(eventType NodeEventType, n pushNode, defaultDeploymentID string, explicitRemove bool) NodeEvent {
+	deploymentID := n.DeploymentID
+	if deploymentID == "" {
+		deploymentID = defaultDeploymentID
+	}
+	identity := ParseNodeIdentity(n.NodeID, deploymentID)
+	addresses, port := pushAddresses(n)
+	txt := make(map[string]string, len(n.Txt)+1)
+	for k, v := range n.Txt {
+		txt[k] = v
+	}
+	if len(n.Tasks) > 0 {
+		txt["tasks"] = joinCSV(n.Tasks)
+	}
+	resolved := ResolvedNode{
+		Identity:     identity,
+		InstanceName: identity.Key(),
+		Addresses:    addresses,
+		Port:         port,
+		Txt:          txt,
+	}.Normalized()
+	ev := eventFromResolved(eventType, resolved)
+	ev.ExplicitRemove = explicitRemove
+	return ev
+}
+
+func pushAddresses(n pushNode) ([]string, int) {
+	port := n.Port
+	addresses := append([]string(nil), n.Addresses...)
+	if n.Address != "" {
+		host, parsedPort, err := splitHostPort(n.Address)
+		if err == nil {
+			if port == 0 {
+				port = parsedPort
+			}
+			addresses = append(addresses, host)
+		} else {
+			addresses = append(addresses, n.Address)
+		}
+	}
+	return addresses, port
+}
+
+func splitHostPort(address string) (string, int, error) {
+	host, portString, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
+}
+
+func joinCSV(values []string) string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return strings.Join(out, ",")
 }
 
 // wsScheme returns "ws" or "wss" based on the hub URL scheme.

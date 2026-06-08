@@ -4,28 +4,41 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
-	"github.com/grandcat/zeroconf"
+	"github.com/hashicorp/mdns"
 
 	"go.uber.org/zap"
 )
 
-// MDNSResolver discovers ML nodes via mDNS (zeroconf) and emits NodeEvent
-// values on a channel. It implements the NodeResolver interface.
+const (
+	defaultPollInterval = 30 * time.Second
+	defaultQueryTimeout = 3 * time.Second
+	missThreshold       = 2
+)
+
+// MDNSResolver discovers ML nodes via mDNS and emits NodeEvent values on a
+// channel. It implements the NodeResolver interface.
 //
-// It runs a continuous mDNS browse to detect new nodes and a periodic scan to
-// remove stale nodes that have disappeared from the network.
+// It runs a polling loop that periodically queries for mDNS services. Nodes not
+// seen for consecutive polls are expired.
 type MDNSResolver struct {
-	serviceType string
-	domain      string
-	logger      *zap.Logger
+	serviceType  string
+	domain       string
+	deploymentID string
+	pollInterval time.Duration
+	queryTimeout time.Duration
+	logger       *zap.Logger
 }
 
 // NewMDNSResolver creates an mDNS-based resolver.
 func NewMDNSResolver(cfg *config.DiscoveryConfig, logger *zap.Logger) *MDNSResolver {
 	serviceType := "_lumen._tcp"
 	domain := "local"
+	deploymentID := DefaultDeploymentID
+	pollInterval := defaultPollInterval
+	queryTimeout := defaultQueryTimeout
 	if cfg != nil {
 		if cfg.ServiceType != "" {
 			serviceType = cfg.ServiceType
@@ -33,114 +46,222 @@ func NewMDNSResolver(cfg *config.DiscoveryConfig, logger *zap.Logger) *MDNSResol
 		if cfg.Domain != "" {
 			domain = cfg.Domain
 		}
+		if cfg.DeploymentID != "" {
+			deploymentID = cfg.DeploymentID
+		}
+		if cfg.ScanInterval > 0 {
+			pollInterval = cfg.ScanInterval
+		}
+		if cfg.ResolveTimeout > 0 {
+			queryTimeout = cfg.ResolveTimeout
+		}
 	}
 	return &MDNSResolver{
-		serviceType: serviceType,
-		domain:      domain,
-		logger:      ensureLogger(logger),
+		serviceType:  serviceType,
+		domain:       domain,
+		deploymentID: deploymentID,
+		pollInterval: pollInterval,
+		queryTimeout: queryTimeout,
+		logger:       ensureLogger(logger),
 	}
 }
 
-// Watch starts mDNS browsing and emits NodeEvent values on the returned channel.
+// Watch starts mDNS polling and emits NodeEvent values on the returned channel.
 func (r *MDNSResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
-	resolver, err := zeroconf.NewResolver(nil)
-	if err != nil {
-		return nil, fmt.Errorf("create mDNS resolver: %w", err)
-	}
-
-	entries := make(chan *zeroconf.ServiceEntry, 16)
-	if err := resolver.Browse(ctx, r.serviceType, r.domain, entries); err != nil {
-		return nil, fmt.Errorf("mDNS browse: %w", err)
-	}
-
 	ch := make(chan NodeEvent, 32)
+	go r.pollLoop(ctx, ch)
+	return ch, nil
+}
 
-	go func() {
-		defer close(ch)
+type knownNode struct {
+	resolved ResolvedNode
+	misses   int
+}
 
-		seen := make(map[string]bool)
+func (r *MDNSResolver) pollLoop(ctx context.Context, ch chan<- NodeEvent) {
+	defer close(ch)
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
+	known := make(map[string]*knownNode)
 
-			case entry, ok := <-entries:
-				if !ok {
+	for {
+		seen := r.runQuery(ctx, ch, known)
+		if ctx.Err() != nil {
+			return
+		}
+
+		for key, kn := range known {
+			if seen[key] {
+				kn.misses = 0
+				continue
+			}
+			kn.misses++
+			if kn.misses >= missThreshold {
+				event := eventFromResolved(NodeExpired, kn.resolved)
+				r.logger.Info("mDNS node expired",
+					zap.String("id", key),
+					zap.Int("missed_polls", kn.misses),
+				)
+				select {
+				case ch <- event:
+				case <-ctx.Done():
 					return
 				}
-				if entry == nil {
-					continue
-				}
+				delete(known, key)
+			}
+		}
 
-				nodeID := r.nodeID(entry)
-				addr := r.serviceAddress(entry)
-				if addr == "" {
-					continue
-				}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(r.pollInterval):
+		}
+	}
+}
 
-				if !seen[nodeID] {
-					seen[nodeID] = true
-					r.logger.Info("mDNS node discovered",
-						zap.String("id", nodeID),
-						zap.String("addr", addr),
-					)
-					ch <- NodeEvent{
-						Type:    NodeAdded,
-						NodeID:  nodeID,
-						Address: addr,
-					}
-				}
+func (r *MDNSResolver) runQuery(ctx context.Context, ch chan<- NodeEvent, known map[string]*knownNode) map[string]bool {
+	seen := make(map[string]bool)
+
+	entries := make(chan *mdns.ServiceEntry, 16)
+	params := &mdns.QueryParam{
+		Service: r.serviceType,
+		Domain:  r.domain,
+		Timeout: r.queryTimeout,
+		Entries: entries,
+	}
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		for entry := range entries {
+			if entry == nil {
+				continue
+			}
+			resolved := r.resolvedNodeFromMDNS(entry)
+			if resolved.Identity.IsZero() {
+				continue
+			}
+			key := resolved.Key()
+			seen[key] = true
+
+			if kn, exists := known[key]; exists {
+				kn.resolved = resolved
+				kn.misses = 0
+			} else {
+				known[key] = &knownNode{resolved: resolved}
+			}
+
+			event := eventFromResolved(NodeDiscovered, resolved)
+			r.logger.Info("mDNS node resolved",
+				zap.String("id", key),
+				zap.Strings("addresses", event.Addresses),
+			)
+			select {
+			case ch <- event:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
 
-	return ch, nil
+	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout+time.Second)
+	defer cancel()
+	if err := mdns.QueryContext(queryCtx, params); err != nil && ctx.Err() == nil {
+		r.logger.Warn("mDNS query failed", zap.Error(err))
+	}
+	close(entries)
+	<-doneCh
+
+	return seen
 }
 
-func (r *MDNSResolver) serviceAddress(entry *zeroconf.ServiceEntry) string {
-	if len(entry.AddrIPv4) == 0 && len(entry.AddrIPv6) == 0 {
-		return ""
+func (r *MDNSResolver) resolvedNodeFromMDNS(entry *mdns.ServiceEntry) ResolvedNode {
+	if entry == nil {
+		return ResolvedNode{}
 	}
-	var host string
-	if len(entry.AddrIPv4) > 0 {
-		host = entry.AddrIPv4[0].String()
-	} else {
-		host = "[" + entry.AddrIPv6[0].String() + "]"
+
+	instance := extractInstanceName(entry.Name, r.serviceType, r.domain)
+	if instance == "" {
+		instance = fmt.Sprintf("%s:%d", entry.Host, entry.Port)
 	}
-	return fmt.Sprintf("%s:%d", host, entry.Port)
+	identity := ParseNodeIdentity(instance, r.deploymentID)
+
+	var addresses []string
+	if entry.AddrV4 != nil {
+		addresses = append(addresses, entry.AddrV4.String())
+	}
+	if entry.AddrV6IPAddr != nil && entry.AddrV6IPAddr.IP != nil {
+		addresses = append(addresses, entry.AddrV6IPAddr.IP.String())
+	} else if entry.AddrV6 != nil {
+		addresses = append(addresses, entry.AddrV6.String())
+	}
+
+	return ResolvedNode{
+		Identity:     identity,
+		InstanceName: instance,
+		HostName:     strings.TrimSuffix(entry.Host, "."),
+		Addresses:    addresses,
+		Port:         entry.Port,
+		Txt:          parseTXT(entry.InfoFields),
+	}.Normalized()
 }
 
-func (r *MDNSResolver) nodeID(entry *zeroconf.ServiceEntry) string {
-	if entry.Instance != "" {
-		return entry.Instance
+// extractInstanceName extracts the instance name from a full DNS-SD name.
+// E.g. "lab-node-1._lumen._tcp.local." → "lab-node-1"
+func extractInstanceName(fullName, serviceType, domain string) string {
+	fullName = strings.TrimSuffix(fullName, ".")
+	suffix := "." + serviceType + "." + domain
+	if strings.HasSuffix(fullName, suffix) {
+		return strings.TrimSuffix(fullName, suffix)
 	}
-	return fmt.Sprintf("%s:%d", entry.HostName, entry.Port)
+	if idx := strings.Index(fullName, "."); idx > 0 {
+		return fullName[:idx]
+	}
+	return fullName
 }
 
-// extractTasks reads task names from mDNS TXT records.
-// ML nodes advertise supported tasks as TXT key "tasks" with comma-separated values.
-func extractTasks(entry *zeroconf.ServiceEntry) []string {
-	if entry == nil || len(entry.Text) == 0 {
-		return nil
+func eventFromResolved(eventType NodeEventType, resolved ResolvedNode) NodeEvent {
+	resolved = resolved.Normalized()
+	endpoints := resolved.CandidateEndpoints()
+	address := ""
+	if len(endpoints) > 0 {
+		address = endpoints[0]
 	}
-	for _, txt := range entry.Text {
-		const prefix = "tasks="
-		if strings.HasPrefix(txt, prefix) {
-			raw := strings.TrimPrefix(txt, prefix)
-			if raw == "" {
-				return nil
+	return NodeEvent{
+		Type:      eventType,
+		Identity:  resolved.Identity,
+		Resolved:  resolved,
+		NodeID:    resolved.Key(),
+		Address:   address,
+		Addresses: endpoints,
+		Tasks:     resolved.HintTasks(),
+		Txt:       resolved.Txt,
+	}
+}
+
+func parseTXT(records []string) map[string]string {
+	out := make(map[string]string, len(records))
+	for _, record := range records {
+		key, value, ok := splitTXT(record)
+		if !ok {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func splitTXT(record string) (string, string, bool) {
+	for i := 0; i < len(record); i++ {
+		if record[i] == '=' {
+			key := record[:i]
+			if key == "" {
+				return "", "", false
 			}
-			parts := strings.Split(raw, ",")
-			var tasks []string
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					tasks = append(tasks, p)
-				}
-			}
-			return tasks
+			return key, record[i+1:], true
 		}
 	}
-	return nil
+	if record == "" {
+		return "", "", false
+	}
+	return record, "", true
 }

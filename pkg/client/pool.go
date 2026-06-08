@@ -1,11 +1,11 @@
 package client
 
 import (
-	"context"
 	"fmt"
-	"io"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
@@ -13,253 +13,120 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // ErrNoAvailableNode is returned when no healthy connection exists.
 var ErrNoAvailableNode = fmt.Errorf("no available node")
 
-// Pool manages gRPC connections to ML inference nodes.
-//
-// Connection health is driven entirely by gRPC's built-in connectivity state
-// and KeepAlive. There are no timers, caches, health RPCs, or polling loops.
-//
-// The pool reacts to NodeEvent values from a NodeResolver: it dials on
-// NodeAdded and closes on NodeRemoved. gRPC connectivity state transitions
-// move connections between the healthy and unhealthy subsets.
-type Pool struct {
-	mu       sync.RWMutex
-	conns    map[string]*nodeConn // all connections, keyed by node ID
-	healthy  []*nodeConn          // subset of conns in connectivity.Ready
-	watchers []func([]*discovery.NodeInfo)
+const hardFailureThreshold = 3
 
-	logger *zap.Logger
-	rrIdx  int64 // round-robin index
+// PoolOptions controls operational session behavior.
+type PoolOptions struct {
+	ConnectTimeout        time.Duration
+	RediscoveryBackoffMin time.Duration
+	RediscoveryBackoffMax time.Duration
 }
 
-type nodeConn struct {
-	id    string
-	addr  string
-	tasks []string
-	conn  *grpc.ClientConn
-	cli   pb.InferenceClient
+func (o PoolOptions) normalized() PoolOptions {
+	if o.ConnectTimeout <= 0 {
+		o.ConnectTimeout = 10 * time.Second
+	}
+	if o.RediscoveryBackoffMin <= 0 {
+		o.RediscoveryBackoffMin = 10 * time.Second
+	}
+	if o.RediscoveryBackoffMax < o.RediscoveryBackoffMin {
+		o.RediscoveryBackoffMax = 2 * time.Minute
+	}
+	return o
+}
+
+// Pool manages a single gRPC ClientConn with a custom resolver and task-aware
+// balancer. Discovery events are fed through the resolver; the balancer creates
+// one SubConn per node and routes RPCs based on the task set in the context.
+type Pool struct {
+	mu       sync.RWMutex
+	conn     *grpc.ClientConn
+	cli      pb.InferenceClient
+	registry *nodeRegistry
+	watchers []func([]*discovery.NodeInfo)
+
+	logger  *zap.Logger
+	options PoolOptions
 }
 
 // NewPool creates an empty connection pool.
 func NewPool(logger *zap.Logger) *Pool {
+	return NewPoolWithOptions(logger, PoolOptions{})
+}
+
+// NewPoolWithOptions creates a Pool. Call Connect to create the gRPC connection.
+func NewPoolWithOptions(logger *zap.Logger, options PoolOptions) *Pool {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	return &Pool{
-		conns:  make(map[string]*nodeConn),
-		logger: logger,
+		logger:  logger,
+		options: options.normalized(),
 	}
 }
 
-// Watch consumes NodeEvent values from a resolver and manages connections.
-// Blocks until ctx is cancelled. Call this in a goroutine.
-func (p *Pool) Watch(ctx context.Context, resolver discovery.NodeResolver) {
-	ch, err := resolver.Watch(ctx)
-	if err != nil {
-		p.logger.Error("resolver Watch failed", zap.Error(err))
-		return
+// Connect creates the gRPC ClientConn using the given resolver backend.
+func (p *Pool) Connect(resolver discovery.NodeResolver) error {
+	registry := &nodeRegistry{
+		nodes: make(map[string]*registeredNode),
+		onChanged: func() {
+			p.notifyWatchers()
+		},
 	}
-	for ev := range ch {
-		switch ev.Type {
-		case discovery.NodeAdded:
-			p.add(ctx, ev)
-		case discovery.NodeRemoved:
-			p.remove(ev.NodeID)
-		}
+
+	opts := p.options
+	balancerName := newLumenBalancerName(registry, balancerOptions{
+		connectTimeout:        opts.ConnectTimeout,
+		rediscoveryBackoffMin: opts.RediscoveryBackoffMin,
+		rediscoveryBackoffMax: opts.RediscoveryBackoffMax,
+	}, p.logger)
+
+	rb := &lumenResolverBuilder{
+		nodeResolver: resolver,
+		logger:       p.logger,
 	}
-}
 
-func (p *Pool) add(ctx context.Context, ev discovery.NodeEvent) {
-	p.mu.RLock()
-	if _, exists := p.conns[ev.NodeID]; exists {
-		p.mu.RUnlock()
-		return
-	}
-	p.mu.RUnlock()
+	svcCfg := fmt.Sprintf(`{"loadBalancingConfig": [{"%s": {}}]}`, balancerName)
 
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(dialCtx, ev.Address,
-		grpc.WithInsecure(),
-		grpc.WithBlock(),
+	conn, err := grpc.NewClient(
+		lumenScheme+":///cluster",
+		grpc.WithResolvers(rb),
+		grpc.WithDefaultServiceConfig(svcCfg),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    10 * time.Second,
 			Timeout: 3 * time.Second,
 		}),
 	)
 	if err != nil {
-		p.logger.Warn("dial failed", zap.String("node_id", ev.NodeID), zap.String("addr", ev.Address), zap.Error(err))
-		return
+		return fmt.Errorf("create gRPC client: %w", err)
 	}
-
-	nc := &nodeConn{
-		id:    ev.NodeID,
-		addr:  ev.Address,
-		tasks: ev.Tasks,
-		conn:  conn,
-		cli:   pb.NewInferenceClient(conn),
-	}
-
-	// Fetch capabilities via gRPC to populate the task list.
-	p.queryCapabilities(ctx, nc)
 
 	p.mu.Lock()
-	p.conns[ev.NodeID] = nc
-	p.healthy = append(p.healthy, nc)
+	p.conn = conn
+	p.cli = pb.NewInferenceClient(conn)
+	p.registry = registry
 	p.mu.Unlock()
 
-	go p.monitorConnectivity(nc)
+	// grpc.NewClient is lazy — force eager resolver/balancer startup so
+	// node discovery begins immediately rather than on the first RPC.
+	conn.Connect()
 
-	p.notifyWatchers()
-
-	p.logger.Info("node connected", zap.String("id", ev.NodeID), zap.String("addr", ev.Address))
+	return nil
 }
 
-func (p *Pool) queryCapabilities(ctx context.Context, nc *nodeConn) {
-	capCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	stream, err := nc.cli.StreamCapabilities(capCtx, &emptypb.Empty{})
-	if err != nil {
-		p.logger.Warn("capabilities fetch failed", zap.String("id", nc.id), zap.Error(err))
-		return
-	}
-
-	for {
-		cap, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			p.logger.Debug("StreamCapabilities recv failed", zap.String("id", nc.id), zap.Error(err))
-			return
-		}
-		for _, t := range cap.Tasks {
-			found := false
-			for _, existing := range nc.tasks {
-				if existing == t.Name {
-					found = true
-					break
-				}
-			}
-			if !found && t.Name != "" {
-				nc.tasks = append(nc.tasks, t.Name)
-			}
-		}
-	}
-
-	p.logger.Info("capabilities fetched",
-		zap.String("id", nc.id),
-		zap.Strings("tasks", nc.tasks),
-	)
-}
-
-func (p *Pool) remove(nodeID string) {
-	p.mu.Lock()
-	nc, ok := p.conns[nodeID]
-	if !ok {
-		p.mu.Unlock()
-		return
-	}
-	delete(p.conns, nodeID)
-	p.removeFromHealthyLocked(nc)
-	p.mu.Unlock()
-
-	_ = nc.conn.Close()
-
-	p.notifyWatchers()
-
-	p.logger.Info("node removed", zap.String("id", nodeID))
-}
-
-// monitorConnectivity blocks watching gRPC connectivity state changes.
-// This replaces health-check timers and explicit Health RPCs.
-func (p *Pool) monitorConnectivity(nc *nodeConn) {
-	state := nc.conn.GetState()
-	for nc.conn.WaitForStateChange(context.Background(), state) {
-		state = nc.conn.GetState()
-
-		switch state {
-		case connectivity.Ready:
-			p.markHealthy(nc)
-		case connectivity.TransientFailure, connectivity.Shutdown:
-			p.MarkUnhealthy(nc)
-		case connectivity.Idle:
-			// KeepAlive will trigger gRPC to transition Idle → Connecting → Ready
-		}
-	}
-}
-
-func (p *Pool) markHealthy(nc *nodeConn) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, h := range p.healthy {
-		if h.id == nc.id {
-			return // already present
-		}
-	}
-	p.healthy = append(p.healthy, nc)
-	p.logger.Debug("node healthy", zap.String("id", nc.id))
-}
-
-// MarkUnhealthy removes the node from the healthy subset.
-// Exported so callers can react to inference failures immediately,
-// without waiting for the next connectivity state change.
-func (p *Pool) MarkUnhealthy(nc *nodeConn) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.removeFromHealthyLocked(nc)
-	p.logger.Debug("node marked unhealthy", zap.String("id", nc.id))
-}
-
-func (p *Pool) removeFromHealthyLocked(nc *nodeConn) {
-	for i, h := range p.healthy {
-		if h.id == nc.id {
-			p.healthy[i] = p.healthy[len(p.healthy)-1]
-			p.healthy = p.healthy[:len(p.healthy)-1]
-			return
-		}
-	}
-}
-
-// Pick returns a healthy connection. Nodes that support preferredTask are
-// prioritised. If no node explicitly advertises the task, any healthy node
-// is returned.
-func (p *Pool) Pick(preferredTask string) (*nodeConn, error) {
+// Client returns the gRPC InferenceClient backed by the pool.
+func (p *Pool) Client() pb.InferenceClient {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	if len(p.healthy) == 0 {
-		return nil, ErrNoAvailableNode
-	}
-
-	candidates := p.healthy
-	if preferredTask != "" {
-		var filtered []*nodeConn
-		for _, nc := range p.healthy {
-			for _, t := range nc.tasks {
-				if t == preferredTask {
-					filtered = append(filtered, nc)
-					break
-				}
-			}
-		}
-		if len(filtered) == 0 {
-			return nil, fmt.Errorf("no node supports task %q", preferredTask)
-		}
-		candidates = filtered
-	}
-
-	nc := candidates[atomic.AddInt64(&p.rrIdx, 1)%int64(len(candidates))]
-	return nc, nil
+	return p.cli
 }
 
 // PoolStats is a read-only snapshot of pool state.
@@ -271,42 +138,27 @@ type PoolStats struct {
 // Stats returns current pool statistics.
 func (p *Pool) Stats() PoolStats {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
+	reg := p.registry
+	p.mu.RUnlock()
+	if reg == nil {
+		return PoolStats{}
+	}
+	total, healthy := reg.stats()
 	return PoolStats{
-		TotalConnections:   len(p.conns),
-		HealthyConnections: len(p.healthy),
+		TotalConnections:   total,
+		HealthyConnections: healthy,
 	}
 }
 
 // NodeInfos returns snapshot descriptors for all connections.
 func (p *Pool) NodeInfos() []*discovery.NodeInfo {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.nodeInfosLocked()
-}
-
-func (p *Pool) nodeInfosLocked() []*discovery.NodeInfo {
-	out := make([]*discovery.NodeInfo, 0, len(p.conns))
-	for _, nc := range p.conns {
-		status := discovery.NodeStatusActive
-		healthy := false
-		for _, h := range p.healthy {
-			if h.id == nc.id {
-				healthy = true
-				break
-			}
-		}
-		if !healthy {
-			status = discovery.NodeStatusError
-		}
-		out = append(out, &discovery.NodeInfo{
-			ID:      nc.id,
-			Address: nc.addr,
-			Status:  status,
-			Tasks:   tasksToIOTasks(nc.tasks),
-		})
+	reg := p.registry
+	p.mu.RUnlock()
+	if reg == nil {
+		return nil
 	}
-	return out
+	return reg.nodeInfos()
 }
 
 // OnNodesChanged registers a callback invoked whenever the node list changes.
@@ -316,41 +168,112 @@ func (p *Pool) OnNodesChanged(cb func([]*discovery.NodeInfo)) {
 	p.watchers = append(p.watchers, cb)
 }
 
-func tasksToIOTasks(names []string) []*pb.IOTask {
-	out := make([]*pb.IOTask, 0, len(names))
-	for _, n := range names {
-		out = append(out, &pb.IOTask{Name: n})
-	}
-	return out
-}
-
 func (p *Pool) notifyWatchers() {
 	p.mu.RLock()
 	if len(p.watchers) == 0 {
 		p.mu.RUnlock()
 		return
 	}
-	nodes := p.nodeInfosLocked()
+	reg := p.registry
 	watchers := make([]func([]*discovery.NodeInfo), len(p.watchers))
 	copy(watchers, p.watchers)
 	p.mu.RUnlock()
+
+	if reg == nil {
+		return
+	}
+	nodes := reg.nodeInfos()
 	for _, w := range watchers {
 		go w(nodes)
 	}
 }
 
-// Close closes all gRPC connections and clears the pool.
+// Close closes the gRPC connection and clears the pool.
 func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for id, nc := range p.conns {
-		if err := nc.conn.Close(); err != nil {
-			p.logger.Error("failed to close connection", zap.String("id", id), zap.Error(err))
+	if p.conn != nil {
+		if err := p.conn.Close(); err != nil {
+			p.logger.Error("failed to close connection", zap.Error(err))
 		}
+		p.conn = nil
+		p.cli = nil
+		p.registry = nil
 	}
-	p.conns = make(map[string]*nodeConn)
-	p.healthy = nil
 	p.logger.Info("pool closed")
 	return nil
+}
+
+// --- helpers ---
+
+func splitEndpoint(endpoint string) (string, int, error) {
+	host, portString, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func mergeTasks(current, incoming []string) []string {
+	seen := make(map[string]struct{}, len(current)+len(incoming))
+	out := make([]string, 0, len(current)+len(incoming))
+	for _, task := range current {
+		task = strings.TrimSpace(task)
+		if task == "" {
+			continue
+		}
+		if _, ok := seen[task]; ok {
+			continue
+		}
+		seen[task] = struct{}{}
+		out = append(out, task)
+	}
+	for _, task := range incoming {
+		task = strings.TrimSpace(task)
+		if task == "" {
+			continue
+		}
+		if _, ok := seen[task]; ok {
+			continue
+		}
+		seen[task] = struct{}{}
+		out = append(out, task)
+	}
+	return out
+}
+
+func tasksFromCapabilities(caps []*pb.Capability) []string {
+	var tasks []string
+	for _, cap := range caps {
+		for _, task := range cap.GetTasks() {
+			if task.GetName() != "" {
+				tasks = append(tasks, task.GetName())
+			}
+		}
+	}
+	return mergeTasks(nil, tasks)
+}
+
+func tasksToIOTasks(names []string) []*pb.IOTask {
+	out := make([]*pb.IOTask, 0, len(names))
+	for _, n := range names {
+		out = append(out, &pb.IOTask{Name: n})
+	}
+	return out
 }

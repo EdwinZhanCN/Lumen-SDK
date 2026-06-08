@@ -6,8 +6,11 @@ discovery:
     enabled: true
     service_type: "_lumen._tcp"
     domain: "local"
-    scan_interval: 15s # Frequent scans for rapid node discovery
-    node_timeout: 2m # Short timeout for quick failure detection
+    deployment_id: "local"
+    resolve_timeout: 5s # Fast resolve timeout
+    connect_timeout: 5s # Fast operational dial timeout
+    rediscovery_backoff_min: 5s # Faster rediscovery cooldown
+    rediscovery_backoff_max: 1m # Shorter maximum cooldown
     max_nodes: 50 # High limit for enterprise deployments
 
 # Connection - High-performance settings

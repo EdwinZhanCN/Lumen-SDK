@@ -6,8 +6,11 @@ discovery:
     enabled: true
     service_type: "_lumen._tcp"
     domain: "local"
-    scan_interval: 60s              # Less frequent scans to save CPU
-    node_timeout: 10m               # Longer timeout for unstable connections
+    deployment_id: "local"
+    resolve_timeout: 20s            # Conservative resolve timeout
+    connect_timeout: 15s            # Longer operational dial timeout
+    rediscovery_backoff_min: 30s    # Less frequent rediscovery attempts
+    rediscovery_backoff_max: 5m     # Longer maximum cooldown for unstable links
     max_nodes: 5                    # Limit discovered nodes to reduce memory usage
 
 # Connection - Conservative settings

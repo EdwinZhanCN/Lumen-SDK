@@ -21,13 +21,18 @@ type Config struct {
 
 // DiscoveryConfig controls service discovery for finding ML nodes.
 type DiscoveryConfig struct {
-	Enabled      bool          `yaml:"enabled" json:"enabled"`
-	ServiceType  string        `yaml:"service_type" json:"service_type"`
-	Domain       string        `yaml:"domain" json:"domain"`
-	ScanInterval time.Duration `yaml:"scan_interval" json:"scan_interval"`
-	NodeTimeout  time.Duration `yaml:"node_timeout" json:"node_timeout"`
-	MDNSEnabled  bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
-	HubURL       string        `yaml:"hub_url" json:"hub_url"`
+	Enabled               bool          `yaml:"enabled" json:"enabled"`
+	ServiceType           string        `yaml:"service_type" json:"service_type"`
+	Domain                string        `yaml:"domain" json:"domain"`
+	DeploymentID          string        `yaml:"deployment_id" json:"deployment_id"`
+	ResolveTimeout        time.Duration `yaml:"resolve_timeout" json:"resolve_timeout"`
+	ConnectTimeout        time.Duration `yaml:"connect_timeout" json:"connect_timeout"`
+	RediscoveryBackoffMin time.Duration `yaml:"rediscovery_backoff_min" json:"rediscovery_backoff_min"`
+	RediscoveryBackoffMax time.Duration `yaml:"rediscovery_backoff_max" json:"rediscovery_backoff_max"`
+	ScanInterval          time.Duration `yaml:"scan_interval" json:"scan_interval"` // mDNS poll interval: how often to re-query for services.
+	NodeTimeout           time.Duration `yaml:"node_timeout" json:"node_timeout"`   // Deprecated: DNS-SD is not operational liveness.
+	MDNSEnabled           bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
+	HubURL                string        `yaml:"hub_url" json:"hub_url"`
 }
 
 // ServerConfig holds REST server configuration.
@@ -94,6 +99,29 @@ func (c *Config) LoadFromEnv() error {
 	if v := os.Getenv("LUMEN_DISCOVERY_DOMAIN"); v != "" {
 		c.Discovery.Domain = v
 	}
+	if v := os.Getenv("LUMEN_DISCOVERY_DEPLOYMENT_ID"); v != "" {
+		c.Discovery.DeploymentID = v
+	}
+	if v := os.Getenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Discovery.ResolveTimeout = d
+		}
+	}
+	if v := os.Getenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Discovery.ConnectTimeout = d
+		}
+	}
+	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Discovery.RediscoveryBackoffMin = d
+		}
+	}
+	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Discovery.RediscoveryBackoffMax = d
+		}
+	}
 	if os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") != "" {
 		c.Discovery.MDNSEnabled = os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") == "true"
 	}
@@ -126,11 +154,26 @@ func (c *Config) Validate() error {
 		if c.Discovery.ServiceType == "" {
 			return fmt.Errorf("discovery.service_type is required when enabled")
 		}
-		if c.Discovery.ScanInterval <= 0 {
-			return fmt.Errorf("discovery.scan_interval must be positive")
+		if c.Discovery.DeploymentID == "" {
+			return fmt.Errorf("discovery.deployment_id is required when enabled")
 		}
-		if c.Discovery.NodeTimeout <= 0 {
-			return fmt.Errorf("discovery.node_timeout must be positive")
+		if c.Discovery.ResolveTimeout <= 0 {
+			return fmt.Errorf("discovery.resolve_timeout must be positive")
+		}
+		if c.Discovery.ConnectTimeout <= 0 {
+			return fmt.Errorf("discovery.connect_timeout must be positive")
+		}
+		if c.Discovery.RediscoveryBackoffMin <= 0 {
+			return fmt.Errorf("discovery.rediscovery_backoff_min must be positive")
+		}
+		if c.Discovery.RediscoveryBackoffMax < c.Discovery.RediscoveryBackoffMin {
+			return fmt.Errorf("discovery.rediscovery_backoff_max must be >= rediscovery_backoff_min")
+		}
+		if c.Discovery.ScanInterval < 0 {
+			return fmt.Errorf("discovery.scan_interval must be non-negative")
+		}
+		if c.Discovery.NodeTimeout < 0 {
+			return fmt.Errorf("discovery.node_timeout must be non-negative")
 		}
 	}
 	if c.Server.REST.Enabled {

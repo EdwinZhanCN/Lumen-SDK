@@ -242,7 +242,7 @@ func (h *handler) GetTasks(c *fiber.Ctx) error {
 				InputMimes:  task.InputMimes,
 				OutputMimes: task.OutputMimes,
 				NodeID:      node.ID,
-				NodeName:    node.Name,
+				NodeName:    node.ID,
 				NodeAddress: node.Address,
 				ServiceName: "", // Will be filled from Capabilities
 			}

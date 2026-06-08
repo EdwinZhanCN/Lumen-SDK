@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -18,36 +19,43 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// isApplicationError returns true when the gRPC error represents an
-// application-level response from the server (e.g. InvalidArgument, NotFound)
-// rather than a transport/connectivity failure.
-//
-// Application errors mean the node is healthy and processed the request — we
-// should NOT mark it unhealthy. Only transport errors (Unavailable,
-// DeadlineExceeded, etc.) indicate a connectivity problem.
-//
-// This applies to Send, CloseSend, and Recv on bidi streams: the server may
-// return a gRPC status immediately, causing any stream operation to fail.
-func isApplicationError(err error) bool {
+// shouldAffectNodeHealth reports whether an inference error should count
+// against the selected node's pool health.
+func shouldAffectNodeHealth(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
 	st, ok := status.FromError(err)
-	if !ok {
-		return false
+	if ok {
+		switch st.Code() {
+		case codes.Unavailable:
+			return true
+		case codes.Canceled,
+			codes.DeadlineExceeded,
+			codes.InvalidArgument,
+			codes.NotFound,
+			codes.AlreadyExists,
+			codes.PermissionDenied,
+			codes.Unauthenticated,
+			codes.FailedPrecondition,
+			codes.ResourceExhausted,
+			codes.OutOfRange,
+			codes.Unimplemented,
+			codes.Internal:
+			return false
+		default:
+			return false
+		}
 	}
-	switch st.Code() {
-	case codes.Canceled, // client cancelled context (timeout, request ended)
-		codes.DeadlineExceeded,   // client deadline exceeded (not node fault)
-		codes.InvalidArgument,    // bad input
-		codes.NotFound,           // service/task not found on node
-		codes.AlreadyExists,      // duplicate request
-		codes.PermissionDenied,   // access denied
-		codes.Unauthenticated,    // missing credentials
-		codes.FailedPrecondition, // system state not met
-		codes.OutOfRange,         // parameter out of valid range
-		codes.Unimplemented:      // method not supported
-		return true
-	default:
-		return false
-	}
+
+	return true
 }
 
 // ClientMetrics is a lightweight metrics snapshot for monitoring.
@@ -64,9 +72,9 @@ type ClientMetrics struct {
 
 // LumenClient provides inference access to ML nodes.
 //
-// It composes a NodeResolver (discovery) with a Pool (connection management).
-// Inference requests are sent directly to the selected gRPC connection;
-// there is no intermediate caching, health checking, or task availability polling.
+// It composes a NodeResolver (discovery) with a Pool (gRPC connection pool).
+// The Pool uses a custom gRPC resolver and task-aware balancer so that RPCs
+// are routed to the correct node based on the requested inference task.
 type LumenClient struct {
 	pool     *Pool
 	resolver discovery.NodeResolver
@@ -76,7 +84,6 @@ type LumenClient struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
 
-	// metrics (atomic for lock-free read)
 	totalReqs      atomic.Int64
 	successReqs    atomic.Int64
 	failedReqs     atomic.Int64
@@ -96,14 +103,18 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 		logger = zap.NewNop()
 	}
 
-	pool := NewPool(logger)
+	pool := NewPoolWithOptions(logger, PoolOptions{
+		ConnectTimeout:        cfg.Discovery.ConnectTimeout,
+		RediscoveryBackoffMin: cfg.Discovery.RediscoveryBackoffMin,
+		RediscoveryBackoffMax: cfg.Discovery.RediscoveryBackoffMax,
+	})
 
 	var resolver discovery.NodeResolver
 	if cfg.Discovery.Enabled && cfg.Discovery.MDNSEnabled {
 		resolver = discovery.NewMDNSResolver(&cfg.Discovery, logger)
 	}
 	if resolver == nil && cfg.Discovery.Enabled && cfg.Discovery.HubURL != "" {
-		resolver = discovery.NewPushResolver(cfg.Discovery.HubURL, logger)
+		resolver = discovery.NewPushResolverWithDeployment(cfg.Discovery.HubURL, cfg.Discovery.DeploymentID, logger)
 	}
 	if resolver == nil {
 		return nil, fmt.Errorf("no discovery backend configured: enable mDNS or set hub_url")
@@ -122,8 +133,11 @@ func (c *LumenClient) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	ctx, c.cancel = context.WithCancel(ctx)
-	go c.pool.Watch(ctx, c.resolver)
+	_, c.cancel = context.WithCancel(ctx)
+
+	if err := c.pool.Connect(c.resolver); err != nil {
+		return fmt.Errorf("pool connect: %w", err)
+	}
 
 	c.logger.Info("lumen client started")
 	return nil
@@ -131,9 +145,9 @@ func (c *LumenClient) Start(ctx context.Context) error {
 
 // Infer performs a synchronous inference request.
 //
-// Picks a healthy gRPC connection from the pool. On failure the connection
-// is marked unhealthy immediately so the next Pick selects a different node.
-// Large payloads are automatically chunked per ChunkConfig.
+// The task is set in the context so the balancer's Picker routes the RPC to a
+// node that supports the requested task. Health feedback is handled
+// automatically by the Picker's Done callback.
 func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
@@ -145,22 +159,22 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	start := time.Now()
 	c.totalReqs.Add(1)
 
-	// Chunk large payloads.
 	chunks, err := ChunkPayload(req.Payload, c.config.Chunk)
 	if err != nil {
 		c.failedReqs.Add(1)
 		return nil, fmt.Errorf("chunk payload: %w", err)
 	}
 
-	nc, err := c.pool.Pick(req.Task)
-	if err != nil {
+	cli := c.pool.Client()
+	if cli == nil {
 		c.failedReqs.Add(1)
-		return nil, fmt.Errorf("no node for task %s: %w", req.Task, err)
+		return nil, ErrNoAvailableNode
 	}
 
-	// Single chunk: simple request-response.
+	ctx = WithTask(ctx, req.Task)
+
 	if len(chunks) == 1 {
-		resp, err := c.inferSingle(ctx, nc, req)
+		resp, err := c.inferSingle(ctx, cli, req)
 		if err != nil {
 			c.failedReqs.Add(1)
 			return nil, err
@@ -170,12 +184,10 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 		return resp, nil
 	}
 
-	// Multiple chunks: send all over one bidi stream.
-	stream, err := nc.cli.Infer(ctx)
+	stream, err := cli.Infer(ctx)
 	if err != nil {
-		c.pool.MarkUnhealthy(nc)
 		c.failedReqs.Add(1)
-		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
+		return nil, fmt.Errorf("infer stream: %w", err)
 	}
 
 	sendCtx, cancel := context.WithCancel(ctx)
@@ -220,13 +232,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 			if err == io.EOF && len(responses) > 0 {
 				break
 			}
-			appErr := isApplicationError(err)
-			c.logger.Warn("Infer multi-chunk: Recv failed", zap.String("id", nc.id), zap.Bool("is_app_err", appErr), zap.Error(err))
-			if !appErr {
-				c.pool.MarkUnhealthy(nc)
-			}
 			c.failedReqs.Add(1)
-			// Check if sender reported an error.
 			select {
 			case se := <-sendErrCh:
 				if se != nil {
@@ -234,7 +240,7 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 				}
 			default:
 			}
-			return nil, fmt.Errorf("recv from %s: %w", nc.id, err)
+			return nil, fmt.Errorf("recv: %w", err)
 		}
 		responses = append(responses, resp)
 		if resp.IsFinal {
@@ -253,30 +259,17 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	return finalResp, nil
 }
 
-// inferSingle sends a single (non-chunked) request over a bidi stream.
-func (c *LumenClient) inferSingle(ctx context.Context, nc *nodeConn, req *pb.InferRequest) (*pb.InferResponse, error) {
-	stream, err := nc.cli.Infer(ctx)
+func (c *LumenClient) inferSingle(ctx context.Context, cli pb.InferenceClient, req *pb.InferRequest) (*pb.InferResponse, error) {
+	stream, err := cli.Infer(ctx)
 	if err != nil {
-		c.logger.Warn("inferSingle: stream create failed, marking unhealthy", zap.String("id", nc.id), zap.Error(err))
-		c.pool.MarkUnhealthy(nc)
-		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
+		return nil, fmt.Errorf("infer stream: %w", err)
 	}
 
 	if err := stream.Send(req); err != nil {
-		appErr := isApplicationError(err)
-		c.logger.Warn("inferSingle: Send failed", zap.String("id", nc.id), zap.Bool("is_app_err", appErr), zap.Error(err))
-		if !appErr {
-			c.pool.MarkUnhealthy(nc)
-		}
-		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
+		return nil, fmt.Errorf("send: %w", err)
 	}
 	if err := stream.CloseSend(); err != nil {
-		appErr := isApplicationError(err)
-		c.logger.Warn("inferSingle: CloseSend failed", zap.String("id", nc.id), zap.Bool("is_app_err", appErr), zap.Error(err))
-		if !appErr {
-			c.pool.MarkUnhealthy(nc)
-		}
-		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
+		return nil, fmt.Errorf("close send: %w", err)
 	}
 
 	var responses []*pb.InferResponse
@@ -286,12 +279,7 @@ func (c *LumenClient) inferSingle(ctx context.Context, nc *nodeConn, req *pb.Inf
 			break
 		}
 		if err != nil {
-			appErr := isApplicationError(err)
-			c.logger.Warn("inferSingle: Recv failed", zap.String("id", nc.id), zap.Bool("is_app_err", appErr), zap.Error(err))
-			if !appErr {
-				c.pool.MarkUnhealthy(nc)
-			}
-			return nil, fmt.Errorf("recv from %s: %w", nc.id, err)
+			return nil, fmt.Errorf("recv: %w", err)
 		}
 		responses = append(responses, resp)
 		if resp.IsFinal {
@@ -310,28 +298,24 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 	if err := sdktypes.ValidateTaskRequest(req); err != nil {
 		return nil, err
 	}
-	nc, err := c.pool.Pick(req.Task)
-	if err != nil {
-		return nil, fmt.Errorf("no node for task %s: %w", req.Task, err)
+
+	cli := c.pool.Client()
+	if cli == nil {
+		return nil, ErrNoAvailableNode
 	}
 
-	stream, err := nc.cli.Infer(ctx)
+	ctx = WithTask(ctx, req.Task)
+
+	stream, err := cli.Infer(ctx)
 	if err != nil {
-		c.pool.MarkUnhealthy(nc)
-		return nil, fmt.Errorf("infer stream %s: %w", nc.id, err)
+		return nil, fmt.Errorf("infer stream: %w", err)
 	}
 
 	if err := stream.Send(req); err != nil {
-		if !isApplicationError(err) {
-			c.pool.MarkUnhealthy(nc)
-		}
-		return nil, fmt.Errorf("send to %s: %w", nc.id, err)
+		return nil, fmt.Errorf("send: %w", err)
 	}
 	if err := stream.CloseSend(); err != nil {
-		if !isApplicationError(err) {
-			c.pool.MarkUnhealthy(nc)
-		}
-		return nil, fmt.Errorf("close send %s: %w", nc.id, err)
+		return nil, fmt.Errorf("close send: %w", err)
 	}
 
 	respChan := make(chan *pb.InferResponse, 100)
@@ -343,9 +327,6 @@ func (c *LumenClient) InferStream(ctx context.Context, req *pb.InferRequest) (<-
 				return
 			}
 			if err != nil {
-				if !isApplicationError(err) {
-					c.pool.MarkUnhealthy(nc)
-				}
 				return
 			}
 			respChan <- resp

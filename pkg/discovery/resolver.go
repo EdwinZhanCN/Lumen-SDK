@@ -1,12 +1,9 @@
-// Package discovery defines the unified node discovery abstraction.
+// Package discovery defines the unified operational discovery abstraction.
 //
-// All discovery backends (mDNS, Gateway push, manual) implement the NodeResolver
-// interface. Consumers (like the connection Pool) receive a stream of NodeEvent
-// values and react by dialing or closing gRPC connections.
-//
-// There is no caching, TTL, health checking, or polling at this layer.
-// Discovery is purely an event stream: it says who appeared and who disappeared.
-// Connection health is the responsibility of the gRPC Pool.
+// All discovery backends (mDNS, Gateway push, manual) implement the
+// NodeResolver interface. Consumers receive a stream of NodeEvent values that
+// describe address-resolution facts. Discovery does not prove node liveness;
+// connection health belongs to the operational session / gRPC pool layer.
 package discovery
 
 import "context"
@@ -15,27 +12,44 @@ import "context"
 type NodeEventType int
 
 const (
-	NodeAdded   NodeEventType = iota // a new node became reachable
-	NodeRemoved                      // a node disappeared
+	NodeDiscovered    NodeEventType = iota // a service instance or resolved address was discovered
+	NodeExpired                            // DNS-SD TTL expired or a push backend explicitly revoked the node
+	NodeResolveFailed                      // address resolution failed; this is not a liveness verdict
+
+	// Deprecated: use NodeDiscovered. Kept as a source-compatible alias for
+	// callers built against the previous resolver event names.
+	NodeAdded = NodeDiscovered
+	// Deprecated: use NodeExpired. Kept as a source-compatible alias for
+	// callers built against the previous resolver event names.
+	NodeRemoved = NodeExpired
 )
 
-// NodeEvent carries a single node change notification.
+// NodeEvent carries a single operational discovery notification.
 type NodeEvent struct {
-	Type    NodeEventType
-	NodeID  string   // stable unique identifier for this node
-	Address string   // "host:port" suitable for grpc.Dial
-	Tasks   []string // task names this node supports (e.g. "semantic_image_embed", "ocr")
+	Type     NodeEventType
+	Identity NodeIdentity
+	Resolved ResolvedNode
+
+	NodeID    string            // stable unique identifier; deprecated alias for Identity.Key()
+	Address   string            // first "host:port" candidate; deprecated convenience field
+	Addresses []string          // candidate "host:port" values suitable for grpc.Dial
+	Tasks     []string          // lightweight task hints from TXT / push payload
+	Txt       map[string]string // TXT key/value records
+	Err       error             // set when Type is NodeResolveFailed
+
+	// ExplicitRemove is true when the producer knows the node should be
+	// removed, such as a Gateway "removed" event. mDNS TTL expiry should leave
+	// this false because stale DNS-SD records are not liveness proof.
+	ExplicitRemove bool
 }
 
 // NodeResolver is the single discovery abstraction consumed by the gRPC Pool.
 //
 // Implementations:
-//   - MDNSResolver: watches zeroconf mDNS AddService/RemoveService events.
+//   - MDNSResolver: watches and resolves zeroconf mDNS service records.
 //   - PushResolver: subscribes to a Gateway WebSocket for node events.
 type NodeResolver interface {
-	// Watch returns a channel that emits NodeEvent values as nodes come and go.
+	// Watch returns a channel that emits operational discovery events.
 	// The channel is closed when ctx is cancelled or the backend stops.
-	// Implementations must send a full snapshot of current nodes as a batch of
-	// NodeAdded events before sending incremental changes.
 	Watch(ctx context.Context) (<-chan NodeEvent, error)
 }

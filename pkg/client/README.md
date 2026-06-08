@@ -125,11 +125,14 @@ Priority: mDNS > HubURL. At least one must be configured.
 
 ## Pool Behavior
 
-- **NodeAdded** → dials gRPC with KeepAlive (10s interval, 3s timeout), adds to healthy set
-- **NodeRemoved** → closes connection, removes from pool
-- **connectivity.Ready** → moves to healthy subset
-- **connectivity.TransientFailure/Shutdown** → moves to unhealthy subset
-- **Inference failure** → `MarkUnhealthy()` immediately removes from healthy set
+- **NodeDiscovered** → caches resolved address candidates, dials gRPC, fetches capabilities, then marks ready
+- **NodeExpired** → marks the discovery record stale but keeps an existing operational session unless removal is explicit
+- **Explicit remove** → closes connection and removes the node from the pool
+- **connectivity.Ready** → clears degradation state and moves to healthy subset
+- **connectivity.TransientFailure/Shutdown** → enters temporary cooldown
+- **Inference request/application errors** → do not affect node health
+- **Inference connection errors** → count as hard failures; after 3 consecutive failures the node enters cooldown
+- **Cooldown** → starts at 10s, doubles up to 2m, then the node may be picked again as a probe when no healthy node is available
 
 ## API Reference
 

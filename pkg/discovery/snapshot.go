@@ -27,14 +27,13 @@ func CloneNode(node *NodeInfo) *NodeInfo {
 	defer node.mu.RUnlock()
 
 	out := &NodeInfo{
-		ID:       node.ID,
-		Name:     node.Name,
-		Address:  node.Address,
-		Status:   node.Status,
-		Version:  node.Version,
-		Runtime:  node.Runtime,
-		LastSeen: node.LastSeen,
-		Weight:   node.Weight,
+		ID:           node.ID,
+		Address:      node.Address,
+		Status:       node.Status,
+		Availability: node.Availability,
+		Version:      node.Version,
+		Runtime:      node.Runtime,
+		LastSeen:     node.LastSeen,
 	}
 
 	if node.Metadata != nil {
@@ -57,16 +56,6 @@ func CloneNode(node *NodeInfo) *NodeInfo {
 
 	out.Tasks = CloneIOTasks(node.Tasks)
 	out.Capabilities = CloneCapabilities(node.Capabilities)
-
-	if node.Load != nil {
-		loadCopy := *node.Load
-		out.Load = &loadCopy
-	}
-
-	if node.Stats != nil {
-		statsCopy := *node.Stats
-		out.Stats = &statsCopy
-	}
 
 	out.connections = atomic.LoadInt64(&node.connections)
 	return out

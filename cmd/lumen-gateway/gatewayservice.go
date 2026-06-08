@@ -400,7 +400,7 @@ func (s *GatewayService) GetNodes() []FrontendNodeInfo {
 
 		res = append(res, FrontendNodeInfo{
 			ID:      node.ID,
-			Name:    node.Name,
+			Name:    node.ID,
 			Address: node.Address,
 			Status:  string(node.Status),
 			Tasks:   tasks,
@@ -478,7 +478,7 @@ func (s *GatewayService) GetTasks() map[string]interface{} {
 				InputMimes:  task.InputMimes,
 				OutputMimes: task.OutputMimes,
 				NodeID:      node.ID,
-				NodeName:    node.Name,
+				NodeName:    node.ID,
 			}
 
 			serviceName := "unknown"

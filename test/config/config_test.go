@@ -21,6 +21,26 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected service_type '_lumen._tcp', got '%s'", config.Discovery.ServiceType)
 	}
 
+	if config.Discovery.DeploymentID != "local" {
+		t.Errorf("Expected deployment_id 'local', got '%s'", config.Discovery.DeploymentID)
+	}
+
+	if config.Discovery.ResolveTimeout != 10*time.Second {
+		t.Errorf("Expected resolve_timeout 10s, got %s", config.Discovery.ResolveTimeout)
+	}
+
+	if config.Discovery.ConnectTimeout != 10*time.Second {
+		t.Errorf("Expected connect_timeout 10s, got %s", config.Discovery.ConnectTimeout)
+	}
+
+	if config.Discovery.RediscoveryBackoffMin != 10*time.Second {
+		t.Errorf("Expected rediscovery_backoff_min 10s, got %s", config.Discovery.RediscoveryBackoffMin)
+	}
+
+	if config.Discovery.RediscoveryBackoffMax != 2*time.Minute {
+		t.Errorf("Expected rediscovery_backoff_max 2m, got %s", config.Discovery.RediscoveryBackoffMax)
+	}
+
 	if config.Server.REST.Port != 5866 {
 		t.Errorf("Expected REST port 5866, got %d", config.Server.REST.Port)
 	}
@@ -112,6 +132,11 @@ func TestConfigValidation(t *testing.T) {
 func TestLoadFromEnv(t *testing.T) {
 	// 设置环境变量
 	os.Setenv("LUMEN_DISCOVERY_ENABLED", "false")
+	os.Setenv("LUMEN_DISCOVERY_DEPLOYMENT_ID", "lab")
+	os.Setenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT", "3s")
+	os.Setenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT", "4s")
+	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN", "5s")
+	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX", "30s")
 	os.Setenv("LUMEN_REST_HOST", "127.0.0.1")
 	os.Setenv("LUMEN_REST_PORT", "9090")
 	os.Setenv("LUMEN_LOG_LEVEL", "debug")
@@ -120,6 +145,11 @@ func TestLoadFromEnv(t *testing.T) {
 	defer func() {
 		// 清理环境变量
 		os.Unsetenv("LUMEN_DISCOVERY_ENABLED")
+		os.Unsetenv("LUMEN_DISCOVERY_DEPLOYMENT_ID")
+		os.Unsetenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT")
+		os.Unsetenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT")
+		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN")
+		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX")
 		os.Unsetenv("LUMEN_REST_HOST")
 		os.Unsetenv("LUMEN_REST_PORT")
 		os.Unsetenv("LUMEN_LOG_LEVEL")
@@ -134,6 +164,26 @@ func TestLoadFromEnv(t *testing.T) {
 
 	if config.Discovery.Enabled {
 		t.Error("Expected discovery to be disabled from env")
+	}
+
+	if config.Discovery.DeploymentID != "lab" {
+		t.Errorf("Expected deployment_id 'lab', got '%s'", config.Discovery.DeploymentID)
+	}
+
+	if config.Discovery.ResolveTimeout != 3*time.Second {
+		t.Errorf("Expected resolve_timeout 3s, got %s", config.Discovery.ResolveTimeout)
+	}
+
+	if config.Discovery.ConnectTimeout != 4*time.Second {
+		t.Errorf("Expected connect_timeout 4s, got %s", config.Discovery.ConnectTimeout)
+	}
+
+	if config.Discovery.RediscoveryBackoffMin != 5*time.Second {
+		t.Errorf("Expected rediscovery_backoff_min 5s, got %s", config.Discovery.RediscoveryBackoffMin)
+	}
+
+	if config.Discovery.RediscoveryBackoffMax != 30*time.Second {
+		t.Errorf("Expected rediscovery_backoff_max 30s, got %s", config.Discovery.RediscoveryBackoffMax)
 	}
 
 	if config.Server.REST.Host != "127.0.0.1" {
