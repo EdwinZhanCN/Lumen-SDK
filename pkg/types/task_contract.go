@@ -53,18 +53,18 @@ func (b *InferRequestBuilder) WithPayload(payload []byte, mime string) *InferReq
 	return b
 }
 
-func (b *InferRequestBuilder) ForSemanticTextEmbed(text string, service string) *InferRequestBuilder {
+func (b *InferRequestBuilder) ForSemanticTextEmbed(text string) *InferRequestBuilder {
 	b.req.Task = TaskSemanticTextEmbed
 	b.req.Payload = []byte(text)
 	b.req.PayloadMime = "text/plain"
-	return b.WithService(service)
+	return b
 }
 
-func (b *InferRequestBuilder) ForSemanticImageEmbed(payload []byte, mime string, service string) *InferRequestBuilder {
+func (b *InferRequestBuilder) ForSemanticImageEmbed(payload []byte, mime string) *InferRequestBuilder {
 	b.req.Task = TaskSemanticImageEmbed
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	return b.WithService(service)
+	return b
 }
 
 func (b *InferRequestBuilder) ForSemanticImageTensor(payload []byte, service string, dtype string) *InferRequestBuilder {
@@ -113,7 +113,7 @@ func (b *InferRequestBuilder) ForOCRRaw(payload []byte, mime string) *InferReque
 	b.req.Task = TaskOCR
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	return b.WithService(ServiceOCR)
+	return b
 }
 
 func (b *InferRequestBuilder) ForOCRTensor(payload []byte, dtype string, h, w int64, sourceWidth, sourceHeight int) *InferRequestBuilder {
@@ -134,7 +134,7 @@ func (b *InferRequestBuilder) ForFaceRecognitionRaw(payload []byte, mime string)
 	b.req.Task = TaskFaceRecognition
 	b.req.Payload = payload
 	b.req.PayloadMime = strings.TrimSpace(mime)
-	return b.WithService(ServiceFace)
+	return b
 }
 
 func (b *InferRequestBuilder) ForFaceRecognitionTensor(payload []byte, dtype string, h, w int64, sourceWidth, sourceHeight int, scale, padX, padY float64) *InferRequestBuilder {

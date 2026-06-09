@@ -16,8 +16,8 @@ import (
 //
 // Users build the request with flags:
 //
-//	--service        (required) : service name written to meta.service, e.g. "bioclip"
-//	--task                      : optional task/model id
+//	--task           (required) : task name, e.g. "semantic_image_embed", "ocr"
+//	--service                   : optional service hint written to meta.service, e.g. "clip", "siglip"
 //	--payload-file              : path to a binary file to use as payload (recommended for images/audio)
 //	--payload-b64               : base64-encoded payload string (alternative to file)
 //	--meta                      : JSON object string merged into InferRequest meta
@@ -37,7 +37,7 @@ Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_face
 
 func init() {
 	// Request flags
-	InferCmd.Flags().String("service", "", "Service name written to meta.service (required). E.g. bioclip, clip, siglip, ocr, face")
+	InferCmd.Flags().String("service", "", "Optional service hint written to meta.service. E.g. bioclip, clip, siglip, ocr, face")
 	InferCmd.Flags().String("task", "", "Lumen Hub task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
 	InferCmd.Flags().String("payload-mime", "application/octet-stream", "Payload MIME type, e.g. text/plain, image/jpeg, application/octet-stream")
 	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")
@@ -46,8 +46,8 @@ func init() {
 	InferCmd.Flags().String("correlation-id", "", "Optional correlation id for tracing")
 	InferCmd.Flags().String("output", "table", "Output format: json|yaml|table")
 
-	// Make service required (user must specify)
-	_ = InferCmd.MarkFlagRequired("service")
+	// task is now the primary routing key; service is an optional hint.
+	_ = InferCmd.MarkFlagRequired("task")
 }
 
 // runInfer builds a rest.RESTInferRequest from flags and sends it to the daemon.
@@ -99,7 +99,9 @@ func runInfer(cmd *cobra.Command, _ []string) error {
 	} else {
 		meta = map[string]string{}
 	}
-	meta["service"] = service
+	if service != "" {
+		meta["service"] = service
+	}
 
 	req := &rest.RESTInferRequest{
 		Task:          task,

@@ -82,9 +82,9 @@ func testEmbedding(ctx context.Context, lumenClient *client.LumenClient, content
 			fmt.Printf("Failed to create image embedding request: %v\n", err)
 			return
 		}
-		builder.ForSemanticImageEmbed(embeddingReq.Payload, embeddingReq.PayloadMime, types.ServiceCLIP)
+		builder.ForSemanticImageEmbed(embeddingReq.Payload, embeddingReq.PayloadMime).WithService(types.ServiceCLIP)
 	} else {
-		builder.ForSemanticTextEmbed(string(payload), types.ServiceCLIP)
+		builder.ForSemanticTextEmbed(string(payload)).WithService(types.ServiceCLIP)
 	}
 	inferReq := builder.Build()
 

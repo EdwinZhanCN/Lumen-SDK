@@ -16,7 +16,7 @@ func TestTaskContractRawBuilders(t *testing.T) {
 		t.Fatalf("ValidateTaskRequest(bioclip) error = %v", err)
 	}
 
-	textReq := types.NewInferRequest("").ForSemanticTextEmbed("a cat", types.ServiceCLIP).Build()
+	textReq := types.NewInferRequest("").ForSemanticTextEmbed("a cat").WithService(types.ServiceCLIP).Build()
 	if textReq.Task != types.TaskSemanticTextEmbed || textReq.PayloadMime != "text/plain" || textReq.Meta[types.MetaService] != types.ServiceCLIP {
 		t.Fatalf("unexpected text request: %+v", textReq)
 	}
@@ -24,7 +24,7 @@ func TestTaskContractRawBuilders(t *testing.T) {
 		t.Fatalf("ValidateTaskRequest(text) error = %v", err)
 	}
 
-	imageReq := types.NewInferRequest("").ForSemanticImageEmbed([]byte("fake"), "image/avif", types.ServiceSigLIP).Build()
+	imageReq := types.NewInferRequest("").ForSemanticImageEmbed([]byte("fake"), "image/avif").WithService(types.ServiceSigLIP).Build()
 	if imageReq.Task != types.TaskSemanticImageEmbed || imageReq.PayloadMime != "image/avif" || imageReq.Meta[types.MetaService] != types.ServiceSigLIP {
 		t.Fatalf("unexpected image request: %+v", imageReq)
 	}
