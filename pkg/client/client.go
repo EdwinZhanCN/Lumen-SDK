@@ -129,14 +129,41 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 }
 
 // Start begins node discovery and connection management.
+// It blocks until at least one node has reported its capabilities,
+// or until ctx is cancelled / the connect timeout elapses.
 func (c *LumenClient) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	_, c.cancel = context.WithCancel(ctx)
 
+	ready := make(chan struct{}, 1)
+	c.pool.OnNodesChanged(func(nodes []*discovery.NodeInfo) {
+		for _, n := range nodes {
+			if n.IsActive() && len(n.Tasks) > 0 {
+				select {
+				case ready <- struct{}{}:
+				default:
+				}
+				return
+			}
+		}
+	})
+
 	if err := c.pool.Connect(c.resolver); err != nil {
 		return fmt.Errorf("pool connect: %w", err)
+	}
+
+	timeout := c.config.Discovery.ConnectTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(timeout):
+		c.logger.Warn("timed out waiting for node capabilities, continuing anyway")
 	}
 
 	c.logger.Info("lumen client started")
@@ -155,6 +182,8 @@ func (c *LumenClient) Infer(ctx context.Context, req *pb.InferRequest) (*pb.Infe
 	if err := sdktypes.ValidateTaskRequest(req); err != nil {
 		return nil, err
 	}
+
+	c.resolveService(req)
 
 	start := time.Now()
 	c.totalReqs.Add(1)
@@ -389,6 +418,23 @@ func (c *LumenClient) PoolStats() PoolStats {
 // WatchNodes registers a callback that fires whenever the node list changes.
 func (c *LumenClient) WatchNodes(cb func([]*discovery.NodeInfo)) {
 	c.pool.OnNodesChanged(cb)
+}
+
+// resolveService auto-fills req.Meta["service"] from node capabilities
+// when the caller didn't specify one and the task maps to a single service.
+func (c *LumenClient) resolveService(req *pb.InferRequest) {
+	if sdktypes.ServiceFromMeta(req.Meta) != "" {
+		return
+	}
+	for _, node := range c.pool.NodeInfos() {
+		if services := node.MatchingServices(req.Task); len(services) == 1 {
+			if req.Meta == nil {
+				req.Meta = make(map[string]string)
+			}
+			req.Meta[sdktypes.MetaService] = services[0]
+			return
+		}
+	}
 }
 
 // Close stops discovery and closes all connections.

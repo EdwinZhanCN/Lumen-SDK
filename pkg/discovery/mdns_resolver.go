@@ -123,10 +123,11 @@ func (r *MDNSResolver) runQuery(ctx context.Context, ch chan<- NodeEvent, known 
 
 	entries := make(chan *mdns.ServiceEntry, 16)
 	params := &mdns.QueryParam{
-		Service: r.serviceType,
-		Domain:  r.domain,
-		Timeout: r.queryTimeout,
-		Entries: entries,
+		Service:     r.serviceType,
+		Domain:      r.domain,
+		Timeout:     r.queryTimeout,
+		Entries:     entries,
+		DisableIPv6: true,
 	}
 
 	doneCh := make(chan struct{})

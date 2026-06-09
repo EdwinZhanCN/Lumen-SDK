@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
@@ -12,11 +13,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Usage: OCR_IMAGE=document.jpg go run main.go
+// Usage: EMBED_IMAGE=photo.jpg go run main.go
 func main() {
-	imagePath := os.Getenv("OCR_IMAGE")
+	imagePath := os.Getenv("EMBED_IMAGE")
 	if imagePath == "" {
-		fmt.Println("Usage: OCR_IMAGE=document.jpg go run main.go")
+		fmt.Println("Usage: EMBED_IMAGE=photo.jpg go run main.go")
 		os.Exit(1)
 	}
 
@@ -25,7 +26,7 @@ func main() {
 		log.Fatalf("Failed to read %s: %v", imagePath, err)
 	}
 
-	ocrReq, err := types.NewOCRRequest(imageData)
+	embReq, err := types.NewEmbeddingRequest(imageData)
 	if err != nil {
 		log.Fatalf("Invalid image: %v", err)
 	}
@@ -44,9 +45,9 @@ func main() {
 		log.Fatalf("Failed to start client: %v", err)
 	}
 
-	req := types.NewInferRequest(types.TaskOCR).
-		WithCorrelationID("example_ocr").
-		ForOCRRaw(ocrReq.Payload, ocrReq.PayloadMime).
+	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
+		WithCorrelationID("example_image_embed").
+		ForSemanticImageEmbed(embReq.Payload, embReq.PayloadMime).
 		Build()
 
 	resp, err := lumen.Infer(ctx, req)
@@ -54,15 +55,23 @@ func main() {
 		log.Fatalf("Infer failed: %v", err)
 	}
 
-	ocrResp, err := types.ParseInferResponse(resp).AsOCRResponse()
+	embedding, err := types.ParseInferResponse(resp).AsEmbeddingResponse()
 	if err != nil {
 		log.Fatalf("Parse failed: %v\nRaw: %s", err, resp.Result)
 	}
 
-	fmt.Printf("Image: %s (%s, %d bytes)\n", imagePath, ocrReq.PayloadMime, len(imageData))
-	fmt.Printf("Model: %s\n", ocrResp.ModelID)
-	fmt.Printf("Detected %d text regions:\n", ocrResp.Count)
-	for i, item := range ocrResp.Items {
-		fmt.Printf("  %d. [%.0f%%] \"%s\"  box=%v\n", i+1, item.Confidence*100, item.Text, item.Box)
+	fmt.Printf("Image:      %s (%s, %d bytes)\n", imagePath, embReq.PayloadMime, len(imageData))
+	fmt.Printf("Model:      %s\n", embedding.ModelID)
+	fmt.Printf("Dimensions: %d\n", embedding.DimValue())
+	fmt.Printf("Magnitude:  %.4f\n", embedding.Magnitude())
+
+	n := 5
+	if len(embedding.Vector) < n {
+		n = len(embedding.Vector)
 	}
+	parts := make([]string, n)
+	for i := 0; i < n; i++ {
+		parts[i] = fmt.Sprintf("%.4f", embedding.Vector[i])
+	}
+	fmt.Printf("Vector (first %d): [%s]\n", n, strings.Join(parts, ", "))
 }

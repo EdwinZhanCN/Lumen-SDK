@@ -222,10 +222,8 @@ func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.Sub
 		scs.cooldownUntil = time.Time{}
 		scs.cooldown = 0
 		addr := scs.addr.Addr
-		lb.syncRegistryLocked()
-		lb.rebuildPickerLocked()
 		lb.mu.Unlock()
-		go lb.fetchCapabilitiesForNode(key, addr)
+		lb.fetchCapabilitiesForNode(key, addr)
 		return
 	}
 
