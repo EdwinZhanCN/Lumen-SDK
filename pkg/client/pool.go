@@ -277,3 +277,27 @@ func tasksToIOTasks(names []string) []*pb.IOTask {
 	}
 	return out
 }
+
+func tasksToIOTasksFromCapabilities(caps []*pb.Capability, fallbackNames []string) []*pb.IOTask {
+	seen := make(map[string]struct{})
+	var out []*pb.IOTask
+	for _, cap := range caps {
+		for _, task := range cap.GetTasks() {
+			if task.GetName() == "" {
+				continue
+			}
+			if _, ok := seen[task.GetName()]; ok {
+				continue
+			}
+			seen[task.GetName()] = struct{}{}
+			out = append(out, task)
+		}
+	}
+	for _, task := range tasksToIOTasks(fallbackNames) {
+		if _, ok := seen[task.GetName()]; ok {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out
+}

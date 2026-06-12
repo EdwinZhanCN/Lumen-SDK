@@ -53,15 +53,15 @@ type nodeRegistry struct {
 }
 
 type registeredNode struct {
-	identity     discovery.NodeIdentity
-	addr         string
-	state        connectivity.State
-	capabilities []*pb.Capability
-	tasks        []string
-	hardFailures int
+	identity      discovery.NodeIdentity
+	addr          string
+	state         connectivity.State
+	capabilities  []*pb.Capability
+	tasks         []string
+	hardFailures  int
 	cooldownUntil time.Time
 	cooldown      time.Duration
-	txt          map[string]string
+	txt           map[string]string
 }
 
 func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
@@ -78,7 +78,7 @@ func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
 			Availability: availability,
 			Metadata:     buildCapabilityMetadata(rn.capabilities),
 			Models:       buildModelInfos(rn.capabilities),
-			Tasks:        tasksToIOTasks(rn.tasks),
+			Tasks:        tasksToIOTasksFromCapabilities(rn.capabilities, rn.tasks),
 			Capabilities: discovery.CloneCapabilities(rn.capabilities),
 			Version:      rn.txt["v"],
 			Runtime:      rn.txt["runtime"],

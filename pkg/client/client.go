@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -381,6 +382,29 @@ func (c *LumenClient) GetConfig() *config.Config {
 // GetNodes returns summary descriptors for all pool connections.
 func (c *LumenClient) GetNodes() []*discovery.NodeInfo {
 	return c.pool.NodeInfos()
+}
+
+func (c *LumenClient) FindTaskContract(taskName string) (sdktypes.TaskContract, string, bool) {
+	taskName = strings.TrimSpace(taskName)
+	if taskName == "" {
+		return sdktypes.TaskContract{}, "", false
+	}
+	for _, node := range c.pool.NodeInfos() {
+		if node == nil || !node.IsActive() {
+			continue
+		}
+		for _, capability := range node.Capabilities {
+			if capability == nil {
+				continue
+			}
+			for _, task := range capability.GetTasks() {
+				if task.GetName() == taskName {
+					return sdktypes.NewTaskContract(task), capability.GetServiceName(), true
+				}
+			}
+		}
+	}
+	return sdktypes.TaskContract{}, "", false
 }
 
 // GetMetrics returns real metrics from the current process since start.

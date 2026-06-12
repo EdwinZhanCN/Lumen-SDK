@@ -11,6 +11,7 @@ This guide covers everything you need to know about developing the Lumen SDK pro
 - [Git Workflow](#git-workflow)
 - [Development Environment](#development-environment)
 - [Testing](#testing)
+- [Performance Benchmark Datasets](#performance-benchmark-datasets)
 - [Build & Release Process](#build--release-process)
 - [Debugging](#debugging)
 - [Contributing Guidelines](#contributing-guidelines)
@@ -77,6 +78,10 @@ lumen-sdk/
 ├── Makefile                     # Build system
 └── README.md                    # Project overview
 ```
+
+## Performance Benchmark Datasets
+
+Performance benchmark image datasets are prepared outside the repository. See [Performance Benchmark Dataset Setup](./performance-benchmark-data.md) for the reproducible COCO/CUB download, sampling, and mixed-workload dataset layout.
 
 ## 🔧 Makefile Usage
 

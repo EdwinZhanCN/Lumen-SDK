@@ -24,10 +24,13 @@ const (
 	ServiceOCR     = "ocr"
 	ServiceFace    = "face"
 
-	PreprocessCLIPImage      = "clip_image_preprocess_v1"
-	PreprocessSigLIPImage    = "siglip_image_preprocess_v1"
-	PreprocessPPOCRDetection = "ppocr_det_v1"
-	PreprocessInsightFaceDet = "insightface_det_v1"
+	PreprocessBioCLIP224Image               = "bioclip2_224_image_v1"
+	PreprocessSigLIP2BasePatch16_224Image   = "siglip2_base_patch16_224_image_v1"
+	PreprocessSigLIP2SO400MPatch14_384Image = "siglip2_so400m_patch14_384_image_v1"
+	PreprocessCLIPImage                     = PreprocessBioCLIP224Image
+	PreprocessSigLIPImage                   = PreprocessSigLIP2BasePatch16_224Image
+	PreprocessPPOCRDetection                = "ppocr_det_v1"
+	PreprocessInsightFaceDet                = "insightface_det_v1"
 
 	MetaService        = "service"
 	MetaTopK           = "top_k"
@@ -68,9 +71,9 @@ func (b *InferRequestBuilder) ForSemanticImageEmbed(payload []byte, mime string)
 }
 
 func (b *InferRequestBuilder) ForSemanticImageTensor(payload []byte, service string, dtype string) *InferRequestBuilder {
-	preprocessID := PreprocessCLIPImage
-	if service == ServiceSigLIP {
-		preprocessID = PreprocessSigLIPImage
+	preprocessID := PreprocessSigLIPImage
+	if strings.TrimSpace(service) == "" {
+		service = ServiceSigLIP
 	}
 	b.ForTensorInput(payload, DefaultTensorMIME, TensorDescriptor{
 		DType:          dtype,
@@ -184,7 +187,7 @@ func ValidateTaskRequest(req *pb.InferRequest) error {
 		}
 	case TaskSemanticImageEmbed:
 		if isTensor {
-			return validateImageTensorTask(req, []string{PreprocessCLIPImage, PreprocessSigLIPImage}, true)
+			return validateImageTensorTask(req, []string{PreprocessSigLIP2BasePatch16_224Image, PreprocessSigLIP2SO400MPatch14_384Image}, true)
 		}
 		return validateRawImageMIME(mime)
 	case TaskBioCLIPClassify:
@@ -192,7 +195,7 @@ func ValidateTaskRequest(req *pb.InferRequest) error {
 			return fmt.Errorf("%s requires service %q", TaskBioCLIPClassify, ServiceBioCLIP)
 		}
 		if isTensor {
-			return validateImageTensorTask(req, []string{PreprocessCLIPImage}, true)
+			return validateImageTensorTask(req, []string{PreprocessBioCLIP224Image}, true)
 		}
 		return validateRawImageMIME(mime)
 	case TaskOCR:
@@ -267,22 +270,35 @@ func validateImageTensorTask(req *pb.InferRequest, preprocessIDs []string, allow
 		return err
 	}
 	desc, _, _ := ParseTensorDescriptor(req.Meta)
-	if len(desc.Shape) != 4 || desc.Shape[1] != 3 || desc.Shape[2] != 224 || desc.Shape[3] != 224 {
-		return fmt.Errorf("%s must be [N,3,224,224]", MetaTensorShape)
+	if err := validateImageTensorShape(desc); err != nil {
+		return err
 	}
 	service := ServiceFromMeta(req.Meta)
 	switch desc.PreprocessID {
-	case PreprocessCLIPImage:
-		requiredService := ServiceCLIP
-		if req.Task == TaskBioCLIPClassify {
-			requiredService = ServiceBioCLIP
+	case PreprocessBioCLIP224Image:
+		if service != "" && service != ServiceBioCLIP {
+			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, ServiceBioCLIP, PreprocessBioCLIP224Image)
 		}
-		if service != "" && service != requiredService {
-			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, requiredService, PreprocessCLIPImage)
-		}
-	case PreprocessSigLIPImage:
+	case PreprocessSigLIP2BasePatch16_224Image, PreprocessSigLIP2SO400MPatch14_384Image:
 		if service != "" && service != ServiceSigLIP {
-			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, ServiceSigLIP, PreprocessSigLIPImage)
+			return fmt.Errorf("%s requires service %q for %s", MetaPreprocessID, ServiceSigLIP, desc.PreprocessID)
+		}
+	}
+	return nil
+}
+
+func validateImageTensorShape(desc *TensorDescriptor) error {
+	if len(desc.Shape) != 4 || desc.Shape[1] != 3 {
+		return fmt.Errorf("%s must be [N,3,H,W]", MetaTensorShape)
+	}
+	switch desc.PreprocessID {
+	case PreprocessSigLIP2SO400MPatch14_384Image:
+		if desc.Shape[2] != 384 || desc.Shape[3] != 384 {
+			return fmt.Errorf("%s must be [N,3,384,384] for %s", MetaTensorShape, desc.PreprocessID)
+		}
+	default:
+		if desc.Shape[2] != 224 || desc.Shape[3] != 224 {
+			return fmt.Errorf("%s must be [N,3,224,224] for %s", MetaTensorShape, desc.PreprocessID)
 		}
 	}
 	return nil

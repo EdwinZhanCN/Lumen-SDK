@@ -141,13 +141,17 @@ func (x *Error) GetDetail() string {
 
 // ---- Structured task I/O description (for central routing and client negotiation) ----
 type IOTask struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                               // "embed","detect","ocr","asr","generate","tts",...
-	InputMimes    []string               `protobuf:"bytes,2,rep,name=input_mimes,json=inputMimes,proto3" json:"input_mimes,omitempty"`                                                 // Allow multiple input types: "image/jpeg","audio/pcm;rate=16000","application/json"
-	OutputMimes   []string               `protobuf:"bytes,3,rep,name=output_mimes,json=outputMimes,proto3" json:"output_mimes,omitempty"`                                              // Typical outputs: "application/json;schema=bbox_v1","audio/wav"
-	Limits        map[string]string      `protobuf:"bytes,4,rep,name=limits,proto3" json:"limits,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // e.g., max_hw=1024, max_batch=8, max_length=4096
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                               // "embed","detect","ocr","asr","generate","tts",...
+	InputMimes  []string               `protobuf:"bytes,2,rep,name=input_mimes,json=inputMimes,proto3" json:"input_mimes,omitempty"`                                                 // Allow multiple input types: "image/jpeg","audio/pcm;rate=16000","application/json"
+	OutputMimes []string               `protobuf:"bytes,3,rep,name=output_mimes,json=outputMimes,proto3" json:"output_mimes,omitempty"`                                              // Typical outputs: "application/json;schema=bbox_v1","audio/wav"
+	Limits      map[string]string      `protobuf:"bytes,4,rep,name=limits,proto3" json:"limits,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // e.g., max_hw=1024, max_batch=8, max_length=4096
+	// Empty means this task has no client-side tensor fast path.
+	TensorPreprocessId string `protobuf:"bytes,5,opt,name=tensor_preprocess_id,json=tensorPreprocessId,proto3" json:"tensor_preprocess_id,omitempty"`
+	// True means tensor requests for this task can be dynamically batched by the Hub.
+	TensorBatchingSupported bool `protobuf:"varint,6,opt,name=tensor_batching_supported,json=tensorBatchingSupported,proto3" json:"tensor_batching_supported,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *IOTask) Reset() {
@@ -208,18 +212,33 @@ func (x *IOTask) GetLimits() map[string]string {
 	return nil
 }
 
+func (x *IOTask) GetTensorPreprocessId() string {
+	if x != nil {
+		return x.TensorPreprocessId
+	}
+	return ""
+}
+
+func (x *IOTask) GetTensorBatchingSupported() bool {
+	if x != nil {
+		return x.TensorBatchingSupported
+	}
+	return false
+}
+
 // ---- Capability declaration (retrieve at startup or on demand) ----
 type Capability struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName    string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`                                            // "clip-embedder","ocr","llm","tts",...
-	ModelIds       []string               `protobuf:"bytes,2,rep,name=model_ids,json=modelIds,proto3" json:"model_ids,omitempty"`                                                     // Supported model IDs/versions
-	Runtime        string                 `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`                                                                       // "onnxrt-cuda","tensorrt","coreml","rknn","qnn","cpu"
-	MaxConcurrency uint32                 `protobuf:"varint,4,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`                                  // Suggested max concurrency
-	Precisions     []string               `protobuf:"bytes,5,rep,name=precisions,proto3" json:"precisions,omitempty"`                                                                 // ["fp32","fp16","int8"]
-	Extra          map[string]string      `protobuf:"bytes,6,rep,name=extra,proto3" json:"extra,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Resolution limits, ANE/NPU features, etc.
-	Tasks          []*IOTask              `protobuf:"bytes,7,rep,name=tasks,proto3" json:"tasks,omitempty"`                                                                           // Structured task capabilities (recommended)
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ServiceName     string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`                                            // "clip-embedder","ocr","llm","tts",...
+	ModelIds        []string               `protobuf:"bytes,2,rep,name=model_ids,json=modelIds,proto3" json:"model_ids,omitempty"`                                                     // Supported model IDs/versions
+	Runtime         string                 `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`                                                                       // "onnxrt-cuda","tensorrt","coreml","rknn","qnn","cpu"
+	MaxConcurrency  uint32                 `protobuf:"varint,4,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`                                  // Suggested max concurrency
+	Precisions      []string               `protobuf:"bytes,5,rep,name=precisions,proto3" json:"precisions,omitempty"`                                                                 // ["fp32","fp16","int8"]
+	Extra           map[string]string      `protobuf:"bytes,6,rep,name=extra,proto3" json:"extra,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Resolution limits, ANE/NPU features, etc.
+	Tasks           []*IOTask              `protobuf:"bytes,7,rep,name=tasks,proto3" json:"tasks,omitempty"`                                                                           // Structured task capabilities (recommended)
+	ProtocolVersion string                 `protobuf:"bytes,8,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`                                // Version of current protocol, should be semantic versioning. e.g., 1.0.0
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Capability) Reset() {
@@ -301,11 +320,18 @@ func (x *Capability) GetTasks() []*IOTask {
 	return nil
 }
 
+func (x *Capability) GetProtocolVersion() string {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ""
+}
+
 // ---- Inference request (inbound message of bidi stream) ----
 type InferRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`                                    // Trace/correlation
-	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "embed","clip_classify","detect","ocr","asr","generate","tts",...
+	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "embed","classify","detect","ocr","asr","generate","tts",...
 	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`                                                                     // Raw payload (binary or UTF-8 text)
 	Meta          map[string]string      `protobuf:"bytes,4,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Task-specific parameters: model_id, conf_thres, stop, etc.
 	// --- Added: input content type and chunking control ---
@@ -529,16 +555,18 @@ const file_proto_ml_service_proto_rawDesc = "" +
 	"\x05Error\x12-\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x19.home_native.v1.ErrorCodeR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xd7\x01\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xc5\x02\n" +
 	"\x06IOTask\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vinput_mimes\x18\x02 \x03(\tR\n" +
 	"inputMimes\x12!\n" +
 	"\foutput_mimes\x18\x03 \x03(\tR\voutputMimes\x12:\n" +
-	"\x06limits\x18\x04 \x03(\v2\".home_native.v1.IOTask.LimitsEntryR\x06limits\x1a9\n" +
+	"\x06limits\x18\x04 \x03(\v2\".home_native.v1.IOTask.LimitsEntryR\x06limits\x120\n" +
+	"\x14tensor_preprocess_id\x18\x05 \x01(\tR\x12tensorPreprocessId\x12:\n" +
+	"\x19tensor_batching_supported\x18\x06 \x01(\bR\x17tensorBatchingSupported\x1a9\n" +
 	"\vLimitsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd4\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xff\x02\n" +
 	"\n" +
 	"Capability\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1b\n" +
@@ -549,7 +577,8 @@ const file_proto_ml_service_proto_rawDesc = "" +
 	"precisions\x18\x05 \x03(\tR\n" +
 	"precisions\x12;\n" +
 	"\x05extra\x18\x06 \x03(\v2%.home_native.v1.Capability.ExtraEntryR\x05extra\x12,\n" +
-	"\x05tasks\x18\a \x03(\v2\x16.home_native.v1.IOTaskR\x05tasks\x1a8\n" +
+	"\x05tasks\x18\a \x03(\v2\x16.home_native.v1.IOTaskR\x05tasks\x12)\n" +
+	"\x10protocol_version\x18\b \x01(\tR\x0fprotocolVersion\x1a8\n" +
 	"\n" +
 	"ExtraEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

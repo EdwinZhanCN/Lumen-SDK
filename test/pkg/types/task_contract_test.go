@@ -106,7 +106,7 @@ func TestTaskContractRejectsInvalidInputs(t *testing.T) {
 
 func TestTensorBatchingKey(t *testing.T) {
 	req := types.NewInferRequest("").
-		ForSemanticImageTensor(make([]byte, 2*3*224*224*4), types.ServiceCLIP, "fp32").
+		ForSemanticImageTensor(make([]byte, 2*3*224*224*4), types.ServiceSigLIP, "fp32").
 		Build()
 	req.Meta[types.MetaTensorShape] = "[2,3,224,224]"
 	req.Payload = make([]byte, 2*3*224*224*4)
@@ -118,7 +118,7 @@ func TestTensorBatchingKey(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("TensorBatchingKey() = %q, %v, %v", key, ok, err)
 	}
-	if !strings.Contains(key, "clip|semantic_image_embed|") || !strings.Contains(key, "3,224,224") {
+	if !strings.Contains(key, "siglip|semantic_image_embed|") || !strings.Contains(key, "3,224,224") {
 		t.Fatalf("unexpected batching key: %s", key)
 	}
 }

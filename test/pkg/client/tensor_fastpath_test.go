@@ -43,8 +43,8 @@ func invalidTensorFastPathRequest() *pb.InferRequest {
 			DType:        "fp32",
 			Shape:        []int64{1, 3, 224, 224},
 			Layout:       "NCHW",
-			PreprocessID: types.PreprocessCLIPImage,
+			PreprocessID: types.PreprocessSigLIPImage,
 		}).
-		WithService(types.ServiceCLIP).
+		WithService(types.ServiceSigLIP).
 		Build()
 }
