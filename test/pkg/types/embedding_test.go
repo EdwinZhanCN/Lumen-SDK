@@ -1,7 +1,9 @@
 package types_test
 
 import (
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/types"
@@ -401,5 +403,49 @@ func TestNewEmbeddingRequestUnsupportedType(t *testing.T) {
 		if req.PayloadMime != "image/jpeg" {
 			t.Logf("Detected MIME type: %s", req.PayloadMime)
 		}
+	}
+}
+
+func TestEmbeddingV1AestheticScore(t *testing.T) {
+	// Present: parsed from an image embedding with an aesthetic head.
+	score := float32(6.4)
+	withScore := types.EmbeddingV1{
+		Vector:         []float32{0.1, 0.2},
+		Dim:            2,
+		ModelID:        "siglip2-base-patch16-224",
+		AestheticScore: &score,
+	}
+	if got, ok := withScore.AestheticScoreValue(); !ok || got != 6.4 {
+		t.Errorf("AestheticScoreValue() = (%v, %v), want (6.4, true)", got, ok)
+	}
+	// Carried through Normalize().
+	if got, ok := withScore.Normalize().AestheticScoreValue(); !ok || got != 6.4 {
+		t.Errorf("Normalize() dropped aesthetic score: (%v, %v)", got, ok)
+	}
+
+	// Absent: text embedding has no score.
+	noScore := types.EmbeddingV1{Vector: []float32{0.1, 0.2}, Dim: 2, ModelID: "m"}
+	if _, ok := noScore.AestheticScoreValue(); ok {
+		t.Error("AestheticScoreValue() reported present for an embedding without a score")
+	}
+}
+
+func TestEmbeddingV1AestheticScoreJSON(t *testing.T) {
+	// Round-trips from server JSON and is omitted when nil.
+	var withScore types.EmbeddingV1
+	if err := json.Unmarshal([]byte(`{"vector":[0.1],"dim":1,"model_id":"m","aesthetic_score":7.25}`), &withScore); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, ok := withScore.AestheticScoreValue(); !ok || got != 7.25 {
+		t.Errorf("parsed aesthetic_score = (%v, %v), want (7.25, true)", got, ok)
+	}
+
+	noScore := types.EmbeddingV1{Vector: []float32{0.1}, Dim: 1, ModelID: "m"}
+	b, err := json.Marshal(noScore)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "aesthetic_score") {
+		t.Errorf("nil aesthetic score should be omitted, got %s", b)
 	}
 }

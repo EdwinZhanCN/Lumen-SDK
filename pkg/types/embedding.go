@@ -39,6 +39,31 @@ type EmbeddingV1 struct {
 	Vector  []float32 `json:"vector" example:"[0.1, 0.2, 0.3]"`
 	Dim     int       `json:"dim" example:"3"`
 	ModelID string    `json:"model_id" example:"embedding_model_1"`
+
+	// AestheticScore is an optional aesthetic quality score (teacher-distilled,
+	// roughly 1–10) returned alongside an image embedding when the model ships an
+	// aesthetic head. It is nil for text embeddings and for image models without a
+	// head. Use AestheticScoreValue for a presence-checked read.
+	AestheticScore *float32 `json:"aesthetic_score,omitempty" example:"6.4"`
+}
+
+// AestheticScoreValue returns the aesthetic score and whether it was present.
+//
+// Returns:
+//   - float32: the score (0 when absent)
+//   - bool: true when the model provided an aesthetic score
+//
+// Example:
+//
+//	embedding, _ := types.ParseInferResponse(result).AsEmbeddingResponse()
+//	if score, ok := embedding.AestheticScoreValue(); ok {
+//	    fmt.Printf("aesthetic score: %.2f\n", score)
+//	}
+func (e EmbeddingV1) AestheticScoreValue() (float32, bool) {
+	if e.AestheticScore == nil {
+		return 0, false
+	}
+	return *e.AestheticScore, true
 }
 
 // DimValue returns the actual dimension of the embedding vector.
@@ -106,9 +131,10 @@ func (e EmbeddingV1) Normalize() EmbeddingV1 {
 	}
 
 	return EmbeddingV1{
-		Vector:  normalized,
-		Dim:     len(normalized),
-		ModelID: e.ModelID,
+		Vector:         normalized,
+		Dim:            len(normalized),
+		ModelID:        e.ModelID,
+		AestheticScore: e.AestheticScore,
 	}
 }
 
