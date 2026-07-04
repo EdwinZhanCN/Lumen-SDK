@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/internal"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 
 	"github.com/spf13/cobra"
@@ -23,7 +23,7 @@ var NodeCmd = &cobra.Command{
 var nodeListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all discovered nodes",
-	Long:  `List all nodes that have been discovered by the Lumen Hub.`,
+	Long:  `List all nodes that have been discovered by the Lumen Gateway.`,
 	RunE:  runNodeList,
 }
 
@@ -410,7 +410,7 @@ func runNodeStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get daemon health: %w", err)
 	}
 
-	fmt.Printf("Lumen Hub Status: %s\n", formatHealthStatus(healthResp))
+	fmt.Printf("Lumen Gateway Status: %s\n", formatHealthStatus(healthResp))
 
 	// Get node information
 	resp, err := client.GetNodes()

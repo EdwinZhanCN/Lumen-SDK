@@ -75,31 +75,31 @@ jobs:
                     EXT=".exe"
                   fi
 
-                  # Build lumenhubd with complete version info
+                  # Build lumengatewayd with complete version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildTime=$BUILD_TIME' -s -w" \
-                    -o "dist/lumenhubd${EXT}" \
-                    ./cmd/lumenhubd
+                    -o "dist/lumengatewayd${EXT}" \
+                    ./cmd/lumengatewayd
 
-                  # Build lumenhub with complete version info
+                  # Build lumengateway with complete version info
                   CGO_ENABLED=0 go build \
-                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.BuildTime=$BUILD_TIME' -s -w" \
-                    -o "dist/lumenhub${EXT}" \
-                    ./cmd/lumenhub
+                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$BUILD_TIME' -s -w" \
+                    -o "dist/lumengateway${EXT}" \
+                    ./cmd/lumengateway
 
             - name: Create archive
               run: |
                   cd dist
                   if [ "${{ matrix.goos }}" = "windows" ]; then
-                    7z a lumenhub-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip lumenhubd.exe lumenhub.exe
+                    7z a lumengateway-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip lumengatewayd.exe lumengateway.exe
                   else
-                    tar -czf lumenhub-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz lumenhubd lumenhub
+                    tar -czf lumengateway-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz lumengatewayd lumengateway
                   fi
 
             - uses: actions/upload-artifact@v4
               with:
-                  name: lumenhub-${{ matrix.goos }}-${{ matrix.goarch }}
-                  path: dist/lumenhub-*.*
+                  name: lumengateway-${{ matrix.goos }}-${{ matrix.goarch }}
+                  path: dist/lumengateway-*.*
 
     build-gateway-mac:
         name: Build macOS Gateway App
@@ -230,7 +230,7 @@ jobs:
                   tag_name: ${{ steps.version.outputs.VERSION }}
                   name: Release ${{ steps.version.outputs.VERSION }}
                   body: |
-                      # Lumen Hub ${{ steps.version.outputs.VERSION }}
+                      # Lumen Gateway ${{ steps.version.outputs.VERSION }}
 
                       ## 🖥️ Lumen Gateway (GUI)
 
@@ -250,30 +250,30 @@ jobs:
                       ### Download Binaries
                       ```bash
                       # Linux AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
-                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
+                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
 
                       # Linux ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
-                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
+                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
 
                       # macOS AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
-                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
-                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
-                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumenhubd /usr/local/bin/lumenhub 2>/dev/null || true
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
+                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumengatewayd /usr/local/bin/lumengateway 2>/dev/null || true
 
                       # macOS ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumenhub-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
-                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
-                      sudo install -m 0755 lumenhubd lumenhub /usr/local/bin/
-                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumenhubd /usr/local/bin/lumenhub 2>/dev/null || true
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
+                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumengatewayd /usr/local/bin/lumengateway 2>/dev/null || true
                       ```
 
                       macOS builds are currently unsigned/not notarized. If you download the archive with a browser or another tool that adds Gatekeeper quarantine, remove it before installing:
 
                       ```bash
-                      xattr -d com.apple.quarantine lumenhubd lumenhub 2>/dev/null || true
+                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
                       ```
 
                       ## 📋 Changes

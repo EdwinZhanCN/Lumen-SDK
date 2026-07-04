@@ -1,10 +1,10 @@
-# Lumen Hub CLI
+# Lumen Gateway CLI
 
-A powerful command-line tool for managing Lumen Hub daemons and interacting with distributed AI services.
+A powerful command-line tool for managing Lumen Gateway daemons and interacting with distributed AI services.
 
 ## Overview
 
-The `lumenhub` CLI provides a comprehensive interface to:
+The `lumengateway` CLI provides a comprehensive interface to:
 - Monitor and manage distributed AI nodes
 - Execute AI inference across multiple services
 - Check system health and performance metrics
@@ -14,37 +14,37 @@ The `lumenhub` CLI provides a comprehensive interface to:
 
 ```bash
 # Build from source
-go build -o lumenhub ./cmd/lumenhub
+go build -o lumengateway ./cmd/lumengateway
 
 # Or use the pre-built binary
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-$(uname -s)-$(uname -m) -o lumenhub
-chmod +x lumenhub
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-$(uname -s)-$(uname -m) -o lumengateway
+chmod +x lumengateway
 ```
 
 ## Quick Start
 
 1. **Start the daemon**:
    ```bash
-   lumenhubd --daemon --preset basic
+   lumengatewayd --daemon --preset basic
    ```
 
 2. **Check system status**:
    ```bash
-   lumenhub status
+   lumengateway status
    ```
 
 3. **List available nodes**:
    ```bash
-   lumenhub node list
+   lumengateway node list
    ```
 
 4. **Run inference**:
    ```bash
    # Text embedding
-   lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
+   lumengateway infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
 
    # Face recognition
-   lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file image.jpg
+   lumengateway infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file image.jpg
    ```
 
 ## Commands
@@ -54,14 +54,14 @@ chmod +x lumenhub
 Run AI inference requests against available services.
 
 ```bash
-lumenhub infer --service <service-name> [options]
+lumengateway infer --service <service-name> [options]
 ```
 
 **Required Flags:**
 - `--service <name>`: Service name written to `meta.service` (e.g., `clip`, `siglip`, `ppocr`, `insightface`)
 
 **Optional Flags:**
-- `--task <id>`: Lumen Hub task name, e.g. `semantic_text_embed`, `semantic_image_embed`, `bioclip_classify`, `ocr`, `face_recognition`
+- `--task <id>`: Lumen task name, e.g. `semantic_text_embed`, `semantic_image_embed`, `bioclip_classify`, `ocr`, `face_recognition`
 - `--payload-mime <mime>`: Payload MIME type
 - `--payload-file <path>`: Path to binary payload file (recommended for images/audio)
 - `--payload-b64 <string>`: Base64-encoded payload string
@@ -74,13 +74,13 @@ lumenhub infer --service <service-name> [options]
 ```bash
 # Text embedding
 printf "Hello world" > text.txt
-lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
+lumengateway infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt
 
 # BioCLIP classification
-lumenhub infer --service clip --task bioclip_classify --payload-mime image/jpeg --payload-file photo.jpg --meta '{"top_k":"10"}' --output json
+lumengateway infer --service clip --task bioclip_classify --payload-mime image/jpeg --payload-file photo.jpg --meta '{"top_k":"10"}' --output json
 
 # Face recognition
-lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg \
+lumengateway infer --service insightface --task face_recognition --payload-mime image/jpeg \
   --payload-file selfie.jpg \
   --correlation-id "user-photo-analysis-001"
 ```
@@ -95,7 +95,7 @@ Monitor and manage distributed AI nodes.
 List all discovered nodes with their status.
 
 ```bash
-lumenhub node list [--output table|json|yaml]
+lumengateway node list [--output table|json|yaml]
 ```
 
 **Output:**
@@ -109,7 +109,7 @@ node-def456         cpu-01    192.168.1.101:5001   🟢 active  1m45s       8
 Show detailed information about a specific node.
 
 ```bash
-lumenhub node info <node-id> [--output table|json|yaml]
+lumengateway node info <node-id> [--output table|json|yaml]
 ```
 
 **Output includes:**
@@ -124,10 +124,10 @@ Show real-time status of nodes.
 
 ```bash
 # Show all nodes status
-lumenhub node status
+lumengateway node status
 
 # Show specific node status
-lumenhub node status <node-id>
+lumengateway node status <node-id>
 ```
 
 **Features:**
@@ -140,7 +140,7 @@ lumenhub node status <node-id>
 Test connectivity and latency to a specific node.
 
 ```bash
-lumenhub node ping <node-id>
+lumengateway node ping <node-id>
 ```
 
 **Output:**
@@ -156,7 +156,7 @@ Latency: < 1s (estimated)
 Show comprehensive system status and health.
 
 ```bash
-lumenhub status [--nodes] [--metrics] [--health] [--output table|json|yaml]
+lumengateway status [--nodes] [--metrics] [--health] [--output table|json|yaml]
 ```
 
 **Flags:**
@@ -173,7 +173,7 @@ lumenhub status [--nodes] [--metrics] [--health] [--output table|json|yaml]
 
 ## Available AI Services
 
-The Lumen Hub supports various AI services that you can use with the `infer` command:
+The Lumen Gateway supports various AI services that you can use with the `infer` command:
 
 ### Text Services
 - `semantic_text_embed` via `clip` or `siglip`
@@ -187,10 +187,10 @@ The Lumen Hub supports various AI services that you can use with the `infer` com
 ### Generic Usage
 ```bash
 # List available services (you can discover this via node info)
-lumenhub node info <node-with-services>
+lumengateway node info <node-with-services>
 
 # Use any service
-lumenhub infer --service <service-name> --payload-file <data>
+lumengateway infer --service <service-name> --payload-file <data>
 ```
 
 ## Configuration
@@ -198,8 +198,8 @@ lumenhub infer --service <service-name> --payload-file <data>
 ### Environment Variables
 
 ```bash
-export LUMENHUB_HOST=localhost    # Daemon host (default: localhost)
-export LUMENHUB_PORT=5866         # Daemon port (default: 5866)
+export LUMENGATEWAY_HOST=localhost    # Daemon host (default: localhost)
+export LUMENGATEWAY_PORT=5866         # Daemon port (default: 5866)
 ```
 
 ### Global Flags
@@ -221,21 +221,21 @@ All commands support these global flags:
 Human-readable tables with headers and formatted output:
 
 ```bash
-lumenhub node list
+lumengateway node list
 ```
 
 ### JSON Format
 Machine-readable JSON for scripting:
 
 ```bash
-lumenhub node list --output json | jq '.nodes[] | select(.status == "active")'
+lumengateway node list --output json | jq '.nodes[] | select(.status == "active")'
 ```
 
 ### YAML Format
 YAML format for configuration files:
 
 ```bash
-lumenhub node status --output yaml > node_status.yaml
+lumengateway node status --output yaml > node_status.yaml
 ```
 
 ## Examples and Use Cases
@@ -245,7 +245,7 @@ lumenhub node status --output yaml > node_status.yaml
 # Process all images in a directory
 for img in *.jpg; do
   echo "Processing $img..."
-  lumenhub infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file "$img" --output json
+  lumengateway infer --service insightface --task face_recognition --payload-mime image/jpeg --payload-file "$img" --output json
 done
 ```
 
@@ -255,18 +255,18 @@ done
 chunk1="Hello world, how are you?"
 chunk2="Hi there, what's up?"
 
-echo "$chunk1" | base64 | xargs -I {} lumenhub infer --service embedding --payload-b64 {} --correlation-id "chunk-001"
-echo "$chunk2" | base64 | xargs -I {} lumenhub infer --service embedding --payload-b64 {} --correlation-id "chunk-002"
+echo "$chunk1" | base64 | xargs -I {} lumengateway infer --service embedding --payload-b64 {} --correlation-id "chunk-001"
+echo "$chunk2" | base64 | xargs -I {} lumengateway infer --service embedding --payload-b64 {} --correlation-id "chunk-002"
 ```
 
 ### 3. System Monitoring
 ```bash
 # Real-time node monitoring
-watch -n 5 'lumenhub node status'
+watch -n 5 'lumengateway node status'
 
 # Health check script
 #!/bin/bash
-health=$(lumenhub status --health --output json | jq -r '.success')
+health=$(lumengateway status --health --output json | jq -r '.success')
 if [ "$health" = "true" ]; then
   echo "✅ System healthy"
 else
@@ -278,9 +278,9 @@ fi
 ### 4. Load Balancing and Performance
 ```bash
 # Check node performance before making inference
-best_node=$(lumenhub node status --output json | jq -r '.nodes | sort_by(.stats.average_latency) | .[0].id')
+best_node=$(lumengateway node status --output json | jq -r '.nodes | sort_by(.stats.average_latency) | .[0].id')
 
-lumenhub infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt --meta '{"preferred_node":"'$best_node'"}'
+lumengateway infer --service clip --task semantic_text_embed --payload-mime text/plain --payload-file text.txt --meta '{"preferred_node":"'$best_node'"}'
 ```
 
 ## Troubleshooting
@@ -295,7 +295,7 @@ dial tcp [::1]:5866: connect: connection refused
 
 **Solution:** Ensure the daemon is running:
 ```bash
-lumenhubd --daemon --preset basic
+lumengatewayd --daemon --preset basic
 ```
 
 #### Node Not Found
@@ -305,7 +305,7 @@ Error: node 'invalid-node' not found
 
 **Solution:** Check available nodes:
 ```bash
-lumenhub node list
+lumengateway node list
 ```
 
 #### Service Not Available
@@ -315,7 +315,7 @@ Error: API error [SERVICE_NOT_FOUND]: Service 'unknown_service' not found
 
 **Solution:** Check available services:
 ```bash
-lumenhub node info <node-id>
+lumengateway node info <node-id>
 ```
 
 ### Debug Mode
@@ -323,8 +323,8 @@ lumenhub node info <node-id>
 Enable verbose output for debugging:
 
 ```bash
-lumenhub --verbose node status
-LUMENHUB_HOST=localhost LUMENHUB_PORT=5866 lumenhub --verbose infer --service embedding --payload-b64 "SGVsbG8="
+lumengateway --verbose node status
+LUMENGATEWAY_HOST=localhost LUMENGATEWAY_PORT=5866 lumengateway --verbose infer --service embedding --payload-b64 "SGVsbG8="
 ```
 
 ## Performance Tips
@@ -342,8 +342,8 @@ LUMENHUB_HOST=localhost LUMENHUB_PORT=5866 lumenhub --verbose infer --service em
 #!/bin/bash
 # health_check.sh - Check if cluster is healthy
 
-NODES=$(lumenhub node list --output json | jq -r '.data.nodes | length')
-ACTIVE=$(lumenhub node list --output json | jq -r '.data.nodes[] | select(.status == "active") | length')
+NODES=$(lumengateway node list --output json | jq -r '.data.nodes | length')
+ACTIVE=$(lumengateway node list --output json | jq -r '.data.nodes[] | select(.status == "active") | length')
 
 echo "Total nodes: $NODES"
 echo "Active nodes: $ACTIVE"
@@ -362,7 +362,7 @@ import subprocess
 import json
 
 def run_inference(service, payload_file, metadata=None):
-    cmd = ['lumenhub', 'infer', '--service', service, '--payload-file', payload_file]
+    cmd = ['lumengateway', 'infer', '--service', service, '--payload-file', payload_file]
     if metadata:
         cmd.extend(['--meta', json.dumps(metadata)])
 
@@ -382,4 +382,4 @@ print(result)
 
 ---
 
-**Note:** This CLI connects to a `lumenhubd` daemon. Make sure the daemon is running before using CLI commands.
+**Note:** This CLI connects to a `lumengatewayd` daemon. Make sure the daemon is running before using CLI commands.

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/internal"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +27,7 @@ import (
 // The command will POST a single `rest.RESTInferRequest` to the daemon's `/v1/infer` endpoint.
 var InferCmd = &cobra.Command{
 	Use:   "infer",
-	Short: "Run a generic inference request against a Lumen Hub daemon",
+	Short: "Run a generic inference request against a Lumen Gateway daemon",
 	Long: `Generic inference command. Build a RESTInferRequest using flags and send it to the daemon.
 You may provide payload as a file (--payload-file) or as a base64 string (--payload-b64).
 Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_faces":"10"}').`,
@@ -38,7 +38,7 @@ Metadata is provided as a JSON object string (e.g. '{"threshold":"0.5","max_face
 func init() {
 	// Request flags
 	InferCmd.Flags().String("service", "", "Optional service hint written to meta.service. E.g. bioclip, clip, siglip, ocr, face")
-	InferCmd.Flags().String("task", "", "Lumen Hub task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
+	InferCmd.Flags().String("task", "", "Lumen task name, e.g. semantic_text_embed, semantic_image_embed, bioclip_classify, ocr, face_recognition")
 	InferCmd.Flags().String("payload-mime", "application/octet-stream", "Payload MIME type, e.g. text/plain, image/jpeg, application/octet-stream")
 	InferCmd.Flags().String("payload-file", "", "Path to payload file (binary). If set, this takes precedence over --payload-b64")
 	InferCmd.Flags().String("payload-b64", "", "Base64-encoded payload string (alternative to file)")

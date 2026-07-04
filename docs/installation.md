@@ -15,30 +15,30 @@
 #### Linux
 ```bash
 # AMD64
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-linux-amd64.tar.gz | tar xz
-sudo mv lumenhubd lumenhub /usr/local/bin/
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-linux-amd64.tar.gz | tar xz
+sudo mv lumengatewayd lumengateway /usr/local/bin/
 
 # ARM64
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-linux-arm64.tar.gz | tar xz
-sudo mv lumenhubd lumenhub /usr/local/bin/
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-linux-arm64.tar.gz | tar xz
+sudo mv lumengatewayd lumengateway /usr/local/bin/
 ```
 
 #### macOS
 ```bash
 # Intel (AMD64)
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-darwin-amd64.tar.gz | tar xz
-sudo mv lumenhubd lumenhub /usr/local/bin/
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-darwin-amd64.tar.gz | tar xz
+sudo mv lumengatewayd lumengateway /usr/local/bin/
 
 # Apple Silicon (ARM64)
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-darwin-arm64.tar.gz | tar xz
-sudo mv lumenhubd lumenhub /usr/local/bin/
+curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-darwin-arm64.tar.gz | tar xz
+sudo mv lumengatewayd lumengateway /usr/local/bin/
 ```
 
 #### Windows
 ```powershell
 # Download and extract
-Invoke-WebRequest -Uri "https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumenhub-latest-windows-amd64.zip" -OutFile "lumenhub.zip"
-Expand-Archive -Path "lumenhub.zip" -DestinationPath "."
+Invoke-WebRequest -Uri "https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-windows-amd64.zip" -OutFile "lumengateway.zip"
+Expand-Archive -Path "lumengateway.zip" -DestinationPath "."
 # Move to PATH or add to PATH
 ```
 
@@ -76,30 +76,30 @@ After installation, verify the binaries:
 
 ```bash
 # Check versions
-lumenhub --version
-lumenhubd --version
+lumengateway --version
+lumengatewayd --version
 
 # Test help commands
-lumenhub --help
-lumenhubd --help
+lumengateway --help
+lumengatewayd --help
 ```
 
 ## Quick Start
 
 1. **Start the daemon**:
    ```bash
-   lumenhubd --daemon --preset basic
+   lumengatewayd --daemon --preset basic
    ```
 
 2. **Verify installation**:
    ```bash
-   lumenhub status
+   lumengateway status
    ```
 
 3. **Test functionality**:
    ```bash
-   lumenhub node list
-   lumenhub infer --service embedding --payload-b64 "SGVsbG8sIHdvcmxkIQ=="
+   lumengateway node list
+   lumengateway infer --service embedding --payload-b64 "SGVsbG8sIHdvcmxkIQ=="
    ```
 
 ## Troubleshooting
@@ -109,7 +109,7 @@ lumenhubd --help
 #### Permission Denied
 ```bash
 # Fix permissions
-sudo chmod +x /usr/local/bin/lumenhub*
+sudo chmod +x /usr/local/bin/lumengateway*
 ```
 
 #### Command Not Found
@@ -118,7 +118,7 @@ sudo chmod +x /usr/local/bin/lumenhub*
 export PATH=$PATH:/usr/local/bin
 
 # Or create symlinks
-sudo ln -s /usr/local/bin/lumenhub /usr/local/bin/lumenhubd
+sudo ln -s /usr/local/bin/lumengateway /usr/local/bin/lumengatewayd
 ```
 
 #### Port Already in Use
@@ -127,7 +127,7 @@ sudo ln -s /usr/local/bin/lumenhub /usr/local/bin/lumenhubd
 lsof -i :5866
 
 # Use different port
-lumenhubd --preset basic
+lumengatewayd --preset basic
 # Then update CLI
-lumenhub --port 5867 status
+lumengateway --port 5867 status
 ```

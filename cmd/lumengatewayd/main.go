@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/internal"
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhubd/service"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengatewayd/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengatewayd/service"
 	"github.com/edwinzhancn/lumen-sdk/pkg/config"
 
 	"go.uber.org/zap"
@@ -35,7 +35,7 @@ func main() {
 
 	// Show version information
 	if *version {
-		fmt.Printf("Lumen Hub Daemon %s\n", Version)
+		fmt.Printf("Lumen Gateway Daemon %s\n", Version)
 		fmt.Printf("Commit: %s\n", Commit)
 		fmt.Printf("Built: %s\n", BuildTime)
 		fmt.Printf("Go: %s\n", runtime.Version())
@@ -67,19 +67,19 @@ func main() {
 	defer logger.Sync()
 
 	// Create and start service
-	hubdService, err := service.NewHubdService(cfg, logger)
+	gatewaydService, err := service.NewGatewaydService(cfg, logger)
 	if err != nil {
-		logger.Fatal("Failed to create hubd service", zap.Error(err))
+		logger.Fatal("Failed to create gatewayd service", zap.Error(err))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := hubdService.Start(ctx); err != nil {
-		logger.Fatal("Failed to start hubd service", zap.Error(err))
+	if err := gatewaydService.Start(ctx); err != nil {
+		logger.Fatal("Failed to start gatewayd service", zap.Error(err))
 	}
 
-	logger.Info("Lumen Hub daemon started successfully",
+	logger.Info("Lumen Gateway daemon started successfully",
 		zap.String("config", *configFile),
 		zap.String("version", "1.0.0"))
 
@@ -91,19 +91,19 @@ func main() {
 	logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
 
 	// Stop service gracefully
-	if err := hubdService.Stop(); err != nil {
+	if err := gatewaydService.Stop(); err != nil {
 		logger.Error("Error stopping service", zap.Error(err))
 	}
 
-	logger.Info("Lumen Hub daemon stopped gracefully")
+	logger.Info("Lumen Gateway daemon stopped gracefully")
 }
 
 // daemonize forks the process to run as a daemon
 func daemonize() error {
 	// Check if we're already the child process
-	if os.Getenv("LUMENHUBD_DAEMONIZED") == "1" {
+	if os.Getenv("LUMENGATEWAYD_DAEMONIZED") == "1" {
 		// We're the child, continue with normal execution
-		os.Unsetenv("LUMENHUBD_DAEMONIZED")
+		os.Unsetenv("LUMENGATEWAYD_DAEMONIZED")
 		return runDaemon()
 	}
 
@@ -118,7 +118,7 @@ func daemonize() error {
 func daemonizeUnix() error {
 	// Fork the process
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
-	cmd.Env = append(os.Environ(), "LUMENHUBD_DAEMONIZED=1")
+	cmd.Env = append(os.Environ(), "LUMENGATEWAYD_DAEMONIZED=1")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -129,7 +129,7 @@ func daemonizeUnix() error {
 	}
 
 	// Parent process exits
-	fmt.Printf("Lumen Hub daemon started with PID %d\n", cmd.Process.Pid)
+	fmt.Printf("Lumen Gateway daemon started with PID %d\n", cmd.Process.Pid)
 	os.Exit(0)
 	return nil
 }
@@ -141,7 +141,7 @@ func daemonizeWindows() error {
 
 	// Create the daemon process
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
-	cmd.Env = append(os.Environ(), "LUMENHUBD_DAEMONIZED=1")
+	cmd.Env = append(os.Environ(), "LUMENGATEWAYD_DAEMONIZED=1")
 
 	// Redirect output to null
 	cmd.Stdin = nil
@@ -154,7 +154,7 @@ func daemonizeWindows() error {
 	}
 
 	// Parent process exits
-	fmt.Printf("Lumen Hub daemon started with PID %d\n", cmd.Process.Pid)
+	fmt.Printf("Lumen Gateway daemon started with PID %d\n", cmd.Process.Pid)
 	os.Exit(0)
 	return nil
 }
@@ -177,21 +177,21 @@ func runDaemon() error {
 	defer logger.Sync()
 
 	// Create and start service
-	hubdService, err := service.NewHubdService(cfg, logger)
+	gatewaydService, err := service.NewGatewaydService(cfg, logger)
 	if err != nil {
-		logger.Fatal("Failed to create hubd service", zap.Error(err))
+		logger.Fatal("Failed to create gatewayd service", zap.Error(err))
 		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := hubdService.Start(ctx); err != nil {
-		logger.Fatal("Failed to start hubd service", zap.Error(err))
+	if err := gatewaydService.Start(ctx); err != nil {
+		logger.Fatal("Failed to start gatewayd service", zap.Error(err))
 		return err
 	}
 
-	logger.Info("Lumen Hub daemon started successfully",
+	logger.Info("Lumen Gateway daemon started successfully",
 		zap.String("config", *configFile),
 		zap.String("version", "1.0.0"),
 		zap.Int("pid", os.Getpid()),
@@ -215,18 +215,18 @@ func runDaemon() error {
 	}
 
 	// Stop service gracefully
-	if err := hubdService.Stop(); err != nil {
+	if err := gatewaydService.Stop(); err != nil {
 		logger.Error("Error stopping service", zap.Error(err))
 		return err
 	}
 
-	logger.Info("Lumen Hub daemon stopped gracefully")
+	logger.Info("Lumen Gateway daemon stopped gracefully")
 	return nil
 }
 
 // createPIDFile creates a PID file for the daemon
 func createPIDFile() error {
-	pidFile := "/tmp/lumenhubd.pid"
+	pidFile := "/tmp/lumengatewayd.pid"
 
 	// Write PID to file
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
@@ -238,7 +238,7 @@ func createPIDFile() error {
 
 // removePIDFile removes the PID file
 func removePIDFile() error {
-	pidFile := "/tmp/lumenhubd.pid"
+	pidFile := "/tmp/lumengatewayd.pid"
 
 	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove PID file: %w", err)

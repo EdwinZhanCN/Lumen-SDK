@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd/commands"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd/commands"
 
 	"github.com/spf13/cobra"
 )
@@ -25,25 +25,25 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "lumenhub",
-	Short: "Lumen Hub CLI - Manage distributed AI services",
-	Long: `Lumen Hub CLI is a command-line tool for managing Lumen Hub daemons
+	Use:   "lumengateway",
+	Short: "Lumen Gateway CLI - Manage distributed AI services",
+	Long: `Lumen Gateway CLI is a command-line tool for managing Lumen Gateway daemons
 and interacting with distributed AI services.
 
-The CLI connects to a running lumenhubd daemon via REST API to:
+The CLI connects to a running lumengatewayd daemon via REST API to:
 - Manage and monitor nodes
 - Check hub status and health
 - Call AI inference services
 
 Usage:
-  lumenhub node list              # List discovered nodes
-  lumenhub status                  # Show hub status
-  lumenhub infer --service embedding "hello world"           # Text embedding
-  lumenhub infer --service face_detection --payload-file img.jpg  # Face detection
+  lumengateway node list              # List discovered nodes
+  lumengateway status                  # Show hub status
+  lumengateway infer --service embedding "hello world"           # Text embedding
+  lumengateway infer --service face_detection --payload-file img.jpg  # Face detection
 
 	Environment Variables:
-  LUMENHUB_HOST    Hub daemon host (default: localhost)
-  LUMENHUB_PORT    Hub daemon port (default: 5866)`,
+  LUMENGATEWAY_HOST    Hub daemon host (default: localhost)
+  LUMENGATEWAY_PORT    Hub daemon port (default: 5866)`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildTime),
 }
 
@@ -61,14 +61,14 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().StringVar(&output, "output", "table", "output format (table|json|yaml)")
-	rootCmd.PersistentFlags().StringVar(&host, "host", "localhost", "lumenhub daemon host")
-	rootCmd.PersistentFlags().IntVar(&port, "port", 5866, "lumenhub daemon port")
+	rootCmd.PersistentFlags().StringVar(&host, "host", "localhost", "lumengateway daemon host")
+	rootCmd.PersistentFlags().IntVar(&port, "port", 5866, "lumengateway daemon port")
 
 	// Support environment variables
-	if hostEnv := os.Getenv("LUMENHUB_HOST"); hostEnv != "" {
+	if hostEnv := os.Getenv("LUMENGATEWAY_HOST"); hostEnv != "" {
 		host = hostEnv
 	}
-	if portEnv := os.Getenv("LUMENHUB_PORT"); portEnv != "" {
+	if portEnv := os.Getenv("LUMENGATEWAY_PORT"); portEnv != "" {
 		if p, err := parsePort(portEnv); err == nil {
 			port = p
 		}

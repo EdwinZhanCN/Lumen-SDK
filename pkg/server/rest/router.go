@@ -8,14 +8,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// NewHandler is a thin compatibility adaptor used by hubd service startup.
+// NewHandler is a thin compatibility adaptor used by gatewayd service startup.
 //
-// Historically hubd called rest.NewHandler(client, codecRegistry, logger).
+// Historically gatewayd called rest.NewHandler(client, codecRegistry, logger).
 // We keep the same signature but ignore codecRegistry for the unified REST
 // server. This returns a Handlers implementation that the router will use.
 func NewHandler(c *client.LumenClient, _ interface{}, logger *zap.Logger) Handlers {
-	// Forward to the package-level constructor.
-	return NewHandlers(c)
+	// Forward to the package-level constructor, keeping the caller's logger
+	// for the node-watch hub.
+	return newHandlers(c, logger)
 }
 
 // Router is a lightweight HTTP router wrapper used by the daemon startup code.
@@ -32,7 +33,7 @@ type Router struct {
 // The logger is optional; if nil, a no-op logger may be used.
 func NewRouter(h Handlers, logger *zap.Logger) *Router {
 	app := fiber.New(fiber.Config{
-		AppName:               "Lumen Hubd REST Router",
+		AppName:               "Lumen Gatewayd REST Router",
 		DisableStartupMessage: true,
 	})
 

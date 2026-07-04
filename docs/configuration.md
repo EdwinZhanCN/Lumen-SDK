@@ -2,7 +2,7 @@
 
 ## Overview
 
-Lumen Hub supports multiple configuration methods:
+Lumen Gateway supports multiple configuration methods:
 - **Presets**: Built-in configurations for different use cases
 - **Configuration Files**: YAML files for custom settings
 - **Environment Variables**: Runtime configuration overrides
@@ -13,13 +13,13 @@ See Presets at [examples](../examples/configs)
 
 ```bash
 # Start daemon with different presets
-lumenhubd --daemon --preset minimal
-lumenhubd --daemon --preset lightweight
-lumenhubd --daemon --preset basic
-lumenhubd --daemon --preset brave
+lumengatewayd --daemon --preset minimal
+lumengatewayd --daemon --preset lightweight
+lumengatewayd --daemon --preset basic
+lumengatewayd --daemon --preset brave
 
 # Or run in foreground
-lumenhubd --config --preset basic
+lumengatewayd --config --preset basic
 ```
 
 
@@ -27,10 +27,10 @@ lumenhubd --config --preset basic
 
 ```bash
 # Start daemon with custom config
-lumenhubd --daemon --config /path/to/custom-config.yaml
+lumengatewayd --daemon --config /path/to/custom-config.yaml
 
 # Or run in foreground
-lumenhubd --config /path/to/custom-config.yaml
+lumengatewayd --config /path/to/custom-config.yaml
 ```
 
 ## Environment Variables
@@ -108,7 +108,7 @@ Use duration formats: 30s, 5m, 1h
 ls -la /path/to/config.yaml
 
 # Check YAML syntax
-lumenhubd --config /path/to/config.yaml --dry-run
+lumengatewayd --config /path/to/config.yaml --dry-run
 ```
 
 ### Environment Variables Not Working
@@ -118,14 +118,14 @@ env | grep LUMEN_
 
 # Export variables explicitly
 export LUMEN_LOG_LEVEL=debug
-lumenhubd --preset basic
+lumengatewayd --preset basic
 ```
 
 ### Default Settings Applied
 ```bash
 # Show effective configuration
-lumenhubd --preset basic --dry-run
+lumengatewayd --preset basic --dry-run
 
 # Check which config is being used
-lumenhubd --preset basic --verbose
+lumengatewayd --preset basic --verbose
 ```

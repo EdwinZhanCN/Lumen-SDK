@@ -134,6 +134,7 @@ type subConnState struct {
 	cooldownUntil time.Time
 	cooldown      time.Duration
 	txt           map[string]string
+	capFetching   bool
 }
 
 type lumenBalancer struct {
@@ -221,9 +222,16 @@ func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.Sub
 		scs.hardFailures = 0
 		scs.cooldownUntil = time.Time{}
 		scs.cooldown = 0
-		addr := scs.addr.Addr
+		// Publish the Ready node immediately (TXT task hints may already allow
+		// routing); the capability fetch refines the task set asynchronously
+		// and retries with backoff instead of giving up on one failure.
+		if !scs.capFetching {
+			scs.capFetching = true
+			go lb.fetchCapabilitiesWithRetry(key, scs.addr.Addr)
+		}
+		lb.syncRegistryLocked()
+		lb.rebuildPickerLocked()
 		lb.mu.Unlock()
-		lb.fetchCapabilitiesForNode(key, addr)
 		return
 	}
 
@@ -340,7 +348,56 @@ func (lb *lumenBalancer) syncRegistryLocked() {
 	}
 }
 
-func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) {
+const (
+	capFetchAttempts   = 5
+	capFetchBackoffMin = 1 * time.Second
+	capFetchBackoffMax = 8 * time.Second
+)
+
+// fetchCapabilitiesWithRetry keeps trying to fetch node capabilities while the
+// SubConn stays Ready on the same address. It clears the per-node capFetching
+// guard on exit so a later Ready transition can start a fresh fetch.
+func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
+	defer func() {
+		lb.mu.Lock()
+		if scs, ok := lb.subConns[key]; ok {
+			scs.capFetching = false
+		}
+		lb.mu.Unlock()
+	}()
+
+	backoff := capFetchBackoffMin
+	for attempt := 1; attempt <= capFetchAttempts; attempt++ {
+		if lb.fetchCapabilitiesForNode(key, addr) {
+			return
+		}
+
+		lb.mu.Lock()
+		scs, ok := lb.subConns[key]
+		stale := !ok || scs.state != connectivity.Ready || scs.addr.Addr != addr
+		lb.mu.Unlock()
+		if stale {
+			return
+		}
+		if attempt == capFetchAttempts {
+			break
+		}
+
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > capFetchBackoffMax {
+			backoff = capFetchBackoffMax
+		}
+	}
+	lb.log().Warn("cap fetch: giving up until next reconnect",
+		zap.String("id", key),
+		zap.Int("attempts", capFetchAttempts),
+	)
+}
+
+// fetchCapabilitiesForNode performs one capability fetch. It reports success
+// only when at least one capability was received; the caller owns retries.
+func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 	timeout := 10 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -354,7 +411,7 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) {
 	)
 	if err != nil {
 		lb.log().Warn("cap fetch: dial failed", zap.String("id", key), zap.Error(err))
-		return
+		return false
 	}
 	defer conn.Close()
 
@@ -362,7 +419,7 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) {
 	stream, err := cli.StreamCapabilities(ctx, &emptypb.Empty{})
 	if err != nil {
 		lb.log().Warn("cap fetch: stream failed", zap.String("id", key), zap.Error(err))
-		return
+		return false
 	}
 
 	var caps []*pb.Capability
@@ -378,6 +435,9 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) {
 		if cap != nil {
 			caps = append(caps, cap)
 		}
+	}
+	if len(caps) == 0 {
+		return false
 	}
 
 	tasks := tasksFromCapabilities(caps)
@@ -396,6 +456,7 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) {
 		zap.String("id", key),
 		zap.Strings("tasks", tasks),
 	)
+	return true
 }
 
 func (lb *lumenBalancer) log() *zap.Logger {

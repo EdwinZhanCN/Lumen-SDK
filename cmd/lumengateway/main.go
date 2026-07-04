@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd"
 )
 
 func main() {

@@ -93,9 +93,11 @@ type LumenClient struct {
 
 // NewLumenClient creates a new LumenClient.
 //
-// The client selects a resolver backend based on cfg:
-//   - If cfg.Discovery.MDNSEnabled is true, a mDNS resolver is used.
-//   - Otherwise, if cfg.Discovery.HubURL is set, a Gateway push resolver is used.
+// Discovery backends are additive: every configured backend (mDNS when
+// MDNSEnabled, Gateway push when HubURL is set, StaticNodes when non-empty)
+// runs concurrently and their node events are merged. A node reachable
+// through more than one backend appears once per backend identity; the pool
+// tolerates the redundant connection.
 func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error) {
 	if cfg == nil {
 		cfg = config.DefaultConfig()
@@ -110,16 +112,22 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 		RediscoveryBackoffMax: cfg.Discovery.RediscoveryBackoffMax,
 	})
 
-	var resolver discovery.NodeResolver
-	if cfg.Discovery.Enabled && cfg.Discovery.MDNSEnabled {
-		resolver = discovery.NewMDNSResolver(&cfg.Discovery, logger)
+	var resolvers []discovery.NodeResolver
+	if cfg.Discovery.Enabled {
+		if cfg.Discovery.MDNSEnabled {
+			resolvers = append(resolvers, discovery.NewMDNSResolver(&cfg.Discovery, logger))
+		}
+		if cfg.Discovery.HubURL != "" {
+			resolvers = append(resolvers, discovery.NewPushResolverWithDeployment(cfg.Discovery.HubURL, cfg.Discovery.DeploymentID, logger))
+		}
+		if len(cfg.Discovery.StaticNodes) > 0 {
+			resolvers = append(resolvers, discovery.NewStaticResolver(cfg.Discovery.StaticNodes, cfg.Discovery.DeploymentID, logger))
+		}
 	}
-	if resolver == nil && cfg.Discovery.Enabled && cfg.Discovery.HubURL != "" {
-		resolver = discovery.NewPushResolverWithDeployment(cfg.Discovery.HubURL, cfg.Discovery.DeploymentID, logger)
+	if len(resolvers) == 0 {
+		return nil, fmt.Errorf("no discovery backend configured: enable mDNS, set hub_url, or list static_nodes")
 	}
-	if resolver == nil {
-		return nil, fmt.Errorf("no discovery backend configured: enable mDNS or set hub_url")
-	}
+	resolver := discovery.NewCompositeResolver(resolvers...)
 
 	return &LumenClient{
 		pool:     pool,

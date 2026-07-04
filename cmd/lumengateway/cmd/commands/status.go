@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/internal"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/internal"
 
 	"github.com/spf13/cobra"
 )
@@ -16,7 +16,7 @@ import (
 var StatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show hub and node status",
-	Long:  `Display the current status of the Lumen Hub and all discovered nodes.`,
+	Long:  `Display the current status of the Lumen Gateway and all discovered nodes.`,
 	RunE:  runStatus,
 }
 
@@ -40,7 +40,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	outputFormat, _ := cmd.Flags().GetString("output")
 
 	// Display hub status
-	fmt.Printf("Lumen Hub Status\n")
+	fmt.Printf("Lumen Gateway Status\n")
 	fmt.Printf("================\n")
 	fmt.Printf("Server: %s\n", getHostFromCmd(cmd)+":"+fmt.Sprintf("%d", getPortFromCmd(cmd)))
 	fmt.Printf("Version: 1.0.0\n")

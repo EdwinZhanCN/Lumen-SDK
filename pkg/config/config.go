@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,6 +22,10 @@ type Config struct {
 }
 
 // DiscoveryConfig controls service discovery for finding ML nodes.
+//
+// The three discovery backends (mDNS, Gateway push via HubURL, StaticNodes)
+// are additive: every configured backend runs and their node events are
+// merged. At least one must be configured when discovery is enabled.
 type DiscoveryConfig struct {
 	Enabled               bool          `yaml:"enabled" json:"enabled"`
 	ServiceType           string        `yaml:"service_type" json:"service_type"`
@@ -33,6 +39,10 @@ type DiscoveryConfig struct {
 	NodeTimeout           time.Duration `yaml:"node_timeout" json:"node_timeout"`   // Deprecated: DNS-SD is not operational liveness.
 	MDNSEnabled           bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
 	HubURL                string        `yaml:"hub_url" json:"hub_url"`
+	// StaticNodes pins node gRPC endpoints ("host:port") that are always
+	// resolved without any dynamic discovery. Connection health is still
+	// managed by the pool; entries only need to be reachable eventually.
+	StaticNodes []string `yaml:"static_nodes" json:"static_nodes"`
 }
 
 // ServerConfig holds REST server configuration.
@@ -128,6 +138,15 @@ func (c *Config) LoadFromEnv() error {
 	if v := os.Getenv("LUMEN_DISCOVERY_HUB_URL"); v != "" {
 		c.Discovery.HubURL = v
 	}
+	if v := os.Getenv("LUMEN_DISCOVERY_STATIC_NODES"); v != "" {
+		var nodes []string
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				nodes = append(nodes, part)
+			}
+		}
+		c.Discovery.StaticNodes = nodes
+	}
 	if v := os.Getenv("LUMEN_REST_HOST"); v != "" {
 		c.Server.REST.Host = v
 	}
@@ -174,6 +193,11 @@ func (c *Config) Validate() error {
 		}
 		if c.Discovery.NodeTimeout < 0 {
 			return fmt.Errorf("discovery.node_timeout must be non-negative")
+		}
+		for _, node := range c.Discovery.StaticNodes {
+			if _, _, err := net.SplitHostPort(strings.TrimSpace(node)); err != nil {
+				return fmt.Errorf("discovery.static_nodes entry %q must be host:port: %w", node, err)
+			}
 		}
 	}
 	if c.Server.REST.Enabled {

@@ -26,7 +26,7 @@ import (
 //
 // Role in project: Provides HTTP/REST interface for the Lumen SDK, enabling
 // integration with web applications, microservices, and any HTTP-capable client.
-// This is the primary interface for the lumenhubd daemon.
+// This is the primary interface for the lumengatewayd daemon.
 //
 // Example:
 //

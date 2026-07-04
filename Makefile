@@ -1,14 +1,14 @@
 # Lumen SDK Makefile
 
 # Variables
-BINARY_NAME_LUMENHUBD = lumenhubd
-BINARY_NAME_LUMENHUB = lumenhub
+BINARY_NAME_LUMENGATEWAYD = lumengatewayd
+BINARY_NAME_LUMENGATEWAY = lumengateway
 BUILD_DIR = dist
 VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS_LUMENHUBD = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
-LDFLAGS_LUMENHUB = -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Version=$(VERSION)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Commit=$(COMMIT)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.BuildTime=$(BUILD_TIME)'"
+LDFLAGS_LUMENGATEWAYD = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
+LDFLAGS_LUMENGATEWAY = -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$(VERSION)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$(COMMIT)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$(BUILD_TIME)'"
 
 # Go flags
 GO_FLAGS = -v
@@ -52,8 +52,8 @@ test-coverage: test ## Show test coverage
 # Build targets
 build: ## Build binaries for current platform
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENHUBD) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENHUBD) ./cmd/lumenhubd
-	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENHUB) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENHUB) ./cmd/lumenhub
+	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAYD) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) ./cmd/lumengatewayd
+	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAY) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) ./cmd/lumengateway
 
 build-all: ## Build binaries for all platforms
 	@mkdir -p $(BUILD_DIR)
@@ -61,15 +61,15 @@ build-all: ## Build binaries for all platforms
 	@for platform in $(PLATFORMS); do \
 		os=$$(echo $$platform | cut -d'/' -f1); \
 		arch=$$(echo $$platform | cut -d'/' -f2); \
-		output_name_lumenhubd=$(BINARY_NAME_LUMENHUBD)-$$os-$$arch; \
-		output_name_lumenhub=$(BINARY_NAME_LUMENHUB)-$$os-$$arch; \
+		output_name_lumengatewayd=$(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch; \
+		output_name_lumengateway=$(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch; \
 		if [ $$os = "windows" ]; then \
-			output_name_lumenhubd=$$output_name_lumenhubd.exe; \
-			output_name_lumenhub=$$output_name_lumenhub.exe; \
+			output_name_lumengatewayd=$$output_name_lumengatewayd.exe; \
+			output_name_lumengateway=$$output_name_lumengateway.exe; \
 		fi; \
 		echo "Building $$os/$$arch..."; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENHUBD) -o $(BUILD_DIR)/$$output_name_lumenhubd ./cmd/lumenhubd; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENHUB) -o $(BUILD_DIR)/$$output_name_lumenhub ./cmd/lumenhub; \
+		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAYD) -o $(BUILD_DIR)/$$output_name_lumengatewayd ./cmd/lumengatewayd; \
+		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAY) -o $(BUILD_DIR)/$$output_name_lumengateway ./cmd/lumengateway; \
 	done
 
 build-release: VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo $(VERSION))
@@ -85,26 +85,26 @@ archive: build-all ## Create archives for distribution
 		os=$$(echo $$platform | cut -d'/' -f1); \
 		arch=$$(echo $$platform | cut -d'/' -f2); \
 		if [ $$os = "windows" ]; then \
-			zip -r lumenhub-$(VERSION)-$$os-$$arch.zip $(BINARY_NAME_LUMENHUBD)-$$os-$$arch.exe $(BINARY_NAME_LUMENHUB)-$$os-$$arch.exe; \
+			zip -r lumengateway-$(VERSION)-$$os-$$arch.zip $(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch.exe $(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch.exe; \
 		else \
-			tar -czf lumenhub-$(VERSION)-$$os-$$arch.tar.gz $(BINARY_NAME_LUMENHUBD)-$$os-$$arch $(BINARY_NAME_LUMENHUB)-$$os-$$arch; \
+			tar -czf lumengateway-$(VERSION)-$$os-$$arch.tar.gz $(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch $(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch; \
 		fi; \
 	done
 
 # Installation targets
 install: build ## Install binaries to GOPATH/bin
-	go install $(LDFLAGS_LUMENHUBD) ./cmd/lumenhubd
-	go install $(LDFLAGS_LUMENHUB) ./cmd/lumenhub
+	go install $(LDFLAGS_LUMENGATEWAYD) ./cmd/lumengatewayd
+	go install $(LDFLAGS_LUMENGATEWAY) ./cmd/lumengateway
 
 install-local: build ## Install binaries to /usr/local/bin
 	@echo "Installing to /usr/local/bin (requires sudo)"
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENHUBD) /usr/local/bin/
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENHUB) /usr/local/bin/
+	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) /usr/local/bin/
+	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) /usr/local/bin/
 
 uninstall: ## Remove binaries from /usr/local/bin
 	@echo "Removing from /usr/local/bin (requires sudo)"
-	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENHUBD)
-	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENHUB)
+	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENGATEWAYD)
+	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENGATEWAY)
 
 # Cleanup targets
 clean: ## Clean build artifacts
@@ -123,10 +123,10 @@ dev: ## Run in development mode with auto-reload
 	fi
 
 run-daemon: ## Run daemon in foreground with minimal preset
-	go run $(LDFLAGS_LUMENHUBD) ./cmd/lumenhubd --preset minimal
+	go run $(LDFLAGS_LUMENGATEWAYD) ./cmd/lumengatewayd --preset minimal
 
 run-cli: ## Run CLI (assumes daemon is running)
-	go run $(LDFLAGS_LUMENHUB) ./cmd/lumenhub status
+	go run $(LDFLAGS_LUMENGATEWAY) ./cmd/lumengateway status
 
 # Release targets
 release: clean test lint build-release archive ## Create a complete release
@@ -166,12 +166,12 @@ set-version: ## Set new version (usage: make set-version VERSION=v1.2.3)
 # Quick start
 quick-start: ## Quick build and start
 	$(MAKE) build
-	@echo "Starting lumenhubd daemon..."
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENHUBD) --preset basic &
+	@echo "Starting lumengatewayd daemon..."
+	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) --preset basic &
 	@sleep 2
 	@echo "Testing CLI..."
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENHUB) --version
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENHUB) status
+	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) --version
+	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) status
 	@echo "Quick start complete! Daemon running in background."
 
 # CI helpers

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd/commands"
+	"github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd/commands"
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 )
 

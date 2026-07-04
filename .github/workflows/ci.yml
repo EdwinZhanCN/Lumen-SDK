@@ -78,28 +78,28 @@ jobs:
                   COMMIT=${{ github.sha }}
                   BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-                  # Build lumenhubd with version info
+                  # Build lumengatewayd with version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumenhubd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-                    ./cmd/lumenhubd
+                    -o dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+                    ./cmd/lumengatewayd
 
-                  # Build lumenhub with version info
+                  # Build lumengateway with version info
                   CGO_ENABLED=0 go build \
-                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumenhub/cmd.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumenhub-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-                    ./cmd/lumenhub
+                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$BUILD_TIME' -s -w" \
+                    -o dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+                    ./cmd/lumengateway
 
             - name: Test binary execution
               if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
               run: |
                   # Test help commands
-                  ./dist/lumenhubd-${{ matrix.goos }}-${{ matrix.goarch }} --help
-                  ./dist/lumenhub-${{ matrix.goos }}-${{ matrix.goarch }} --help
+                  ./dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }} --help
+                  ./dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }} --help
 
                   # Test version commands
-                  echo "=== Testing lumenhubd version ==="
-                  ./dist/lumenhubd-${{ matrix.goos }}-${{ matrix.goarch }} --version
+                  echo "=== Testing lumengatewayd version ==="
+                  ./dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }} --version
 
-                  echo "=== Testing lumenhub version ==="
-                  ./dist/lumenhub-${{ matrix.goos }}-${{ matrix.goarch }} --version
+                  echo "=== Testing lumengateway version ==="
+                  ./dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }} --version

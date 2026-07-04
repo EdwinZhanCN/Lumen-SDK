@@ -23,6 +23,7 @@ func SetupRoutes(app *fiber.App, handlers Handlers) {
 
 	// Service discovery endpoints
 	v1.Get("/nodes", handlers.GetNodes)
+	v1.Get("/nodes/watch", handlers.NodeWatch)
 	v1.Get("/nodes/:id/capabilities", handlers.GetNodeCapabilities)
 
 	// Configuration endpoints

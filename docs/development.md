@@ -52,8 +52,8 @@ make deps
 make quick-start
 
 # Check status
-./dist/lumenhub status
-./dist/lumenhub node list
+./dist/lumengateway status
+./dist/lumengateway node list
 ```
 
 ## 📁 Project Structure
@@ -61,10 +61,10 @@ make quick-start
 ```
 lumen-sdk/
 ├── cmd/                          # Main applications
-│   ├── lumenhub/                # CLI client
+│   ├── lumengateway/                # CLI client
 │   │   ├── cmd/                 # CLI commands
 │   │   └── internal/            # CLI internal packages
-│   └── lumenhubd/               # Daemon server
+│   └── lumengatewayd/               # Daemon server
 │       └── internal/            # Daemon internal packages
 ├── pkg/                         # Shared libraries
 │   ├── client/                  # Client SDK
@@ -320,8 +320,8 @@ make dev
 make run-daemon
 
 # Terminal 2: Use CLI
-./dist/lumenhub status
-./dist/lumenhub node list
+./dist/lumengateway status
+./dist/lumengateway node list
 ```
 
 #### 3. Testing Development Changes
@@ -329,8 +329,8 @@ make run-daemon
 ```bash
 # Build and test
 make build
-./dist/lumenhub --version
-./dist/lumenhubd --version
+./dist/lumengateway --version
+./dist/lumengatewayd --version
 
 # Run integration test
 make quick-start
@@ -379,8 +379,8 @@ let g:go_test_show_name = 1
 
 ```bash
 # Development environment
-export LUMENHUB_HOST=localhost
-export LUMENHUB_PORT=5866
+export LUMENGATEWAY_HOST=localhost
+export LUMENGATEWAY_PORT=5866
 
 # Go development
 export GO111MODULE=on
@@ -529,15 +529,15 @@ The build system uses these variables:
 Builds include complete version information:
 
 ```bash
-$ ./dist/lumenhubd --version
-Lumen Hub Daemon v1.0.7
+$ ./dist/lumengatewayd --version
+Lumen Gateway Daemon v1.0.7
 Commit: d612a83
 Built: 2025-11-07T08:51:59Z
 Go: go1.24.5
 OS/Arch: darwin/arm64
 
-$ ./dist/lumenhub --version
-lumenhub version v1.0.7 (commit: d612a83, built: 2025-11-07T08:51:59Z)
+$ ./dist/lumengateway --version
+lumengateway version v1.0.7 (commit: d612a83, built: 2025-11-07T08:51:59Z)
 ```
 
 ### Release Automation
@@ -556,13 +556,13 @@ Releases are fully automated through GitHub Actions:
 
 ```bash
 # Run daemon with debug logging
-./dist/lumenhubd --preset minimal --log-level debug
+./dist/lumengatewayd --preset minimal --log-level debug
 
 # Run daemon in foreground
-./dist/lumenhubd --preset minimal --daemon=false
+./dist/lumengatewayd --preset minimal --daemon=false
 
 # Debug with dlv (Go debugger)
-go run ./cmd/lumenhubd --preset minimal &
+go run ./cmd/lumengatewayd --preset minimal &
 dlv connect localhost:5866
 ```
 
@@ -570,14 +570,14 @@ dlv connect localhost:5866
 
 ```bash
 # Verbose CLI output
-./dist/lumenhub --verbose status
+./dist/lumengateway --verbose status
 
 # Debug API calls
-export LUMENHUB_DEBUG=1
-./dist/lumenhub status
+export LUMENGATEWAY_DEBUG=1
+./dist/lumengateway status
 
 # Test with specific host/port
-./dist/lumenhub --host localhost --port 5866 status
+./dist/lumengateway --host localhost --port 5866 status
 ```
 
 ### Common Issues
@@ -592,7 +592,7 @@ lsof -i :5866
 kill -9 <PID>
 
 # Or use different port
-LUMENHUB_PORT=5867 ./dist/lumenhubd --preset minimal
+LUMENGATEWAY_PORT=5867 ./dist/lumengatewayd --preset minimal
 ```
 
 #### Module Issues
@@ -617,8 +617,8 @@ make clean
 make build
 
 # Build with verbose output
-go build -v ./cmd/lumenhubd
-go build -v ./cmd/lumenhub
+go build -v ./cmd/lumengatewayd
+go build -v ./cmd/lumengateway
 ```
 
 ## 📝 Contributing Guidelines
@@ -693,7 +693,7 @@ chore: update dependencies
 ### Documentation
 
 - [Main README](../README.md) - Project overview
-- [CLI README](../cmd/lumenhub/README.md) - CLI usage guide
+- [CLI README](../cmd/lumengateway/README.md) - CLI usage guide
 - [API Documentation](../docs/api.md) - REST API reference
 - [Configuration Guide](../docs/configuration.md) - Configuration options
 

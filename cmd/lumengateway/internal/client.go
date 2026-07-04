@@ -11,7 +11,7 @@ import (
 	"github.com/edwinzhancn/lumen-sdk/pkg/server/rest"
 )
 
-// APIClient is the HTTP client for communicating with lumenhubd daemon
+// APIClient is the HTTP client for communicating with lumengatewayd daemon
 type APIClient struct {
 	BaseURL    string
 	HTTPClient *http.Client

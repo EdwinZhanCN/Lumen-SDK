@@ -10,6 +10,7 @@ import (
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
 // Handlers defines the interface for all REST API handlers
@@ -17,6 +18,9 @@ type Handlers interface {
 	HealthCheck(c *fiber.Ctx) error
 	Infer(c *fiber.Ctx) error
 	GetNodes(c *fiber.Ctx) error
+	// NodeWatch upgrades to the push-discovery WebSocket consumed by
+	// discovery.PushResolver (snapshot + added/removed diffs).
+	NodeWatch(c *fiber.Ctx) error
 	GetNodeCapabilities(c *fiber.Ctx) error
 	GetConfig(c *fiber.Ctx) error
 	GetMetrics(c *fiber.Ctx) error
@@ -26,13 +30,23 @@ type Handlers interface {
 // handler implements the Handlers interface
 type handler struct {
 	client *client.LumenClient
+	watch  *nodeWatchHub
 }
 
 // NewHandlers creates a new Handlers instance
 func NewHandlers(client *client.LumenClient) Handlers {
+	return newHandlers(client, nil)
+}
+
+func newHandlers(client *client.LumenClient, logger *zap.Logger) Handlers {
 	return &handler{
 		client: client,
+		watch:  newNodeWatchHub(client, logger),
 	}
+}
+
+func (h *handler) NodeWatch(c *fiber.Ctx) error {
+	return h.watch.upgrade(c)
 }
 
 func (h *handler) HealthCheck(c *fiber.Ctx) error {
