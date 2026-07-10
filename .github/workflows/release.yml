@@ -75,123 +75,32 @@ jobs:
                     EXT=".exe"
                   fi
 
-                  # Build lumengatewayd with complete version info
+                  # Build lumen-hostd with complete version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildTime=$BUILD_TIME' -s -w" \
-                    -o "dist/lumengatewayd${EXT}" \
-                    ./cmd/lumengatewayd
-
-                  # Build lumengateway with complete version info
-                  CGO_ENABLED=0 go build \
-                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$BUILD_TIME' -s -w" \
-                    -o "dist/lumengateway${EXT}" \
-                    ./cmd/lumengateway
+                    -o "dist/lumen-hostd${EXT}" \
+                    ./cmd/lumen-hostd
 
             - name: Create archive
               run: |
                   cd dist
                   if [ "${{ matrix.goos }}" = "windows" ]; then
-                    7z a lumengateway-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip lumengatewayd.exe lumengateway.exe
+                    7z a lumen-hostd-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip lumen-hostd.exe
                   else
-                    tar -czf lumengateway-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz lumengatewayd lumengateway
+                    tar -czf lumen-hostd-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz lumen-hostd
                   fi
 
             - uses: actions/upload-artifact@v4
               with:
-                  name: lumengateway-${{ matrix.goos }}-${{ matrix.goarch }}
-                  path: dist/lumengateway-*.*
-
-    build-gateway-mac:
-        name: Build macOS Gateway App
-        runs-on: macos-14
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-
-            - name: Setup Go
-              uses: actions/setup-go@v4
-              with:
-                  go-version: ${{ env.GO_VERSION }}
-
-            - name: Setup Node
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 20
-
-            - name: Install Wails CLI
-              run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
-
-            - name: Install Frontend Dependencies
-              run: |
-                  cd cmd/lumen-gateway/frontend
-                  npm install
-
-            - name: Build and Package macOS App (Universal)
-              run: |
-                  cd cmd/lumen-gateway
-                  wails3 task darwin:package:universal
-
-            - name: Create Archive
-              run: |
-                  cd cmd/lumen-gateway/bin
-                  VERSION=${GITHUB_REF#refs/tags/}
-                  zip -r "lumen-gateway-${VERSION}-darwin-universal.zip" "Lumen Gateway.app"
-
-            - name: Upload macOS Artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: lumen-gateway-darwin-universal
-                  path: cmd/lumen-gateway/bin/lumen-gateway-*-darwin-universal.zip
-
-    build-gateway-windows:
-        name: Build Windows Gateway App
-        runs-on: windows-latest
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-
-            - name: Setup Go
-              uses: actions/setup-go@v4
-              with:
-                  go-version: ${{ env.GO_VERSION }}
-
-            - name: Setup Node
-              uses: actions/setup-node@v3
-              with:
-                  node-version: 20
-
-            - name: Install Wails CLI
-              run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.96
-
-            - name: Install Frontend Dependencies
-              run: |
-                  cd cmd/lumen-gateway/frontend
-                  npm install
-
-            - name: Build and Package Windows App
-              run: |
-                  cd cmd/lumen-gateway
-                  wails3 task windows:build
-
-            - name: Prepare Release Executable
-              shell: bash
-              run: |
-                  cd cmd/lumen-gateway/bin
-                  VERSION=${GITHUB_REF#refs/tags/}
-                  cp "Lumen Gateway.exe" "Lumen-Gateway-${VERSION}-windows-amd64.exe"
-
-            - name: Upload Windows Artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: lumen-gateway-windows-amd64
-                  path: cmd/lumen-gateway/bin/Lumen-Gateway-*-windows-amd64.exe
+                  name: lumen-hostd-${{ matrix.goos }}-${{ matrix.goarch }}
+                  path: dist/lumen-hostd-*.*
 
     release:
         permissions:
             contents: write
         name: Create Release
         runs-on: ubuntu-latest
-        needs: [test, build, build-gateway-mac, build-gateway-windows]
+        needs: [test, build]
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -230,51 +139,56 @@ jobs:
                   tag_name: ${{ steps.version.outputs.VERSION }}
                   name: Release ${{ steps.version.outputs.VERSION }}
                   body: |
-                      # Lumen Gateway ${{ steps.version.outputs.VERSION }}
+                      # Lumen Host Broker ${{ steps.version.outputs.VERSION }}
 
-                      ## 🖥️ Lumen Gateway (GUI)
-
-                      Lumen Gateway is a cross-platform system tray application that runs in the background and hosts the daemon, routing strategies, and an interactive React-based network discovery dashboard.
-
-                      ### macOS Installation (Universal)
-                      1. Download `lumen-gateway-${{ steps.version.outputs.VERSION }}-darwin-universal.zip`.
-                      2. Unzip the file and move `Lumen Gateway.app` to your `/Applications` folder.
-                      3. Right-click the app and choose **Open** (or run `xattr -d com.apple.quarantine "/Applications/Lumen Gateway.app"` to bypass Gatekeeper).
-
-                      ### Windows Installation (AMD64)
-                      1. Download `Lumen-Gateway-${{ steps.version.outputs.VERSION }}-windows-amd64.exe`.
-                      2. Double-click to run. The gateway will run in your system tray on port `5866` (configurable).
+                      `lumen-hostd` discovers Lumen inference nodes on the LAN via mDNS and
+                      republishes them over `/v1/nodes/watch` for applications that cannot
+                      perform local-network discovery themselves (e.g. inside Docker Desktop).
+                      It is a discovery-only control-plane process — it never proxies
+                      inference payloads.
 
                       ## 🚀 Installation
 
-                      ### Download Binaries
+                      ### Download and install
                       ```bash
                       # Linux AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
-                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
+                      sudo install -m 0755 lumen-hostd /usr/local/bin/
 
                       # Linux ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
-                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
+                      sudo install -m 0755 lumen-hostd /usr/local/bin/
 
                       # macOS AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
-                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
-                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
-                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumengatewayd /usr/local/bin/lumengateway 2>/dev/null || true
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
+                      sudo install -m 0755 lumen-hostd /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumen-hostd 2>/dev/null || true
 
                       # macOS ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumengateway-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
-                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
-                      sudo install -m 0755 lumengatewayd lumengateway /usr/local/bin/
-                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumengatewayd /usr/local/bin/lumengateway 2>/dev/null || true
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
+                      xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
+                      sudo install -m 0755 lumen-hostd /usr/local/bin/
+                      sudo xattr -d com.apple.quarantine /usr/local/bin/lumen-hostd 2>/dev/null || true
+
+                      # Windows AMD64: download lumen-hostd-${{ steps.version.outputs.VERSION }}-windows-amd64.zip and unzip
                       ```
 
                       macOS builds are currently unsigned/not notarized. If you download the archive with a browser or another tool that adds Gatekeeper quarantine, remove it before installing:
 
                       ```bash
-                      xattr -d com.apple.quarantine lumengatewayd lumengateway 2>/dev/null || true
+                      xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
                       ```
+
+                      ### Run as a background service
+                      ```bash
+                      lumen-hostd install   # registers a per-user background service (LaunchAgent / systemd user unit / Task Scheduler) and starts it
+                      lumen-hostd status    # check install/running state
+                      lumen-hostd doctor    # diagnose discovery and reachability issues
+                      lumen-hostd uninstall # remove the background service
+                      ```
+
+                      Or run it in the foreground (e.g. in a container): `lumen-hostd serve`.
 
                       ## 📋 Changes
                       ${{ steps.release_notes.outputs.notes }}
@@ -286,7 +200,6 @@ jobs:
                   files: |
                       artifacts/**/*.tar.gz
                       artifacts/**/*.zip
-                      artifacts/**/*.exe
 
             - name: Update latest tag
               if: startsWith(github.ref, 'refs/tags/')

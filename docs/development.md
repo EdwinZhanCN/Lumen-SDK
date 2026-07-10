@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide covers everything you need to know about developing the Lumen SDK project, from setting up your development environment to understanding the build system and contributing guidelines.
+This guide covers developing the Lumen SDK project: environment setup, the build system, and contributing guidelines.
 
 ## 📋 Table of Contents
 
@@ -20,10 +20,9 @@ This guide covers everything you need to know about developing the Lumen SDK pro
 
 ### Required Tools
 
-- **Go 1.24+** - Install from [golang.org](https://golang.org/dl/)
+- **Go 1.25+** - Install from [golang.org](https://golang.org/dl/)
 - **Git** - For version control
 - **Make** - Build system (included with most dev environments)
-- **Node.js 16+** - (Optional, for documentation tools)
 
 ### Optional Development Tools
 
@@ -33,9 +32,6 @@ go install github.com/cosmtrek/air@latest
 
 # Linting
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
-# Dependency management
-go install github.com/daixiang0/gci@latest
 ```
 
 ## 🚀 Quick Start
@@ -48,35 +44,41 @@ cd lumen-sdk
 # Install dependencies
 make deps
 
-# Build and run a quick test
-make quick-start
+# Build and run lumen-hostd in the foreground
+make build
+./dist/lumen-hostd serve
+```
 
-# Check status
-./dist/lumengateway status
-./dist/lumengateway node list
+In another terminal:
+```bash
+./dist/lumen-hostd status
+curl http://localhost:5866/v1/nodes
 ```
 
 ## 📁 Project Structure
 
 ```
 lumen-sdk/
-├── cmd/                          # Main applications
-│   ├── lumengateway/                # CLI client
-│   │   ├── cmd/                 # CLI commands
-│   │   └── internal/            # CLI internal packages
-│   └── lumengatewayd/               # Daemon server
-│       └── internal/            # Daemon internal packages
-├── pkg/                         # Shared libraries
-│   ├── client/                  # Client SDK
-│   ├── config/                  # Configuration management
-│   ├── server/                  # Server components
-│   │   └── rest/                # REST API implementation
-│   └── ...                      # Other shared packages
-├── docs/                        # Documentation
-├── test/                        # Integration tests
-├── .github/workflows/           # GitHub Actions
-├── Makefile                     # Build system
-└── README.md                    # Project overview
+├── cmd/
+│   ├── lumen-hostd/              # Host Broker daemon and CLI
+│   │   ├── cmd/                  # cobra subcommands (serve/install/.../doctor)
+│   │   ├── internal/             # internal client/config wiring
+│   │   │   └── native/           # per-OS background service management
+│   │   └── service/              # daemon lifecycle
+│   └── lumen-bench/               # benchmarking harness
+├── pkg/
+│   ├── client/                   # LumenClient SDK
+│   ├── config/                   # Configuration management
+│   ├── discovery/                # NodeResolver implementations (mDNS, Broker, static)
+│   ├── hostbroker/                # Discovery-only server used by lumen-hostd
+│   ├── server/rest/               # General-purpose REST façade (inference + discovery)
+│   └── types/                    # Shared task/request/response types
+├── docs/                         # Documentation
+├── test/                         # Cross-package integration tests
+├── examples/client/               # Runnable usage examples per task
+├── .github/workflows/            # GitHub Actions
+├── Makefile                      # Build system
+└── README.md                     # Project overview
 ```
 
 ## Performance Benchmark Datasets
@@ -85,115 +87,28 @@ Performance benchmark image datasets are prepared outside the repository. See [P
 
 ## 🔧 Makefile Usage
 
-The Makefile provides a comprehensive set of targets for development, building, testing, and releasing.
-
-### Core Development Commands
-
 ```bash
-# Show all available targets
-make help
-
-# Install dependencies
-make deps
-
-# Run development mode with hot reload
-make dev
-
-# Build for current platform
-make build
-
-# Run complete CI pipeline locally
-make ci
-```
-
-### Build Targets
-
-```bash
-# Build for current platform
-make build
-
-# Build for all platforms (Linux, macOS, Windows)
-make build-all
-
-# Build release binaries with version info
-make build-release
-
-# Create distribution archives
-make archive
-
-# Clean build artifacts
-make clean
-```
-
-### Installation
-
-```bash
-# Install to GOPATH/bin
-make install
-
-# Install to /usr/local/bin (requires sudo)
-make install-local
-
-# Remove from /usr/local/bin
-make uninstall
-```
-
-### Testing & Quality
-
-```bash
-# Run tests
-make test
-
-# Run tests with coverage report
-make test-coverage
-
-# Format code
-make fmt
-
-# Run static analysis
-make vet
-
-# Run linter
-make lint
-
-# Run complete CI pipeline
-make ci
-
-# Run fast CI pipeline (no linting)
-make ci-fast
-```
-
-### Version Management
-
-```bash
-# Show current version info
-make show-version
-
-# Set new version (creates VERSION file)
-make set-version VERSION=v1.2.3
-
-# Create and push git tag (triggers release)
-make tag VERSION=v1.2.3
-```
-
-### Development Helpers
-
-```bash
-# Run daemon in foreground with minimal preset
-make run-daemon
-
-# Run CLI test (assumes daemon is running)
-make run-cli
-
-# Build and start both components
-make quick-start
-```
-
-### Complete Release
-
-```bash
-# Create complete release (clean, test, lint, build, archive)
-make release
+make help            # show all available targets
+make deps             # install dependencies
+make dev              # hot-reload development (requires air)
+make build            # build lumen-hostd for the current platform
+make build-all        # build for linux/darwin/windows, amd64/arm64
+make build-release    # build-all with version info from the current git tag
+make archive          # build-all + create per-platform .tar.gz/.zip archives
+make install          # install to GOPATH/bin
+make install-local    # install to /usr/local/bin (sudo)
+make uninstall        # remove from /usr/local/bin (sudo)
+make clean            # remove dist/ and coverage files
+make test             # go test -race with coverage
+make test-coverage    # test + open an HTML coverage report
+make fmt / vet / lint  # formatting, static analysis, linting
+make ci               # fmt + vet + lint + test
+make ci-fast          # fmt + vet + test (no linting)
+make run-hostd        # go run ./cmd/lumen-hostd serve
+make show-version     # print VERSION/COMMIT/BUILD_TIME that a build would embed
+make set-version VERSION=v1.2.3   # write the VERSION file
+make tag VERSION=v1.2.3           # git tag + push, triggers the release workflow
+make release          # clean + test + lint + build-release + archive
 ```
 
 ## 🌿 Git Workflow
@@ -211,37 +126,27 @@ This project uses a **simple Git flow**:
 #### 1. Start New Work
 
 ```bash
-# Always start from latest main
 git checkout main
 git pull origin main
-
-# Create feature branch
 git checkout -b feature/your-feature-name
-# or
-git checkout -b fix/issue-description
 ```
 
 #### 2. Make Changes
 
-```bash
-# Make your changes...
-git add .
-git commit -m "feat: add new inference service support"
+Use [Conventional Commits](https://www.conventionalcommits.org/):
 
-# Use conventional commit messages:
-# feat: new feature
-# fix: bug fix
-# docs: documentation changes
-# style: formatting changes
-# refactor: code refactoring
-# test: adding tests
-# chore: maintenance tasks
+```
+feat: add new inference service type
+fix: resolve node connection timeout issue
+docs: update API documentation
+refactor: simplify client configuration
+test: add integration tests for streaming
+chore: update dependencies
 ```
 
 #### 3. Keep Branch Updated
 
 ```bash
-# Keep your branch in sync with main
 git checkout main
 git pull origin main
 git checkout feature/your-feature-name
@@ -250,90 +155,39 @@ git rebase main
 
 #### 4. Create Pull Request
 
-```bash
-# Push your branch
-git push origin feature/your-feature-name
-
-# Create pull request on GitHub with:
-# - Clear description
-# - Link to any issues
-# - Testing instructions
-```
+Push your branch and open a PR with a clear description, testing instructions, and any related issue links.
 
 ### Release Process
 
-#### Automated Releases
-
 ```bash
-# 1. Update version
 make set-version VERSION=v1.2.3
-
-# 2. Commit version change
 git add VERSION
 git commit -m "chore: bump version to v1.2.3"
-
-# 3. Create and push tag (triggers automated release)
 make tag VERSION=v1.2.3
-
-# 4. GitHub Actions will:
-#    - Run tests
-#    - Build binaries for all platforms
-#    - Create GitHub release
-#    - Upload artifacts
 ```
 
-#### Manual Development Builds
-
-```bash
-# Build without version tag (shows "dev")
-make build
-
-# Build with custom version
-make build VERSION=dev-feature-branch
-```
+Pushing the tag triggers `.github/workflows/release.yml`, which runs tests, cross-compiles `lumen-hostd` for linux/darwin/windows (amd64/arm64, excluding windows/arm64), and publishes a GitHub release with archives attached.
 
 ## 🛠 Development Environment
 
 ### Local Development Setup
 
-#### 1. Environment Setup
-
 ```bash
-# Clone and setup
 git clone https://github.com/edwinzhancn/lumen-sdk.git
 cd lumen-sdk
 make deps
-
-# Set up development tools
 go install github.com/cosmtrek/air@latest
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 ```
 
-#### 2. Development Mode
+### Development Mode
 
 ```bash
-# Method 1: Hot reload development (recommended)
+# Hot reload (requires air)
 make dev
 
-# Method 2: Manual daemon + CLI
-# Terminal 1: Start daemon
-make run-daemon
-
-# Terminal 2: Use CLI
-./dist/lumengateway status
-./dist/lumengateway node list
-```
-
-#### 3. Testing Development Changes
-
-```bash
-# Build and test
-make build
-./dist/lumengateway --version
-./dist/lumengatewayd --version
-
-# Run integration test
-make quick-start
+# Or run and iterate manually
+make run-hostd
 ```
 
 ### IDE Configuration
@@ -378,121 +232,48 @@ let g:go_test_show_name = 1
 ### Environment Variables
 
 ```bash
-# Development environment
-export LUMENGATEWAY_HOST=localhost
-export LUMENGATEWAY_PORT=5866
-
 # Go development
 export GO111MODULE=on
 export GOPROXY=direct
 export GOSUMDB=sum.golang.org
-
-# Optional: Enable Go modules cache
 export GOCACHE=$HOME/.cache/go-build
 export GOMODCACHE=$HOME/go/pkg/mod
 ```
+
+`lumen-hostd`'s own runtime configuration is via `LUMEN_*` env vars — see [`configuration.md`](configuration.md), not development-environment variables.
 
 ## 🧪 Testing
 
 ### Test Types
 
-#### 1. Unit Tests
-
 ```bash
-# Run all tests
+# All tests
 make test
 
-# Run tests for specific package
+# A specific package
 go test ./pkg/client/...
 
-# Run tests with verbose output
-go test -v ./...
-
-# Run tests with race detection
-go test -race ./...
-```
-
-#### 2. Integration Tests
-
-```bash
-# Run integration tests
-go test -tags=integration ./test/...
-
-# Test CLI with running daemon
-./test/cli/run_integration_tests.sh
-```
-
-#### 3. Coverage
-
-```bash
-# Generate coverage report
-make test-coverage
-
-# View coverage in browser
-open coverage.html
-
-# Coverage thresholds
-go test -coverprofile=coverage.out ./...
-go tool cover -func=coverage.out | grep "total:"
+# Verbose, with race detection
+go test -v -race ./...
 ```
 
 ### Test Organization
 
 ```
 test/
-├── cli/                    # CLI integration tests
-│   └── infer_cli_test.go   # CLI inference tests
-├── integration/            # Service integration tests
-└── e2e/                   # End-to-end tests
+├── config/        # pkg/config black-box tests
+└── pkg/
+    ├── client/     # pkg/client integration-style tests
+    └── types/      # pkg/types tests
 ```
 
-### Writing Tests
+Package-local `*_test.go` files (white-box tests needing access to unexported state) live alongside their source in `pkg/*` and `cmd/*`, not under `test/`.
 
-#### Unit Test Example
+### Coverage
 
-```go
-package client
-
-import (
-    "testing"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/mock"
-)
-
-func TestNewAPIClient(t *testing.T) {
-    client := NewAPIClient("localhost", 5866)
-
-    assert.Equal(t, "http://localhost:5866", client.BaseURL)
-    assert.NotNil(t, client.HTTPClient)
-    assert.Equal(t, 30*time.Second, client.HTTPClient.Timeout)
-}
-```
-
-#### Integration Test Example
-
-```go
-// +build integration
-
-package test
-
-import (
-    "testing"
-    "time"
-    "github.com/edwinzhancn/lumen-sdk/pkg/client"
-)
-
-func TestRealInference(t *testing.T) {
-    if testing.Short() {
-        t.Skip("Skipping integration test in short mode")
-    }
-
-    // Test with real daemon
-    client := client.NewClient()
-    result, err := client.Infer("embedding", "test text")
-
-    assert.NoError(t, err)
-    assert.NotNil(t, result)
-}
+```bash
+make test-coverage
+open coverage.html
 ```
 
 ## 🏗 Build & Release Process
@@ -500,141 +281,92 @@ func TestRealInference(t *testing.T) {
 ### Local Build Process
 
 ```bash
-# Development build (fast, no version info)
-make build
-
-# Production build (with version info)
-VERSION=v1.2.3 make build
-
-# Cross-platform build
-make build-all
-
-# Release build (all platforms + archives)
-make build-release archive
+make build                    # dev build, VERSION defaults to git describe or "dev"
+VERSION=v1.2.3 make build      # override VERSION
+make build-all                 # cross-platform
+make build-release archive     # release build + archives
 ```
 
 ### Build Configuration
 
-The build system uses these variables:
-
-- `VERSION`: Version string (from git tag, VERSION file, or "dev")
-- `COMMIT`: Git commit hash (short form)
-- `BUILD_TIME`: Build timestamp (UTC)
-- `CGO_ENABLED`: Enable/disable CGO (default: 0)
-- `GOOS`: Target operating system
-- `GOARCH`: Target architecture
+- `VERSION`: version string (from git tag, `VERSION` file, or `"dev"`)
+- `COMMIT`: short git commit hash
+- `BUILD_TIME`: build timestamp (UTC)
+- `CGO_ENABLED`: default `0`
+- `GOOS`/`GOARCH`: target platform
 
 ### Version Information
 
-Builds include complete version information:
-
 ```bash
-$ ./dist/lumengatewayd --version
-Lumen Gateway Daemon v1.0.7
+$ ./dist/lumen-hostd version
+Lumen Host Broker v1.2.3
 Commit: d612a83
-Built: 2025-11-07T08:51:59Z
-Go: go1.24.5
+Built: 2026-07-10T08:00:00Z
+Go: go1.25.10
 OS/Arch: darwin/arm64
-
-$ ./dist/lumengateway --version
-lumengateway version v1.0.7 (commit: d612a83, built: 2025-11-07T08:51:59Z)
 ```
 
 ### Release Automation
 
-Releases are fully automated through GitHub Actions:
-
-1. **Trigger**: Push git tag (`v1.2.3`)
-2. **CI**: Run tests and build verification
-3. **Build**: Cross-platform binaries with version injection
-4. **Release**: Create GitHub release with artifacts
-5. **Update**: Update `latest` tag
+1. **Trigger**: push a `v*` git tag
+2. **CI**: run tests
+3. **Build**: cross-platform `lumen-hostd` binaries with version info injected via `-ldflags`
+4. **Release**: create a GitHub release with archives attached
+5. **Update**: move the `latest` tag
 
 ## 🐛 Debugging
 
-### Debugging Daemon
+### Debugging the daemon
 
 ```bash
-# Run daemon with debug logging
-./dist/lumengatewayd --preset minimal --log-level debug
+# Foreground, with a specific config (set logging.level: debug in the file, or LUMEN_LOG_LEVEL=debug)
+LUMEN_LOG_LEVEL=debug ./dist/lumen-hostd serve
 
-# Run daemon in foreground
-./dist/lumengatewayd --preset minimal --daemon=false
-
-# Debug with dlv (Go debugger)
-go run ./cmd/lumengatewayd --preset minimal &
+# Under the Go debugger
+go run ./cmd/lumen-hostd serve &
 dlv connect localhost:5866
 ```
 
-### Debugging CLI
+### Debugging the CLI
 
 ```bash
-# Verbose CLI output
-./dist/lumengateway --verbose status
+# Check what lumen-hostd's own service thinks its state is
+./dist/lumen-hostd status
 
-# Debug API calls
-export LUMENGATEWAY_DEBUG=1
-./dist/lumengateway status
-
-# Test with specific host/port
-./dist/lumengateway --host localhost --port 5866 status
+# Diagnose discovery/reachability against a specific config
+./dist/lumen-hostd doctor --config /path/to/config.yaml
 ```
 
 ### Common Issues
 
-#### Port Already in Use
-
+#### Port already in use
 ```bash
-# Find process using port 5866
 lsof -i :5866
-
-# Kill process
 kill -9 <PID>
-
-# Or use different port
-LUMENGATEWAY_PORT=5867 ./dist/lumengatewayd --preset minimal
+# or point at a different port: LUMEN_REST_PORT=5867 ./dist/lumen-hostd serve
 ```
 
-#### Module Issues
-
+#### Module issues
 ```bash
-# Clean module cache
 make clean-deps
-
-# Re-download dependencies
 make deps
-
-# Update dependencies
 go mod tidy
-go mod download
 ```
 
-#### Build Issues
-
+#### Build issues
 ```bash
-# Clean build
 make clean
 make build
-
-# Build with verbose output
-go build -v ./cmd/lumengatewayd
-go build -v ./cmd/lumengateway
+go build -v ./cmd/lumen-hostd
 ```
 
 ## 📝 Contributing Guidelines
 
 ### Code Style
 
-This project follows Go conventions and uses automated tools:
-
 ```bash
-# Format code
 make fmt
-
-# Run linter
 make lint
-
-# Run static analysis
 make vet
 ```
 
@@ -655,14 +387,10 @@ chore: update dependencies
 ### Pull Request Process
 
 1. **Fork** the repository
-2. **Create** feature branch from main
-3. **Make** changes with proper commits
+2. **Create** a feature branch from `main`
+3. **Make** changes with clear commits
 4. **Test** thoroughly (`make ci`)
-5. **Submit** pull request with:
-   - Clear title and description
-   - Testing instructions
-   - Related issue numbers
-   - Screenshots if applicable
+5. **Submit** a pull request with a clear title/description, testing instructions, and related issue numbers
 
 ### Code Review Checklist
 
@@ -676,26 +404,19 @@ chore: update dependencies
 
 ### Performance Considerations
 
-- **Memory**: Monitor memory usage in long-running daemon
-- **Concurrency**: Use goroutines safely with proper synchronization
-- **Network**: Handle network timeouts and connection pools
-- **Streaming**: Implement proper streaming for large payloads
-
-### Security Guidelines
-
-- **Input validation**: Validate all user inputs
-- **Error handling**: Don't expose sensitive information in errors
-- **Authentication**: Use secure authentication methods
-- **Dependencies**: Keep dependencies updated for security patches
+- **Memory**: monitor memory usage in long-running daemon
+- **Concurrency**: use goroutines safely with proper synchronization
+- **Network**: handle timeouts and connection pool exhaustion
+- **Streaming**: implement proper streaming for large payloads
 
 ## 🔗 Additional Resources
 
 ### Documentation
 
-- [Main README](../README.md) - Project overview
-- [CLI README](../cmd/lumengateway/README.md) - CLI usage guide
-- [API Documentation](../docs/api.md) - REST API reference
-- [Configuration Guide](../docs/configuration.md) - Configuration options
+- [Main README](../README.md) — project overview
+- [Installation Guide](./installation.md) — installing `lumen-hostd`
+- [Configuration Guide](./configuration.md) — configuration options
+- [Host Broker Implementation Plan](./lumen-host-implementation-plan.md) — architecture and rollout plan
 
 ### Go Resources
 

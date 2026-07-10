@@ -1,14 +1,12 @@
 # Lumen SDK Makefile
 
 # Variables
-BINARY_NAME_LUMENGATEWAYD = lumengatewayd
-BINARY_NAME_LUMENGATEWAY = lumengateway
+BINARY_NAME = lumen-hostd
 BUILD_DIR = dist
 VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS_LUMENGATEWAYD = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
-LDFLAGS_LUMENGATEWAY = -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$(VERSION)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$(COMMIT)' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$(BUILD_TIME)'"
+LDFLAGS = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
 
 # Go flags
 GO_FLAGS = -v
@@ -17,7 +15,7 @@ CGO_ENABLED ?= 0
 # Platform specific variables
 PLATFORMS = linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: help build clean test lint fmt vet deps install release docker-build docker-run
+.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps dev run-hostd release tag show-version set-version quick-start ci ci-fast test test-coverage lint fmt vet deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -50,26 +48,22 @@ test-coverage: test ## Show test coverage
 	go tool cover -html=coverage.out -o coverage.html
 
 # Build targets
-build: ## Build binaries for current platform
+build: ## Build lumen-hostd for the current platform
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAYD) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) ./cmd/lumengatewayd
-	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAY) -o $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) ./cmd/lumengateway
+	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/lumen-hostd
 
-build-all: ## Build binaries for all platforms
+build-all: ## Build lumen-hostd for all platforms
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building for multiple platforms..."
 	@for platform in $(PLATFORMS); do \
 		os=$$(echo $$platform | cut -d'/' -f1); \
 		arch=$$(echo $$platform | cut -d'/' -f2); \
-		output_name_lumengatewayd=$(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch; \
-		output_name_lumengateway=$(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch; \
+		output_name=$(BINARY_NAME)-$$os-$$arch; \
 		if [ $$os = "windows" ]; then \
-			output_name_lumengatewayd=$$output_name_lumengatewayd.exe; \
-			output_name_lumengateway=$$output_name_lumengateway.exe; \
+			output_name=$$output_name.exe; \
 		fi; \
 		echo "Building $$os/$$arch..."; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAYD) -o $(BUILD_DIR)/$$output_name_lumengatewayd ./cmd/lumengatewayd; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS_LUMENGATEWAY) -o $(BUILD_DIR)/$$output_name_lumengateway ./cmd/lumengateway; \
+		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$$output_name ./cmd/lumen-hostd; \
 	done
 
 build-release: VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo $(VERSION))
@@ -85,26 +79,23 @@ archive: build-all ## Create archives for distribution
 		os=$$(echo $$platform | cut -d'/' -f1); \
 		arch=$$(echo $$platform | cut -d'/' -f2); \
 		if [ $$os = "windows" ]; then \
-			zip -r lumengateway-$(VERSION)-$$os-$$arch.zip $(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch.exe $(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch.exe; \
+			zip -r $(BINARY_NAME)-$(VERSION)-$$os-$$arch.zip $(BINARY_NAME)-$$os-$$arch.exe; \
 		else \
-			tar -czf lumengateway-$(VERSION)-$$os-$$arch.tar.gz $(BINARY_NAME_LUMENGATEWAYD)-$$os-$$arch $(BINARY_NAME_LUMENGATEWAY)-$$os-$$arch; \
+			tar -czf $(BINARY_NAME)-$(VERSION)-$$os-$$arch.tar.gz $(BINARY_NAME)-$$os-$$arch; \
 		fi; \
 	done
 
 # Installation targets
-install: build ## Install binaries to GOPATH/bin
-	go install $(LDFLAGS_LUMENGATEWAYD) ./cmd/lumengatewayd
-	go install $(LDFLAGS_LUMENGATEWAY) ./cmd/lumengateway
+install: build ## Install lumen-hostd to GOPATH/bin
+	go install $(LDFLAGS) ./cmd/lumen-hostd
 
-install-local: build ## Install binaries to /usr/local/bin
+install-local: build ## Install lumen-hostd to /usr/local/bin
 	@echo "Installing to /usr/local/bin (requires sudo)"
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) /usr/local/bin/
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) /usr/local/bin/
+	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
 
-uninstall: ## Remove binaries from /usr/local/bin
+uninstall: ## Remove lumen-hostd from /usr/local/bin
 	@echo "Removing from /usr/local/bin (requires sudo)"
-	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENGATEWAYD)
-	sudo rm -f /usr/local/bin/$(BINARY_NAME_LUMENGATEWAY)
+	sudo rm -f /usr/local/bin/$(BINARY_NAME)
 
 # Cleanup targets
 clean: ## Clean build artifacts
@@ -122,11 +113,8 @@ dev: ## Run in development mode with auto-reload
 		echo "air not found. Install with: go install github.com/cosmtrek/air@latest"; \
 	fi
 
-run-daemon: ## Run daemon in foreground with minimal preset
-	go run $(LDFLAGS_LUMENGATEWAYD) ./cmd/lumengatewayd --preset minimal
-
-run-cli: ## Run CLI (assumes daemon is running)
-	go run $(LDFLAGS_LUMENGATEWAY) ./cmd/lumengateway status
+run-hostd: ## Run lumen-hostd in the foreground
+	go run $(LDFLAGS) ./cmd/lumen-hostd serve
 
 # Release targets
 release: clean test lint build-release archive ## Create a complete release
@@ -145,9 +133,6 @@ tag: ## Create and push a new git tag
 	git push origin $(VERSION)
 	@echo "Tag $(VERSION) pushed. GitHub Actions will build and create release."
 
-# Container targets (if needed in future)
-# Removed Docker targets as requested
-
 # Version management
 show-version: ## Show version information
 	@echo "Version: $(VERSION)"
@@ -164,48 +149,15 @@ set-version: ## Set new version (usage: make set-version VERSION=v1.2.3)
 	@echo "Note: Consider creating a git tag: git tag $(VERSION) && git push origin $(VERSION)"
 
 # Quick start
-quick-start: ## Quick build and start
-	$(MAKE) build
-	@echo "Starting lumengatewayd daemon..."
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAYD) --preset basic &
+quick-start: build ## Quick build and start
+	@echo "Starting lumen-hostd..."
+	./$(BUILD_DIR)/$(BINARY_NAME) serve &
 	@sleep 2
-	@echo "Testing CLI..."
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) --version
-	./$(BUILD_DIR)/$(BINARY_NAME_LUMENGATEWAY) status
-	@echo "Quick start complete! Daemon running in background."
+	@echo "Checking status..."
+	./$(BUILD_DIR)/$(BINARY_NAME) version
+	@echo "Quick start complete! lumen-hostd running in background."
 
 # CI helpers
 ci: deps fmt vet lint test ## Run full CI pipeline
 
 ci-fast: fmt vet test ## Run fast CI pipeline (no linting)
-
-# Lumen Gateway GUI (Wails v3) targets
-.PHONY: build-gateway-mac build-gateway-win build-gateway-all release-gateway clean-gateway
-
-build-gateway-mac: ## Build and package macOS universal app bundle
-	@echo "Building Lumen Gateway for macOS (Universal)..."
-	cd cmd/lumen-gateway && wails3 package
-
-build-gateway-win: ## Build and package Windows amd64 app
-	@echo "Building Lumen Gateway for Windows (amd64)..."
-	cd cmd/lumen-gateway && wails3 task windows:build
-
-build-gateway-all: build-gateway-mac build-gateway-win ## Build for all GUI platforms
-
-release-gateway: build-gateway-all ## Create distribution archives for the GUI app
-	@echo "Creating distribution archives..."
-	@mkdir -p $(BUILD_DIR)
-	# macOS Universal Cask bundle
-	@if [ -d cmd/lumen-gateway/bin/"Lumen Gateway.app" ]; then \
-		cd cmd/lumen-gateway/bin && zip -r ../../../$(BUILD_DIR)/lumen-gateway-$(VERSION)-darwin-universal.zip "Lumen Gateway.app"; \
-	fi
-	# Windows Executable
-	@if [ -f cmd/lumen-gateway/bin/"Lumen Gateway.exe" ]; then \
-		cp cmd/lumen-gateway/bin/"Lumen Gateway.exe" $(BUILD_DIR)/Lumen-Gateway-$(VERSION)-windows-amd64.exe; \
-	fi
-	@echo "Distribution archives created in $(BUILD_DIR)/"
-
-clean-gateway: ## Clean Wails build artifacts
-	rm -rf cmd/lumen-gateway/bin
-	rm -rf cmd/lumen-gateway/frontend/dist
-	rm -rf cmd/lumen-gateway/frontend/bindings

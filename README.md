@@ -1,69 +1,96 @@
-# Lumen Gateway
+# Lumen SDK
 
-Lumen Gateway 是 Lumen-SDK 的图形化网关客户端，以系统托盘（Menu Bar）应用形式运行。它在单进程中内置了服务发现、连接池、负载均衡和 HTTP REST API，并通过无边框 Webview 提供直观的节点监控看板。
+Lumen SDK is a Go toolkit for discovering and calling distributed ML inference nodes ("Lumen nodes") over gRPC — mDNS-based discovery, a task-aware connection pool, and a REST façade for non-Go clients.
 
----
+`lumen-hostd` is the SDK's Host Broker: a small background service that discovers Lumen nodes on the host's LAN via mDNS and republishes them over a WebSocket, for applications that can't do their own local-network discovery — most commonly a containerized app running under Docker Desktop on macOS or Windows, where the container's bridge network can't see LAN multicast traffic.
 
-## 核心功能
-
-- **系统托盘集成**：支持 macOS 菜单栏与 Windows 任务栏托盘。
-- **轻量级面板**：点击托盘图标弹出无边框 Webview，实时展示：
-  - 核心指标（QPS、平均延迟、在线节点数、错误率）
-  - 已发现节点的 CPU/GPU 负载与可用推理能力（OCR、语义向量等）
-  - 活跃的任务类型分布
-
----
-
-## 开发与构建
-
-### 前提条件
-- Go >= 1.25.0
-- Node.js (建议 v18+)
-- Wails v3 CLI (`go install github.com/wailsapp/wails/v3/cmd/wails3@latest`)
-
-### 1. 开发模式
-启动本地热重载调试：
-```bash
-cd cmd/lumen-gateway
-~/go/bin/wails3 dev
+```text
+Containerized app
+    │
+    │ ordinary TCP/WebSocket (host.docker.internal)
+    ▼
+lumen-hostd on the host OS
+    │
+    │ mDNS on physical network interfaces
+    ▼
+Lumen inference nodes on the LAN
 ```
 
-### 2. 编译与打包
+`lumen-hostd` is a discovery-only control-plane process. It never proxies inference payloads — once a node is discovered, applications using the Go SDK connect to it directly over gRPC.
 
-在项目根目录下，使用 `Makefile` 进行构建：
+---
 
-- **macOS (Universal Bundle)**:
-  生成 macOS 架构通用的 `Lumen Gateway.app`：
-  ```bash
-  make build-gateway-mac
-  ```
-  可执行文件及 app 包将输出至 `cmd/lumen-gateway/bin/`。
+## Repository layout
 
-- **Windows (amd64)**:
-  交叉编译 Windows 版本的 `Lumen Gateway.exe`：
-  ```bash
-  make build-gateway-win
-  ```
+```text
+pkg/
+├── client/       LumenClient: discovery + gRPC connection pool + inference calls
+├── config/       Configuration loading, validation, env var overrides
+├── discovery/    NodeResolver implementations: mDNS, Broker push, static nodes
+├── hostbroker/   Discovery-only HTTP/WebSocket server used by lumen-hostd
+├── server/rest/  General-purpose REST façade (inference + discovery), for embedding
+└── types/        Shared task/request/response types
 
-- **分发包生成**:
-  一键生成 macOS 的 `.zip` 发布包与 Windows 的 `.exe` 执行文件：
-  ```bash
-  make release-gateway
-  ```
-  产物将输出至根目录下的 `dist/` 目录。
+cmd/
+├── lumen-hostd/  The Host Broker daemon and CLI
+└── lumen-bench/  Benchmarking harness
 
-## 分发与安装
+docs/                          Guides referenced below
+examples/client/               Minimal usage examples per task type
+```
 
-### macOS
+## Using the Go SDK directly
 
-1. 从 [GitHub Releases](https://github.com/EdwinZhanCN/Lumen-SDK/releases) 下载最新的 `lumen-gateway-<version>-darwin-universal.zip` 压缩包。
-2. 解压并将 `Lumen Gateway.app` 拖入 **`/Applications`**（应用程序）文件夹中。
-3. 首次启动前，在终端中执行以下命令以解除 macOS 安全隔离限制：
-   ```bash
-   xattr -d com.apple.quarantine "/Applications/Lumen Gateway.app"
-   ```
+```go
+cfg := config.DefaultConfig() // mDNS enabled by default
+c, err := client.NewLumenClient(cfg, logger)
+if err != nil {
+    log.Fatal(err)
+}
+if err := c.Start(ctx); err != nil {
+    log.Fatal(err)
+}
+defer c.Close()
 
-### Windows
+resp, err := c.Infer(ctx, &pb.InferRequest{
+    Task:        "semantic_text_embed",
+    Payload:     []byte("hello world"),
+    PayloadMime: "text/plain",
+})
+```
 
-1. 从 [GitHub Releases](https://github.com/EdwinZhanCN/Lumen-SDK/releases) 下载最新的 `Lumen-Gateway-<version>-windows-amd64.exe` 安装包。
-2. 双击运行即可启动。
+See `pkg/client/README.md` for discovery backend configuration and pool behavior, and `examples/client/` for complete runnable examples per task.
+
+## Running lumen-hostd
+
+Download a release binary from [GitHub Releases](https://github.com/EdwinZhanCN/Lumen-SDK/releases), or build from source:
+
+```bash
+make build
+./dist/lumen-hostd version
+```
+
+Run it as a background service (installs a per-user LaunchAgent on macOS, a systemd user unit on Linux, or a Task Scheduler entry on Windows):
+
+```bash
+lumen-hostd install    # registers and starts the service
+lumen-hostd status     # check install/running state
+lumen-hostd doctor     # diagnose discovery and reachability issues
+lumen-hostd uninstall  # remove the service
+```
+
+Or run it in the foreground (e.g. in a container, or for local development):
+
+```bash
+lumen-hostd serve
+```
+
+Point an application at it with `LUMEN_DISCOVERY_BROKER_URL=http://host.docker.internal:5866` (see `docs/configuration.md`).
+
+## Documentation
+
+- [`docs/installation.md`](docs/installation.md) — installing `lumen-hostd`
+- [`docs/configuration.md`](docs/configuration.md) — config file and environment variable reference
+- [`docs/development.md`](docs/development.md) — building, testing, and contributing
+- [`docs/lumen-host-implementation-plan.md`](docs/lumen-host-implementation-plan.md) — the Host Broker architecture and rollout plan
+- [`pkg/client/README.md`](pkg/client/README.md), [`pkg/config/README.md`](pkg/config/README.md), [`pkg/server/rest/README.md`](pkg/server/rest/README.md) — per-package reference

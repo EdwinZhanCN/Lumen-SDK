@@ -505,14 +505,12 @@ into:
 cmd/lumen-hostd/service/hostd.go
 ```
 
-For the first compatibility release, one implementation may be compiled into two binary names:
-
-```text
-lumen-hostd
-lumengatewayd
-```
-
-`lumengatewayd` should print a deprecation notice but behave identically.
+**Revised (2026-07-10):** the plan originally suggested compiling one
+implementation into two binary names (`lumen-hostd` and `lumengatewayd`,
+with the latter printing a deprecation notice) for compatibility. Since
+`cmd/lumengatewayd` is not used in any production environment, this rollout
+renames it to `cmd/lumen-hostd` outright instead — no `lumengatewayd` binary
+name survives, and there's no deprecation-notice shim to build or maintain.
 
 ## Acceptance criteria
 
@@ -970,11 +968,13 @@ Remove `cmd/lumen-gateway` only after:
 
 Do not delete the GUI at the same time as the first Broker refactor. That would combine architectural, deployment and user-interface risk in one release.
 
-**Scope note (2026-07-10):** Milestone 6 is skipped in this rollout, so
-"Lumilio displays discovered nodes" will not be true when this milestone
-ships. §23 PR 8 therefore deprecates rather than deletes `cmd/lumen-gateway`
-— kept buildable but marked discouraged — so anyone still depending on its
-node UI isn't left with nothing until a future Lumilio integration pass.
+**Scope note (2026-07-10, revised):** Milestone 6 is skipped in this
+rollout, so "Lumilio displays discovered nodes" will not be true when this
+milestone ships — normally a reason to deprecate rather than delete. The
+user confirmed `cmd/lumen-gateway` is not used in any production
+environment, though, so §23's combined PR 3 deletes it (and
+`cmd/lumengateway`) outright rather than deprecating first. "Move node UI
+into Lumilio" is simply dropped from scope, not carried forward.
 
 ## CLI
 
@@ -1378,26 +1378,34 @@ The Host Broker project is complete when all of the following are true:
 
 The first pull requests should be deliberately small.
 
-**Rollout scope decision (2026-07-10):** PR 5 (token authentication) and
-PR 6 (Lumilio Docker integration) are skipped for this rollout. PR 3, PR 4,
-and PR 7 are squashed into one combined PR, since they are all purely
-additive (new package, new binary, new packaging — nothing existing is
-removed or changed). PR 8 is kept as its own PR rather than folded in,
-because it is destructive (deprecates the existing tray app and CLI
-surface) where the others are additive — squashing architectural,
-deployment, and UI-removal risk into one release is exactly what §15 warns
-against. Mapping from the original numbering:
+**Rollout scope decision (2026-07-10, revised):** PR 5 (token authentication)
+and PR 6 (Lumilio Docker integration) are skipped for this rollout. PR 3,
+PR 4, PR 7, **and PR 8** are squashed into one combined PR. PR 8 was
+initially kept separate because §15 warns against combining architectural,
+deployment, and UI-removal risk in one release — but the user confirmed
+neither `cmd/lumen-gateway` (Wails tray) nor `cmd/lumengateway` (CLI) is used
+in any production environment, so that risk doesn't apply here and a fully
+destructive migration is preferred over a deprecate-first approach. This also
+means `cmd/lumengatewayd` is renamed to `cmd/lumen-hostd` outright — no
+compatibility binary under the old name, unlike the plan's original
+Milestone 2 design. A destructive removal of the old binaries has a larger
+blast radius than just their two `cmd/` directories: the root `Makefile`,
+both CI workflows, `README.md`, and `docs/configuration.md`,
+`docs/development.md`, `docs/installation.md` all build, test, or document
+the old `lumengatewayd`/`lumengateway`/Wails-app names and need to change in
+the same PR so nothing is left broken or stale. Mapping from the original
+numbering:
 
 | Original PR | Status |
 |---|---|
 | PR 1 — Characterization tests | Done (commit `7b6d896`) |
 | PR 2 — Broker naming and configuration aliases | Done (commit `da9c93a`) |
 | PR 3 — Discovery-only server package | Squashed into combined PR 3, below |
-| PR 4 — `lumen-hostd` binary | Squashed into combined PR 3, below |
+| PR 4 — `lumen-hostd` binary | Squashed into combined PR 3, below (full rename, no compat binary) |
 | PR 5 — Token authentication | Skipped (§12) |
 | PR 6 — Lumilio Docker integration | Skipped (§14) |
 | PR 7 — Native service packaging | Squashed into combined PR 3, below |
-| PR 8 — UI and CLI retirement | Kept separate, scope narrowed (§15) |
+| PR 8 — UI and CLI retirement | Squashed into combined PR 3, below (destructive, not deprecate-first) |
 | PR 9 — Matter exploration | Unchanged, still separate/optional |
 
 ## PR 1 — Characterization tests
@@ -1419,14 +1427,21 @@ deprecated HubURL compatibility
 
 Done — commit `da9c93a`.
 
-## PR 3 (combined) — Host Broker binary, discovery-only server, and native packaging
+## PR 3 (combined) — Host Broker binary, discovery-only server, native packaging, and old-app removal
 
 ```text
-pkg/hostbroker: health/version/nodes/watch, no inference routes         [was PR 3]
-cmd/lumen-hostd: foreground process + compatibility lumengatewayd binary [was PR 4]
+pkg/hostbroker: health/version/nodes/watch, no inference routes           [was PR 3]
+cmd/lumengatewayd renamed to cmd/lumen-hostd (foreground process,
+    no compat binary under the old name)                                  [was PR 4]
 Native service packaging: macOS LaunchAgent, Windows user startup,
-    Linux systemd units, doctor command                                 [was PR 7]
+    Linux systemd units, doctor command                                   [was PR 7]
+Delete cmd/lumen-gateway (Wails tray) and cmd/lumengateway (CLI) outright  [was PR 8]
+Update Makefile, ci.yml, release.yml, README.md, docs/configuration.md,
+    docs/development.md, docs/installation.md to match
 ```
+
+"Move node UI into Lumilio" (part of the original PR 8) still has no
+destination since PR 6 is skipped — that line item is dropped, not done.
 
 ## ~~PR 5 — Token authentication~~ (skipped)
 
@@ -1448,16 +1463,6 @@ graceful unavailable state
 ```
 
 Skipped for this rollout — see §14.
-
-## PR 8 — UI and CLI retirement
-
-```text
-deprecate tray app (cmd/lumen-gateway) — mark discouraged, do not delete
-remove/deprecate inference CLI surface (cmd/lumengateway `infer` command)
-```
-
-Scope narrowed by skipping PR 6 — "move node UI into Lumilio" has no
-destination without it. See the scope note under §15.
 
 ## PR 9 — Matter exploration
 

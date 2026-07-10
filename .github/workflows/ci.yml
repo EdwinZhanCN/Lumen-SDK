@@ -78,28 +78,17 @@ jobs:
                   COMMIT=${{ github.sha }}
                   BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-                  # Build lumengatewayd with version info
+                  # Build lumen-hostd with version info
                   CGO_ENABLED=0 go build \
                     -ldflags="-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-                    ./cmd/lumengatewayd
-
-                  # Build lumengateway with version info
-                  CGO_ENABLED=0 go build \
-                    -ldflags="-X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Version=$VERSION' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.Commit=$COMMIT' -X 'github.com/edwinzhancn/lumen-sdk/cmd/lumengateway/cmd.BuildTime=$BUILD_TIME' -s -w" \
-                    -o dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-                    ./cmd/lumengateway
+                    -o dist/lumen-hostd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+                    ./cmd/lumen-hostd
 
             - name: Test binary execution
               if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
               run: |
-                  # Test help commands
-                  ./dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }} --help
-                  ./dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }} --help
+                  # Test help and version commands
+                  ./dist/lumen-hostd-${{ matrix.goos }}-${{ matrix.goarch }} --help
 
-                  # Test version commands
-                  echo "=== Testing lumengatewayd version ==="
-                  ./dist/lumengatewayd-${{ matrix.goos }}-${{ matrix.goarch }} --version
-
-                  echo "=== Testing lumengateway version ==="
-                  ./dist/lumengateway-${{ matrix.goos }}-${{ matrix.goarch }} --version
+                  echo "=== Testing lumen-hostd version ==="
+                  ./dist/lumen-hostd-${{ matrix.goos }}-${{ matrix.goarch }} version

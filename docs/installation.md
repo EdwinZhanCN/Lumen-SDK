@@ -1,133 +1,118 @@
-# Installation Guide
+# Installing lumen-hostd
 
 ## System Requirements
 
-- **Go**: 1.21 or later
 - **OS**: Linux, macOS, or Windows
-- **Memory**: Minimum 512MB RAM
-- **Disk**: 100MB free space
-- **Network**: Port 5866 available for REST API
+- **Network**: port 5866 available (configurable) for the Broker's HTTP/WebSocket API
+- **Go 1.25+** only if building from source
 
-## Installation Methods
+## Method 1: Download a release binary (recommended)
 
-### Method 1: Download Release Binaries (Recommended)
-
-#### Linux
+### Linux
 ```bash
 # AMD64
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-linux-amd64.tar.gz | tar xz
-sudo mv lumengatewayd lumengateway /usr/local/bin/
+curl -fsSL https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumen-hostd-latest-linux-amd64.tar.gz | tar xz
+sudo install -m 0755 lumen-hostd /usr/local/bin/
 
 # ARM64
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-linux-arm64.tar.gz | tar xz
-sudo mv lumengatewayd lumengateway /usr/local/bin/
+curl -fsSL https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumen-hostd-latest-linux-arm64.tar.gz | tar xz
+sudo install -m 0755 lumen-hostd /usr/local/bin/
 ```
 
-#### macOS
+### macOS
 ```bash
-# Intel (AMD64)
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-darwin-amd64.tar.gz | tar xz
-sudo mv lumengatewayd lumengateway /usr/local/bin/
+# Apple Silicon
+curl -fsSL https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumen-hostd-latest-darwin-arm64.tar.gz | tar xz
+xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
+sudo install -m 0755 lumen-hostd /usr/local/bin/
 
-# Apple Silicon (ARM64)
-curl -L https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-darwin-arm64.tar.gz | tar xz
-sudo mv lumengatewayd lumengateway /usr/local/bin/
+# Intel
+curl -fsSL https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumen-hostd-latest-darwin-amd64.tar.gz | tar xz
+xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
+sudo install -m 0755 lumen-hostd /usr/local/bin/
 ```
 
-#### Windows
+macOS builds are currently unsigned and not notarized. If Gatekeeper blocks the binary after download, clear the quarantine attribute as shown above (and again on the installed copy: `sudo xattr -d com.apple.quarantine /usr/local/bin/lumen-hostd`).
+
+### Windows
 ```powershell
-# Download and extract
-Invoke-WebRequest -Uri "https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumengateway-latest-windows-amd64.zip" -OutFile "lumengateway.zip"
-Expand-Archive -Path "lumengateway.zip" -DestinationPath "."
-# Move to PATH or add to PATH
+Invoke-WebRequest -Uri "https://github.com/edwinzhancn/lumen-sdk/releases/latest/download/lumen-hostd-latest-windows-amd64.zip" -OutFile "lumen-hostd.zip"
+Expand-Archive -Path "lumen-hostd.zip" -DestinationPath "."
+# Move lumen-hostd.exe somewhere on PATH
 ```
 
-### Method 2: Build from Source
+## Method 2: Build from source
 
-#### Prerequisites
 ```bash
-# Install Go (if not already installed)
-# macOS
-brew install go
-
-# Linux (Ubuntu/Debian)
-sudo apt update && sudo apt install golang-go
-
-# Linux (CentOS/RHEL)
-sudo yum install golang
-```
-
-#### Build Instructions
-```bash
-# Clone repository
 git clone https://github.com/edwinzhancn/lumen-sdk.git
 cd Lumen-SDK
-
-# Build binaries
 make build
-
-# Install to system PATH
-sudo make install-local
+sudo make install-local   # installs to /usr/local/bin
 ```
 
 ## Verification
 
-After installation, verify the binaries:
-
 ```bash
-# Check versions
-lumengateway --version
-lumengatewayd --version
-
-# Test help commands
-lumengateway --help
-lumengatewayd --help
+lumen-hostd version
+lumen-hostd --help
 ```
 
-## Quick Start
+## Quick start
 
-1. **Start the daemon**:
+1. **Install and start as a background service** (recommended for normal use):
    ```bash
-   lumengatewayd --daemon --preset basic
+   lumen-hostd install
+   ```
+   This registers a per-user LaunchAgent (macOS), systemd user unit (Linux), or Task Scheduler entry (Windows) that starts `lumen-hostd serve` at login and restarts it on failure, then starts it immediately.
+
+2. **Check status**:
+   ```bash
+   lumen-hostd status
    ```
 
-2. **Verify installation**:
+3. **Diagnose discovery or reachability issues**:
    ```bash
-   lumengateway status
+   lumen-hostd doctor
    ```
 
-3. **Test functionality**:
-   ```bash
-   lumengateway node list
-   lumengateway infer --service embedding --payload-b64 "SGVsbG8sIHdvcmxkIQ=="
-   ```
+4. **Point an application at it** — see [`configuration.md`](configuration.md) for `LUMEN_DISCOVERY_BROKER_URL` and related settings.
+
+Alternatively, run it in the foreground without installing a service — useful in a container or for local development:
+```bash
+lumen-hostd serve
+```
+
+## Uninstalling
+
+```bash
+lumen-hostd uninstall          # removes the background service registration
+sudo rm /usr/local/bin/lumen-hostd   # if installed via Method 1/2 above
+```
 
 ## Troubleshooting
 
-### Common Issues
-
-#### Permission Denied
+### Permission denied
 ```bash
-# Fix permissions
-sudo chmod +x /usr/local/bin/lumengateway*
+sudo chmod +x /usr/local/bin/lumen-hostd
 ```
 
-#### Command Not Found
+### Command not found
 ```bash
 # Add to PATH (add to ~/.bashrc or ~/.zshrc)
 export PATH=$PATH:/usr/local/bin
-
-# Or create symlinks
-sudo ln -s /usr/local/bin/lumengateway /usr/local/bin/lumengatewayd
 ```
 
-#### Port Already in Use
+### Port already in use
 ```bash
-# Check what's using port 5866
+# Find what's using port 5866
 lsof -i :5866
 
-# Use different port
-lumengatewayd --preset basic
-# Then update CLI
-lumengateway --port 5867 status
+# Point lumen-hostd at a different port via config file or env var —
+# see configuration.md for server.rest.port / LUMEN_REST_PORT.
 ```
+
+### Service won't start
+```bash
+lumen-hostd doctor
+```
+`doctor` checks service installation state, whether the Broker port is reachable, active network interfaces, discovered node count, and TCP-level reachability to each discovered node. It performs every check locally and does not upload logs or data anywhere.
