@@ -3,50 +3,41 @@ name: Release
 on:
     push:
         tags:
-            - "v*"
+            - "v*.*.*"
 
 env:
-    GO_VERSION: "1.25"
+    GO_VERSION: '1.25'
 
 jobs:
     test:
         name: Test
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Setup Go
-              uses: actions/setup-go@v4
+              uses: actions/setup-go@v6
               with:
                   go-version: ${{ env.GO_VERSION }}
-
-            - name: Cache Go modules
-              uses: actions/cache@v3
-              with:
-                  path: |
-                      ~/.cache/go-build
-                      ~/go/pkg/mod
-                  key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-                  restore-keys: |
-                      ${{ runner.os }}-go-
 
             - name: Download dependencies
               run: go mod download
 
-            - name: Run tests
-              run: go test -v -race -coverprofile=coverage.out ./...
+            - name: Verify dependencies
+              run: go mod verify
 
-            - name: Upload coverage to Codecov
-              uses: codecov/codecov-action@v3
-              with:
-                  file: ./coverage.out
-                  token: ${{ secrets.CODECOV_TOKEN }}
+            - name: Run tests
+              run: go test -v -race ./...
 
     build:
         name: Build
         runs-on: ubuntu-latest
         needs: test
+        permissions:
+            contents: read
         strategy:
             matrix:
                 goos: [linux, darwin, windows]
@@ -55,8 +46,8 @@ jobs:
                     - goos: windows
                       goarch: arm64
         steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-go@v4
+            - uses: actions/checkout@v6
+            - uses: actions/setup-go@v6
               with:
                   go-version: ${{ env.GO_VERSION }}
 
@@ -102,9 +93,6 @@ jobs:
         runs-on: ubuntu-latest
         needs: [test, build]
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-
             - name: Download all artifacts
               uses: actions/download-artifact@v4
               with:
@@ -113,33 +101,14 @@ jobs:
             - name: List downloaded artifacts
               run: find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \)
 
-            - name: Get version
-              id: version
-              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-            - name: Create release notes
-              id: release_notes
-              run: |
-                  # Generate release notes from commit history since last tag
-                  PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-                  if [ -n "$PREV_TAG" ]; then
-                    NOTES=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
-                  else
-                    NOTES=$(git log --pretty=format:"- %s (%h)")
-                  fi
-                  {
-                    echo 'notes<<EOF'
-                    echo "$NOTES"
-                    echo 'EOF'
-                  } >> "$GITHUB_OUTPUT"
-
             - name: Create Release
-              uses: softprops/action-gh-release@v1
+              uses: softprops/action-gh-release@v3
               with:
-                  tag_name: ${{ steps.version.outputs.VERSION }}
-                  name: Release ${{ steps.version.outputs.VERSION }}
+                  tag_name: ${{ github.ref_name }}
+                  name: Release ${{ github.ref_name }}
+                  generate_release_notes: true
                   body: |
-                      # Lumen Host Broker ${{ steps.version.outputs.VERSION }}
+                      # Lumen Host Broker ${{ github.ref_name }}
 
                       `lumen-hostd` discovers Lumen inference nodes on the LAN via mDNS and
                       republishes them over `/v1/nodes/watch` for applications that cannot
@@ -152,26 +121,26 @@ jobs:
                       ### Download and install
                       ```bash
                       # Linux AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz | tar xz
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/lumen-hostd-${{ github.ref_name }}-linux-amd64.tar.gz | tar xz
                       sudo install -m 0755 lumen-hostd /usr/local/bin/
 
                       # Linux ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz | tar xz
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/lumen-hostd-${{ github.ref_name }}-linux-arm64.tar.gz | tar xz
                       sudo install -m 0755 lumen-hostd /usr/local/bin/
 
                       # macOS AMD64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz | tar xz
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/lumen-hostd-${{ github.ref_name }}-darwin-amd64.tar.gz | tar xz
                       xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
                       sudo install -m 0755 lumen-hostd /usr/local/bin/
                       sudo xattr -d com.apple.quarantine /usr/local/bin/lumen-hostd 2>/dev/null || true
 
                       # macOS ARM64
-                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lumen-hostd-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz | tar xz
+                      curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/lumen-hostd-${{ github.ref_name }}-darwin-arm64.tar.gz | tar xz
                       xattr -d com.apple.quarantine lumen-hostd 2>/dev/null || true
                       sudo install -m 0755 lumen-hostd /usr/local/bin/
                       sudo xattr -d com.apple.quarantine /usr/local/bin/lumen-hostd 2>/dev/null || true
 
-                      # Windows AMD64: download lumen-hostd-${{ steps.version.outputs.VERSION }}-windows-amd64.zip and unzip
+                      # Windows AMD64: download lumen-hostd-${{ github.ref_name }}-windows-amd64.zip and unzip
                       ```
 
                       macOS builds are currently unsigned/not notarized. If you download the archive with a browser or another tool that adds Gatekeeper quarantine, remove it before installing:
@@ -190,9 +159,6 @@ jobs:
 
                       Or run it in the foreground (e.g. in a container): `lumen-hostd serve`.
 
-                      ## 📋 Changes
-                      ${{ steps.release_notes.outputs.notes }}
-
                       ---
                       📖 [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
                   draft: false
@@ -200,11 +166,3 @@ jobs:
                   files: |
                       artifacts/**/*.tar.gz
                       artifacts/**/*.zip
-
-            - name: Update latest tag
-              if: startsWith(github.ref, 'refs/tags/')
-              run: |
-                  git config --local user.email "action@github.com"
-                  git config --local user.name "GitHub Action"
-                  git tag -f latest
-                  git push -f origin latest

@@ -3,7 +3,7 @@
 # Variables
 BINARY_NAME = lumen-hostd
 BUILD_DIR = dist
-VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
@@ -15,7 +15,7 @@ CGO_ENABLED ?= 0
 # Platform specific variables
 PLATFORMS = linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps dev run-hostd release tag show-version set-version quick-start ci ci-fast test test-coverage lint fmt vet deps
+.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps run-hostd release tag show-version quick-start ci ci-fast test test-coverage lint fmt vet deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -66,8 +66,11 @@ build-all: ## Build lumen-hostd for all platforms
 		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$$output_name ./cmd/lumen-hostd; \
 	done
 
-build-release: VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo $(VERSION))
 build-release: ## Build release binaries with version info
+	@if [ "$(VERSION)" = "dev" ]; then \
+		echo "Release builds require an exact version tag or VERSION=vX.Y.Z"; \
+		exit 1; \
+	fi
 	@echo "Building release version: $(VERSION)"
 	$(MAKE) build-all
 
@@ -105,14 +108,6 @@ clean: ## Clean build artifacts
 clean-deps: ## Clean module cache
 	go clean -modcache
 
-# Development helpers
-dev: ## Run in development mode with auto-reload
-	@if command -v air >/dev/null 2>&1; then \
-		air -c .air.toml; \
-	else \
-		echo "air not found. Install with: go install github.com/cosmtrek/air@latest"; \
-	fi
-
 run-hostd: ## Run lumen-hostd in the foreground
 	go run $(LDFLAGS) ./cmd/lumen-hostd serve
 
@@ -120,8 +115,8 @@ run-hostd: ## Run lumen-hostd in the foreground
 release: clean test lint build-release archive ## Create a complete release
 
 tag: ## Create and push a new git tag
-	@if [ -z "$(VERSION)" ]; then \
-		echo "Usage: make tag VERSION=v1.2.3"; \
+	@if ! printf '%s' "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "Usage: make tag VERSION=vX.Y.Z"; \
 		exit 1; \
 	fi
 	@if [ -z "$(COMMIT)" ]; then \
@@ -138,15 +133,6 @@ show-version: ## Show version information
 	@echo "Version: $(VERSION)"
 	@echo "Commit: $(COMMIT)"
 	@echo "Build Time: $(BUILD_TIME)"
-
-set-version: ## Set new version (usage: make set-version VERSION=v1.2.3)
-	@if [ -z "$(VERSION)" ]; then \
-		echo "Usage: make set-version VERSION=v1.2.3"; \
-		exit 1; \
-	fi
-	@echo "$(VERSION)" > VERSION
-	@echo "Version updated to $(VERSION)"
-	@echo "Note: Consider creating a git tag: git tag $(VERSION) && git push origin $(VERSION)"
 
 # Quick start
 quick-start: build ## Quick build and start

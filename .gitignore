@@ -36,7 +36,6 @@ Thumbs.db
 # Build output directories
 dist/
 build/
-!cmd/lumen-gateway/build/
 bin/
 
 # Temporary files
