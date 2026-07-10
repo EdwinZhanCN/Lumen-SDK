@@ -24,10 +24,12 @@ discovery:
   connect_timeout: 10s
   rediscovery_backoff_min: 10s
   rediscovery_backoff_max: 2m
+  scan_interval: 30s      # how often to re-query mDNS for services
   mdns_enabled: true
   broker_url: ""          # set to consume another Broker instead of/alongside mDNS
   hub_url: ""              # deprecated alias for broker_url
   static_nodes: []          # e.g. ["10.0.0.5:50051"]
+  # node_timeout: 5m        # deprecated — DNS-SD is not operational liveness
 
 server:
   rest:
@@ -108,6 +110,6 @@ ls -la /path/to/config.yaml   # check it exists and is readable
 ```
 `lumen-hostd serve --config` fails fast with a parse or validation error on startup; check the process's stderr/log output (per `logging.output`).
 
-## Known gap
+## Example profiles
 
-`examples/configs/*.yaml` predates the current schema (it references a `connection:` block and a `max_nodes` field that no longer exist) and needs its own refresh — don't use it as a reference until that happens.
+[`examples/configs/`](../examples/configs/) has four ready-to-use starting points — `basic.yaml` (personal computer), `brave.yaml` (server, aggressive discovery), `lightweight.yaml` (small form-factor hardware), and `minimal.yaml` (resource-constrained edge devices). All four use the schema documented above.

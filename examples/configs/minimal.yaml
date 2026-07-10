@@ -1,5 +1,6 @@
 # Minimal Configuration - Edge Devices
-# Designed for resource-constrained edge devices with limited CPU and memory
+# Designed for resource-constrained edge devices with limited CPU and memory,
+# often on unreliable networks.
 
 # Service Discovery - Minimal configuration
 discovery:
@@ -7,59 +8,36 @@ discovery:
     service_type: "_lumen._tcp"
     domain: "local"
     deployment_id: "local"
-    resolve_timeout: 20s            # Conservative resolve timeout
-    connect_timeout: 15s            # Longer operational dial timeout
-    rediscovery_backoff_min: 30s    # Less frequent rediscovery attempts
-    rediscovery_backoff_max: 5m     # Longer maximum cooldown for unstable links
-    max_nodes: 5                    # Limit discovered nodes to reduce memory usage
+    resolve_timeout: 20s # Conservative resolve timeout
+    connect_timeout: 15s # Longer operational dial timeout
+    rediscovery_backoff_min: 30s # Less frequent rediscovery attempts
+    rediscovery_backoff_max: 5m # Longer maximum cooldown for unstable links
+    scan_interval: 60s # Infrequent mDNS re-query to save CPU/battery
+    mdns_enabled: true # Discover nodes on the LAN via mDNS
+    broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch
+    static_nodes: [] # e.g. ["10.0.0.5:50051"] to pin fixed node addresses
 
-# Connection - Conservative settings
-connection:
-    dial_timeout: 10s               # Longer timeout for unreliable networks
-    keep_alive: 60s                 # Longer keep-alive to reduce reconnections
-    max_message_size: 2097152       # 2MB limit to save memory
-    insecure: false
-    compression: true               # Save bandwidth
-
-# Server - Minimal services
+# Server - REST API
 server:
     rest:
         enabled: true
         host: "0.0.0.0"
         port: 8081
-        cors: false                 # Disable CORS to save CPU
-        timeout: 60s                # Longer timeout for slow edge processing
-
-    mcp:
-        enabled: false               # Disable MCP to save resources
-
-    llmtools:
-        enabled: false               # Disable LLM tools to save resources
-
-# Load Balancer - Simple and efficient
-load_balancer:
-    strategy: "round_robin"         # Simple strategy, minimal CPU
-    cache_enabled: true             # Cache to reduce repeated requests
-    cache_ttl: 10m                  # Longer cache to save bandwidth
-    health_check: false             # Disable health checks to save CPU
-    default_timeout: 60s            # Longer default timeout for edge processing
+        cors: false # Disable CORS to save CPU
 
 # Logging - Minimal output
 logging:
-    level: "warn"                   # Only log warnings and errors
-    format: "text"                  # Text format saves CPU compared to JSON
+    level: "warn" # Only log warnings and errors
+    format: "text" # Text format saves CPU compared to JSON
     output: "stdout"
 
-# Monitoring - Disabled to save resources
-monitoring:
-    enabled: false                   # Disable monitoring to save CPU/memory
+# Chunking - Smaller chunks to bound memory usage
+chunk:
+    enable_auto: true
+    threshold: 262144 # 256 KiB — chunk sooner to bound memory use
+    max_chunk_bytes: 65536 # 64 KiB per chunk
 
 # Optimizations for Edge Devices:
-# - Fewer service discovery scans
-# - Limited concurrent connections
-# - Longer timeouts for unstable networks
-# - Minimal logging output
-# - No health monitoring
-# - Request caching enabled
-# - Small message size limits
-# ```
+# - Infrequent mDNS scans and longer timeouts for unstable networks
+# - Minimal, text-based logging output
+# - Small chunk thresholds/sizes to bound memory usage

@@ -1,5 +1,7 @@
 # Brave Configuration - Server Deployment
-# Designed for high-performance server environments with ample resources
+# Designed for high-performance server environments with ample resources:
+# faster discovery cadence and larger chunk sizes for high-throughput,
+# low-latency workloads.
 
 # Service Discovery - Aggressive configuration
 discovery:
@@ -11,60 +13,33 @@ discovery:
     connect_timeout: 5s # Fast operational dial timeout
     rediscovery_backoff_min: 5s # Faster rediscovery cooldown
     rediscovery_backoff_max: 1m # Shorter maximum cooldown
-    max_nodes: 50 # High limit for enterprise deployments
+    scan_interval: 15s # Re-query mDNS frequently for a dynamic fleet
+    mdns_enabled: true # Discover nodes on the LAN via mDNS
+    broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch
+    static_nodes: [] # e.g. ["10.0.0.5:50051"] to pin fixed node addresses
 
-# Connection - High-performance settings
-connection:
-    dial_timeout: 3s # Fast connection establishment
-    keep_alive: 15s # Shorter keep-alive for connection recycling
-    max_message_size: 8388608 # 8MB limit for large payloads
-    insecure: false
-    compression: true # Save bandwidth
-
-# Server - Full service stack
+# Server - REST API
 server:
     rest:
         enabled: true
         host: "0.0.0.0"
         port: 5866
         cors: true # Enable CORS for web interfaces
-        timeout: 15s # Fast timeout for responsive services
-
-    mcp:
-        enabled: true # Enable MCP for enterprise integration
-
-    llmtools:
-        enabled: true # Enable LLM tools for advanced features
-
-# Load Balancer - High-performance configuration
-load_balancer:
-    strategy: "least_connections" # Optimize for load distribution
-    cache_enabled: true # Enable caching for performance
-    cache_ttl: 2m # Short cache for fresher results
-    health_check: true # Aggressive health monitoring
-    check_interval: 5s # Frequent health checks
-    default_timeout: 15s # Fast default timeout
 
 # Logging - Comprehensive logging
 logging:
     level: "info" # Standard logging level
-    format: "json" # JSON format for structured logging
-    output: "stdout" # Can be redirected to log aggregation
+    format: "json" # JSON format for structured logging, e.g. for log aggregation
+    output: "stdout"
 
-# Monitoring - Full observability
-monitoring:
-    enabled: true # Enable comprehensive monitoring
-    metrics_port: 9091 # Standard metrics port
-    health_port: 9092 # Standard health check port
+# Chunking - Larger chunks for a fast, low-latency network
+chunk:
+    enable_auto: true
+    threshold: 4194304 # 4 MiB — hold off chunking longer on a fast network
+    max_chunk_bytes: 1048576 # 1 MiB per chunk
 
 # Optimizations for Server Deployments:
-# - Frequent service discovery for dynamic environments
-# - High node limit for enterprise scale
-# - Fast connection timeouts for responsive services
-# - Large message size support
-# - Least connections load balancing for optimal distribution
-# - Aggressive health monitoring for reliability
-# - Short cache TTL for fresh results
-# - Full service stack enabled
-# - Comprehensive monitoring and observability
+# - Frequent mDNS discovery for a dynamic fleet of nodes
+# - Fast connection and rediscovery timeouts for responsive failover
+# - Larger chunk thresholds/sizes suited to high-bandwidth links
 # - Structured logging for log aggregation systems

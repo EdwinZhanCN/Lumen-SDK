@@ -1,5 +1,6 @@
 # Basic Configuration - Personal Computers
-# Designed for typical personal computers with standard resources
+# Standard settings close to config.DefaultConfig(), suitable for a typical
+# personal computer running lumen-hostd or an SDK-embedding application.
 
 # Service Discovery - Standard configuration
 discovery:
@@ -11,39 +12,18 @@ discovery:
     connect_timeout: 10s # Standard operational dial timeout
     rediscovery_backoff_min: 10s # Initial rediscovery cooldown
     rediscovery_backoff_max: 2m # Maximum rediscovery cooldown
-    max_nodes: 20 # Good limit for personal computers
+    scan_interval: 30s # How often to re-query mDNS for services
+    mdns_enabled: true # Discover nodes on the LAN via mDNS
+    broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch
+    static_nodes: [] # e.g. ["10.0.0.5:50051"] to pin fixed node addresses
 
-# Connection - Standard settings
-connection:
-    dial_timeout: 5s # Standard timeout
-    keep_alive: 30s # Standard keep-alive
-    max_message_size: 4194304 # 4MB limit
-    insecure: false
-    compression: true # Save bandwidth
-
-# Server - Full service set
+# Server - REST API
 server:
     rest:
         enabled: true
         host: "0.0.0.0"
         port: 5866
         cors: true # Enable CORS for web interfaces
-        timeout: 30s # Standard timeout
-
-    mcp:
-        enabled: false # MCP disabled by default
-
-    llmtools:
-        enabled: false # LLM tools disabled by default
-
-# Load Balancer - Standard configuration
-load_balancer:
-    strategy: "round_robin" # Simple and reliable
-    cache_enabled: true # Enable caching for performance
-    cache_ttl: 5m # Standard cache duration
-    health_check: true # Enable health checks
-    check_interval: 10s # Standard check frequency
-    default_timeout: 30s # Standard timeout
 
 # Logging - Standard logging
 logging:
@@ -51,18 +31,14 @@ logging:
     format: "json" # JSON format for structured logging
     output: "stdout"
 
-# Monitoring - Full monitoring enabled
-monitoring:
-    enabled: true # Enable monitoring for observability
-    metrics_port: 9091 # Standard metrics port
-    health_port: 9092 # Standard health check port
+# Chunking - Standard payload chunking
+chunk:
+    enable_auto: true # Automatically chunk large payloads
+    threshold: 1048576 # 1 MiB — payloads larger than this get chunked
+    max_chunk_bytes: 262144 # 256 KiB per chunk
 
 # Features for Personal Computers:
-# - Standard service discovery frequency
-# - Good balance of performance and resource usage
-# - Request caching enabled for better performance
-# - Health checks for reliability
-# - Structured logging for debugging
-# - Full monitoring capabilities
-# - Optional MCP and LLM tools (can be enabled as needed)
-# - Standard timeouts and limits
+# - Standard mDNS discovery frequency
+# - Good balance of discovery latency and network chatter
+# - Structured JSON logging for debugging
+# - Standard timeouts and payload chunk sizes

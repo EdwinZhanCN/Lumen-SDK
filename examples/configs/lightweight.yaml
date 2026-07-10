@@ -1,5 +1,5 @@
 # Lightweight Configuration - Small Computers (Intel N100, NAS)
-# Designed for small form factor computers with moderate resources
+# Designed for small form-factor computers with moderate resources.
 
 # Service Discovery - Balanced configuration
 discovery:
@@ -11,39 +11,18 @@ discovery:
     connect_timeout: 10s # Standard operational dial timeout
     rediscovery_backoff_min: 15s # Moderate rediscovery cooldown
     rediscovery_backoff_max: 3m # Conservative maximum cooldown
-    max_nodes: 10 # Reasonable limit for small computers
+    scan_interval: 45s # Less frequent mDNS re-query to save CPU
+    mdns_enabled: true # Discover nodes on the LAN via mDNS
+    broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch
+    static_nodes: [] # e.g. ["10.0.0.5:50051"] to pin fixed node addresses
 
-# Connection - Balanced settings
-connection:
-    dial_timeout: 5s # Standard timeout
-    keep_alive: 30s # Standard keep-alive
-    max_message_size: 4194304 # 4MB limit
-    insecure: false
-    compression: true # Save bandwidth
-
-# Server - Essential services only
+# Server - REST API
 server:
     rest:
         enabled: true
         host: "0.0.0.0"
         port: 5866
         cors: true # Enable CORS for web interfaces
-        timeout: 30s # Standard timeout
-
-    mcp:
-        enabled: false # Disable MCP to save resources
-
-    llmtools:
-        enabled: false # Disable LLM tools to save resources
-
-# Load Balancer - Efficient configuration
-load_balancer:
-    strategy: "round_robin" # Simple and efficient
-    cache_enabled: true # Enable caching for performance
-    cache_ttl: 5m # Standard cache duration
-    health_check: true # Enable health checks
-    check_interval: 30s # Moderate check frequency
-    default_timeout: 30s # Standard timeout
 
 # Logging - Balanced verbosity
 logging:
@@ -51,17 +30,13 @@ logging:
     format: "json" # JSON format for structured logging
     output: "stdout"
 
-# Monitoring - Basic monitoring enabled
-monitoring:
-    enabled: true # Enable monitoring for health checks
-    metrics_port: 9091 # Standard metrics port
-    health_port: 9092 # Standard health check port
+# Chunking - Standard payload chunking
+chunk:
+    enable_auto: true
+    threshold: 1048576 # 1 MiB
+    max_chunk_bytes: 262144 # 256 KiB per chunk
 
 # Optimizations for Lightweight Devices:
-# - Moderate service discovery frequency
-# - Limited concurrent connections (10 nodes)
-# - Request caching enabled for performance
-# - Health checks enabled but not too frequent
+# - Moderate mDNS discovery frequency to save CPU
+# - Conservative rediscovery backoff on flaky networks
 # - Structured logging with JSON format
-# - Basic monitoring for health tracking
-# - No MCP or LLM tools to save CPU/memory

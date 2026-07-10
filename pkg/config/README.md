@@ -87,10 +87,11 @@ discovery:
   connect_timeout: 10s
   rediscovery_backoff_min: 10s
   rediscovery_backoff_max: 2m
-  max_nodes: 20
+  scan_interval: 30s
   mdns_enabled: true
   broker_url: ""
   hub_url: ""  # deprecated alias for broker_url
+  static_nodes: []  # e.g. ["10.0.0.5:50051"]
 
 server:
   rest:
@@ -119,8 +120,9 @@ if err := cfg.Validate(); err != nil {
 ```
 
 Validates:
-- Discovery fields (`service_type`, `deployment_id`, resolve/connect timeouts, rediscovery backoff) when enabled
-- Deprecated discovery fields (`scan_interval`, `node_timeout`) are accepted for compatibility when non-negative
+- Discovery fields (`service_type`, `deployment_id`, resolve/connect timeouts, rediscovery backoff, `static_nodes` entries) when enabled
+- `scan_interval` and the deprecated `node_timeout` must be non-negative when set
+- `broker_url` and the deprecated `hub_url` must not both be set to different non-empty values
 - REST port range (1–65535) when REST is enabled
 - Log level (`debug`, `info`, `warn`, `error`, `fatal`)
 - Log format (`json`, `text`)
