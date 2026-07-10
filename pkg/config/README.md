@@ -17,8 +17,7 @@ pkg/config/
 ```
 Config
 ├── Discovery   (service discovery: mDNS, Broker URL)
-├── Server
-│   └── REST    (REST API server)
+├── Broker      (Host Broker control plane)
 ├── Logging     (level, format, output)
 └── Chunk       (payload chunking)
 ```
@@ -29,15 +28,12 @@ Config
 |-------------------|-----------------------------------------------|
 | `Config`          | Top-level config, contains all sub-configs     |
 | `DiscoveryConfig` | mDNS / Broker push discovery settings          |
-| `ServerConfig`    | Server settings (REST)                         |
-| `RESTConfig`      | REST API host, port, CORS                      |
+| `BrokerConfig`    | Host Broker host, port, enabled state          |
 | `LoggingConfig`   | Log level, format, output                      |
 | `ChunkConfig`     | Automatic payload chunking thresholds          |
 
 `DiscoveryConfig.BrokerURL` is the current field for push discovery.
-`DiscoveryConfig.HubURL` is a deprecated alias kept for compatibility;
-`DiscoveryConfig.EffectiveBrokerURL()` resolves whichever is set, preferring
-`BrokerURL`. Setting both to different non-empty values fails `Validate()`.
+`DiscoveryConfig.EffectiveBrokerURL()` returns the configured Broker URL.
 
 ## Usage
 
@@ -67,9 +63,8 @@ export LUMEN_DISCOVERY_CONNECT_TIMEOUT=10s
 export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN=10s
 export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX=2m
 export LUMEN_DISCOVERY_BROKER_URL=http://broker:5866
-export LUMEN_DISCOVERY_HUB_URL=http://hub:5866  # deprecated alias for LUMEN_DISCOVERY_BROKER_URL
-export LUMEN_REST_HOST=0.0.0.0
-export LUMEN_REST_PORT=5866
+export LUMEN_BROKER_HOST=0.0.0.0
+export LUMEN_BROKER_PORT=5866
 export LUMEN_LOG_LEVEL=debug
 export LUMEN_LOG_FORMAT=json
 export LUMEN_LOG_OUTPUT=stdout
@@ -90,15 +85,12 @@ discovery:
   scan_interval: 30s
   mdns_enabled: true
   broker_url: ""
-  hub_url: ""  # deprecated alias for broker_url
   static_nodes: []  # e.g. ["10.0.0.5:50051"]
 
-server:
-  rest:
-    enabled: true
-    host: "0.0.0.0"
-    port: 5866
-    cors: true
+broker:
+  enabled: true
+  host: "0.0.0.0"
+  port: 5866
 
 logging:
   level: "info"
@@ -121,9 +113,7 @@ if err := cfg.Validate(); err != nil {
 
 Validates:
 - Discovery fields (`service_type`, `deployment_id`, resolve/connect timeouts, rediscovery backoff, `static_nodes` entries) when enabled
-- `scan_interval` and the deprecated `node_timeout` must be non-negative when set
-- `broker_url` and the deprecated `hub_url` must not both be set to different non-empty values
-- REST port range (1–65535) when REST is enabled
+- Broker port range (1–65535) when the Broker is enabled
 - Log level (`debug`, `info`, `warn`, `error`, `fatal`)
 - Log format (`json`, `text`)
 

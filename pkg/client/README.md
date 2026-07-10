@@ -6,7 +6,7 @@ The client module provides a high-performance inference client for distributed M
 
 ## Key Features
 
-- **Event-driven discovery** via `NodeResolver` interface (mDNS or Gateway push)
+- **Event-driven discovery** via `NodeResolver` interface (mDNS or Broker push)
 - **gRPC-native health monitoring** — no polling, no timers, no health RPCs
 - **Task-aware round-robin** node selection
 - **Lock-free metrics** via atomic counters
@@ -15,7 +15,7 @@ The client module provides a high-performance inference client for distributed M
 ## Architecture
 
 ```
-NodeResolver (mDNS / Push)
+NodeResolver (mDNS / Broker)
     │
     │  NodeEvent stream
     ▼
@@ -121,11 +121,9 @@ configured.
 | Config                          | Backend          | Description                                             |
 |----------------------------------|-------------------|----------------------------------------------------------|
 | `Discovery.MDNSEnabled = true`   | `MDNSResolver`    | Zeroconf mDNS on local network                            |
-| `Discovery.BrokerURL = "..."`    | `BrokerResolver`  | WebSocket push from a Lumen Host Broker (or legacy Gateway) |
+| `Discovery.BrokerURL = "..."`    | `BrokerResolver`  | WebSocket push from a Lumen Host Broker                  |
 | `Discovery.StaticNodes = [...]`  | `StaticResolver`  | Fixed `host:port` endpoints, no dynamic discovery          |
 
-`Discovery.HubURL` is a deprecated alias for `BrokerURL`; so is the
-`PushResolver` name for `BrokerResolver` (`type PushResolver = BrokerResolver`).
 
 ## Pool Behavior
 
