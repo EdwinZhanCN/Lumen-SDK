@@ -25,7 +25,7 @@ var (
 // uses internally to aggregate node events before republishing them over
 // /v1/nodes/watch.
 //
-// The internal client's Broker/Hub URL is always forced empty, regardless of
+// The internal client's Broker URL is always forced empty, regardless of
 // what cfg sets: the Broker is the thing other processes subscribe to, so if
 // it also subscribed to a Broker URL — especially its own — that would set
 // up a self-subscription loop. mDNS and static nodes pass through unchanged.
@@ -39,7 +39,6 @@ func InitializeClient(cfg *config.Config, logger *zap.Logger) error {
 
 	internalCfg := *cfg
 	internalCfg.Discovery.BrokerURL = ""
-	internalCfg.Discovery.HubURL = ""
 
 	lumenClient, err := client.NewLumenClient(&internalCfg, logger)
 	if err != nil {

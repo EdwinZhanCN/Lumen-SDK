@@ -5,7 +5,7 @@
 // It deliberately has no inference route surface (no /v1/infer, no
 // streaming, no LLM/MCP endpoints) — the Broker is a control-plane-only
 // process that reports node identities and endpoints; it never sees
-// inference payloads. See docs/lumen-host-implementation-plan.md §10.
+// inference payloads.
 package hostbroker
 
 import (

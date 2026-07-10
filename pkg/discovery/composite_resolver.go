@@ -6,7 +6,7 @@ import (
 )
 
 // CompositeResolver fans in events from multiple discovery backends so that
-// mDNS, Gateway push, and static nodes can run side by side. Backends emit
+// mDNS, Broker push, and static nodes can run side by side. Backends emit
 // nodes under distinct identities, so the downstream resolver/pool layers
 // handle merging naturally.
 type CompositeResolver struct {

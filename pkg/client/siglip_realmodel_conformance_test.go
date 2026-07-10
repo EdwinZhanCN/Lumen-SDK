@@ -31,9 +31,9 @@ const (
 )
 
 // TestSigLIPRealModelTensorConformance compares the SDK-produced tensor fast
-// path against Hub-owned raw-image preprocessing on a real SigLIP model.
+// path against node-owned raw-image preprocessing on a real SigLIP model.
 //
-// This is intentionally opt-in because it requires a running Lumen-Hub process
+// This is intentionally opt-in because it requires a running Lumen inference node
 // with real SigLIP weights loaded. Example:
 //
 //	LUMEN_SIGLIP_CONFORMANCE_ADDR=127.0.0.1:50051 \
@@ -45,10 +45,7 @@ const (
 func TestSigLIPRealModelTensorConformance(t *testing.T) {
 	addr := strings.TrimSpace(os.Getenv(siglipConformanceAddrEnv))
 	if addr == "" {
-		addr = strings.TrimSpace(os.Getenv("LUMEN_HUB_ADDR"))
-	}
-	if addr == "" {
-		t.Skipf("set %s or LUMEN_HUB_ADDR to a real Lumen-Hub gRPC endpoint", siglipConformanceAddrEnv)
+		t.Skipf("set %s to a real Lumen gRPC endpoint", siglipConformanceAddrEnv)
 	}
 
 	imagePath := resolveSiglipConformanceImage(t)
@@ -60,18 +57,18 @@ func TestSigLIPRealModelTensorConformance(t *testing.T) {
 	client := newStaticRealModelClient(t, addr)
 	contract, serviceName, ok := client.FindTaskContract(types.TaskSemanticImageEmbed)
 	if !ok {
-		t.Fatalf("Hub at %s does not advertise task %q", addr, types.TaskSemanticImageEmbed)
+		t.Fatalf("node at %s does not advertise task %q", addr, types.TaskSemanticImageEmbed)
 	}
 	if serviceName != types.ServiceSigLIP {
 		t.Fatalf("task %q resolved to service %q, want %q", types.TaskSemanticImageEmbed, serviceName, types.ServiceSigLIP)
 	}
 	if !contract.HasTensorPath() {
-		t.Fatalf("Hub SigLIP task does not advertise a tensor path")
+		t.Fatalf("node SigLIP task does not advertise a tensor path")
 	}
 
 	preprocessor, ok := types.DefaultTensorPreprocessorRegistry().Lookup(contract.TensorPreprocessID())
 	if !ok {
-		t.Fatalf("SDK registry does not know Hub SigLIP preprocess id %q", contract.TensorPreprocessID())
+		t.Fatalf("SDK registry does not know node SigLIP preprocess id %q", contract.TensorPreprocessID())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -115,7 +112,7 @@ func TestSigLIPRealModelTensorConformance(t *testing.T) {
 
 	cosine := cosineSimilarity(rawEmbedding.Vector, tensorEmbedding.Vector)
 	maxDiff := maxAbsDiff(rawEmbedding.Vector, tensorEmbedding.Vector)
-	// Keep this strict: the SDK tensor preprocessor should match Hub raw
+	// Keep this strict: the SDK tensor preprocessor should match node raw
 	// preprocessing closely enough that the same model produces near-identical
 	// embeddings. Environment variables can loosen or tighten this for backend
 	// experiments.
@@ -138,7 +135,7 @@ func newStaticRealModelClient(t *testing.T, endpoint string) *LumenClient {
 
 	host, port, err := splitEndpoint(normalizeEndpoint(endpoint))
 	if err != nil {
-		t.Fatalf("parse Hub endpoint %q: %v", endpoint, err)
+		t.Fatalf("parse node endpoint %q: %v", endpoint, err)
 	}
 
 	resolver := &fakeNodeResolver{events: []discovery.NodeEvent{{

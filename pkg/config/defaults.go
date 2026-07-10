@@ -15,18 +15,13 @@ func DefaultConfig() *Config {
 			RediscoveryBackoffMin: 10 * time.Second,
 			RediscoveryBackoffMax: 2 * time.Minute,
 			ScanInterval:          30 * time.Second,
-			NodeTimeout:           5 * time.Minute,
 			MDNSEnabled:           true,
 			BrokerURL:             "",
-			HubURL:                "",
 		},
-		Server: ServerConfig{
-			REST: RESTConfig{
-				Enabled: true,
-				Host:    "0.0.0.0",
-				Port:    5866,
-				CORS:    true,
-			},
+		Broker: BrokerConfig{
+			Enabled: true,
+			Host:    "0.0.0.0",
+			Port:    5866,
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

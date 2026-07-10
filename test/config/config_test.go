@@ -41,8 +41,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected rediscovery_backoff_max 2m, got %s", config.Discovery.RediscoveryBackoffMax)
 	}
 
-	if config.Server.REST.Port != 5866 {
-		t.Errorf("Expected REST port 5866, got %d", config.Server.REST.Port)
+	if config.Broker.Port != 5866 {
+		t.Errorf("Expected Broker port 5866, got %d", config.Broker.Port)
 	}
 
 	if config.Logging.Level != "info" {
@@ -97,14 +97,9 @@ func TestConfigValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid rest port",
+			name: "invalid broker port",
 			config: &config2.Config{
-				Server: config2.ServerConfig{
-					REST: config2.RESTConfig{
-						Enabled: true,
-						Port:    0,
-					},
-				},
+				Broker: config2.BrokerConfig{Enabled: true, Port: 0},
 			},
 			wantErr: true,
 		},
@@ -137,8 +132,8 @@ func TestLoadFromEnv(t *testing.T) {
 	os.Setenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT", "4s")
 	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN", "5s")
 	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX", "30s")
-	os.Setenv("LUMEN_REST_HOST", "127.0.0.1")
-	os.Setenv("LUMEN_REST_PORT", "9090")
+	os.Setenv("LUMEN_BROKER_HOST", "127.0.0.1")
+	os.Setenv("LUMEN_BROKER_PORT", "9090")
 	os.Setenv("LUMEN_LOG_LEVEL", "debug")
 	os.Setenv("LUMEN_LOG_FORMAT", "text")
 
@@ -150,8 +145,8 @@ func TestLoadFromEnv(t *testing.T) {
 		os.Unsetenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT")
 		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN")
 		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX")
-		os.Unsetenv("LUMEN_REST_HOST")
-		os.Unsetenv("LUMEN_REST_PORT")
+		os.Unsetenv("LUMEN_BROKER_HOST")
+		os.Unsetenv("LUMEN_BROKER_PORT")
 		os.Unsetenv("LUMEN_LOG_LEVEL")
 		os.Unsetenv("LUMEN_LOG_FORMAT")
 	}()
@@ -186,12 +181,12 @@ func TestLoadFromEnv(t *testing.T) {
 		t.Errorf("Expected rediscovery_backoff_max 30s, got %s", config.Discovery.RediscoveryBackoffMax)
 	}
 
-	if config.Server.REST.Host != "127.0.0.1" {
-		t.Errorf("Expected REST host '127.0.0.1', got '%s'", config.Server.REST.Host)
+	if config.Broker.Host != "127.0.0.1" {
+		t.Errorf("Expected Broker host '127.0.0.1', got '%s'", config.Broker.Host)
 	}
 
-	if config.Server.REST.Port != 9090 {
-		t.Errorf("Expected REST port 9090, got %d", config.Server.REST.Port)
+	if config.Broker.Port != 9090 {
+		t.Errorf("Expected Broker port 9090, got %d", config.Broker.Port)
 	}
 
 	if config.Logging.Level != "debug" {
@@ -207,43 +202,18 @@ func TestEffectiveBrokerURL(t *testing.T) {
 	tests := []struct {
 		name      string
 		brokerURL string
-		hubURL    string
 		want      string
 	}{
-		{"broker only", "http://broker:5866", "", "http://broker:5866"},
-		{"hub only (deprecated)", "", "http://hub:5866", "http://hub:5866"},
-		{"broker preferred over hub", "http://broker:5866", "http://hub:5866", "http://broker:5866"},
-		{"neither set", "", "", ""},
+		{"broker only", "http://broker:5866", "http://broker:5866"},
+		{"neither set", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dc := config2.DiscoveryConfig{BrokerURL: tt.brokerURL, HubURL: tt.hubURL}
+			dc := config2.DiscoveryConfig{BrokerURL: tt.brokerURL}
 			if got := dc.EffectiveBrokerURL(); got != tt.want {
 				t.Errorf("EffectiveBrokerURL() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestValidateRejectsConflictingBrokerAndHubURL(t *testing.T) {
-	cfg := config2.DefaultConfig()
-	cfg.Discovery.Enabled = false // isolate the conflict check from unrelated discovery validation
-	cfg.Discovery.BrokerURL = "http://broker:5866"
-	cfg.Discovery.HubURL = "http://hub:5866"
-
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected Validate() to reject differing broker_url and hub_url, got nil")
-	}
-}
-
-func TestValidateAllowsEqualBrokerAndHubURL(t *testing.T) {
-	cfg := config2.DefaultConfig()
-	cfg.Discovery.Enabled = false
-	cfg.Discovery.BrokerURL = "http://broker:5866"
-	cfg.Discovery.HubURL = "http://broker:5866"
-
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() with equal broker_url/hub_url = %v, want nil", err)
 	}
 }
 
@@ -260,21 +230,23 @@ func TestLoadFromEnvBrokerURL(t *testing.T) {
 	}
 }
 
-// TestLoadFromEnvHubURLStillWorks locks down that the deprecated
-// LUMEN_DISCOVERY_HUB_URL environment variable keeps working unchanged.
-func TestLoadFromEnvHubURLStillWorks(t *testing.T) {
-	os.Setenv("LUMEN_DISCOVERY_HUB_URL", "http://hub-from-env:5866")
-	defer os.Unsetenv("LUMEN_DISCOVERY_HUB_URL")
-
-	config := config2.DefaultConfig()
-	if err := config.LoadFromEnv(); err != nil {
-		t.Fatalf("LoadFromEnv() error = %v", err)
+func TestLoadFromEnvRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		key  string
+	}{
+		{name: "duration", key: "LUMEN_DISCOVERY_CONNECT_TIMEOUT", env: "soon"},
+		{name: "boolean", key: "LUMEN_DISCOVERY_MDNS_ENABLED", env: "sometimes"},
+		{name: "port", key: "LUMEN_BROKER_PORT", env: "not-a-port"},
 	}
-	if config.Discovery.HubURL != "http://hub-from-env:5866" {
-		t.Errorf("Expected hub_url from env, got %q", config.Discovery.HubURL)
-	}
-	if got := config.Discovery.EffectiveBrokerURL(); got != "http://hub-from-env:5866" {
-		t.Errorf("EffectiveBrokerURL() = %q, want the deprecated hub_url value", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.env)
+			if err := config2.DefaultConfig().LoadFromEnv(); err == nil {
+				t.Fatalf("LoadFromEnv() with %s=%q returned nil", tt.key, tt.env)
+			}
+		})
 	}
 }
 
@@ -286,7 +258,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	// 创建测试配置
 	originalConfig := config2.DefaultConfig()
 	originalConfig.Logging.Level = "debug"
-	originalConfig.Server.REST.Port = 9090
+	originalConfig.Broker.Port = 9090
 
 	// 保存配置
 	err := originalConfig.SaveConfig(tmpFile)
@@ -305,7 +277,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		t.Errorf("Expected log level 'debug', got '%s'", loadedConfig.Logging.Level)
 	}
 
-	if loadedConfig.Server.REST.Port != 9090 {
-		t.Errorf("Expected REST port 9090, got %d", loadedConfig.Server.REST.Port)
+	if loadedConfig.Broker.Port != 9090 {
+		t.Errorf("Expected Broker port 9090, got %d", loadedConfig.Broker.Port)
 	}
 }

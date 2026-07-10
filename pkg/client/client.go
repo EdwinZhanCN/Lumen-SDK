@@ -94,8 +94,7 @@ type LumenClient struct {
 // NewLumenClient creates a new LumenClient.
 //
 // Discovery backends are additive: every configured backend (mDNS when
-// MDNSEnabled, Broker push when BrokerURL or the deprecated HubURL is set,
-// StaticNodes when non-empty) runs concurrently and their node events are
+// MDNSEnabled, Broker push when BrokerURL is set, StaticNodes when non-empty) runs concurrently and their node events are
 // merged. A node reachable through more than one backend appears once per
 // backend identity; the pool tolerates the redundant connection.
 func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error) {

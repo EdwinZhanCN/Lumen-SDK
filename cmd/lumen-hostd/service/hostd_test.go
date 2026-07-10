@@ -16,9 +16,7 @@ import (
 
 // internal.InitializeClient/CloseClient guard a package-level global, so
 // HostdService tests cannot run in parallel and must reset that global
-// around every test, including failed-Start cases. Ported from
-// cmd/lumengatewayd/service/gatewayd_test.go (PR1) to keep the same
-// characterization coverage after the rename to lumen-hostd.
+// around every test, including failed-Start cases.
 
 func freePort(t *testing.T) int {
 	t.Helper()
@@ -45,12 +43,10 @@ func newTestConfig(t *testing.T) *config.Config {
 			// Lumen node in the test environment.
 			StaticNodes: []string{"127.0.0.1:1"},
 		},
-		Server: config.ServerConfig{
-			REST: config.RESTConfig{
-				Enabled: true,
-				Host:    "127.0.0.1",
-				Port:    freePort(t),
-			},
+		Broker: config.BrokerConfig{
+			Enabled: true,
+			Host:    "127.0.0.1",
+			Port:    freePort(t),
 		},
 	}
 }
@@ -107,7 +103,7 @@ func TestHostdServiceStartFailsWithoutDiscoveryBackend(t *testing.T) {
 
 	cfg := &config.Config{
 		Discovery: config.DiscoveryConfig{Enabled: true}, // no mDNS, BrokerURL, or StaticNodes
-		Server:    config.ServerConfig{REST: config.RESTConfig{Enabled: false}},
+		Broker:    config.BrokerConfig{Enabled: false},
 	}
 	svc, err := NewHostdService(cfg, BuildInfo{Version: "test"}, zap.NewNop())
 	if err != nil {
@@ -166,7 +162,7 @@ func TestHostdServiceStopRejectsNewNodeWatchConnections(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	wsURL := fmt.Sprintf("ws://%s:%d/v1/nodes/watch", cfg.Server.REST.Host, cfg.Server.REST.Port)
+	wsURL := fmt.Sprintf("ws://%s:%d/v1/nodes/watch", cfg.Broker.Host, cfg.Broker.Port)
 	waitForCondition(t, func() bool {
 		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
@@ -194,7 +190,7 @@ func TestHostdServiceStopClosesExistingNodeWatchConnections(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	wsURL := fmt.Sprintf("ws://%s:%d/v1/nodes/watch", cfg.Server.REST.Host, cfg.Server.REST.Port)
+	wsURL := fmt.Sprintf("ws://%s:%d/v1/nodes/watch", cfg.Broker.Host, cfg.Broker.Port)
 	var conn *websocket.Conn
 	waitForCondition(t, func() bool {
 		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)

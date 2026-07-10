@@ -115,13 +115,13 @@ func TestTensorContractUnknownPreprocessFallsBackToRawOverGRPC(t *testing.T) {
 		t.Fatalf("semantic image task contract not found")
 	}
 	if !contract.HasTensorPath() {
-		t.Fatalf("expected Hub to advertise a tensor path for version-skew test")
+		t.Fatalf("expected node to advertise a tensor path for version-skew test")
 	}
 	if _, ok := types.DefaultTensorPreprocessorRegistry().Lookup(contract.TensorPreprocessID()); ok {
 		t.Fatalf("future preprocess id %q should not be registered", contract.TensorPreprocessID())
 	}
 
-	// Mandatory fallback rule: unknown Hub tensor preprocess IDs indicate Hub/SDK
+	// Mandatory fallback rule: unknown node tensor preprocess IDs indicate node/SDK
 	// version skew and should degrade to the raw path at high-level callers.
 	req := types.NewInferRequest(types.TaskSemanticImageEmbed).
 		WithCorrelationID("unknown-preprocess-raw-fallback").

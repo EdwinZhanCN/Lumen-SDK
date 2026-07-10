@@ -10,27 +10,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// BrokerResolver subscribes to a Lumen Host Broker (or legacy Gateway)
-// WebSocket endpoint for node change events. It implements the NodeResolver
-// interface.
-//
-// BrokerResolver was previously named PushResolver; that name is kept as a
-// deprecated alias (see push_resolver.go) so existing callers keep compiling.
-// There is exactly one implementation behind both names.
+// BrokerResolver subscribes to a Lumen Host Broker WebSocket endpoint for
+// node change events. It implements the NodeResolver interface.
 type BrokerResolver struct {
 	brokerURL    string
 	deploymentID string
 	logger       *zap.Logger
 }
 
-// NewBrokerResolver creates a Broker-push-based resolver.
+// NewBrokerResolver creates a Broker-based resolver.
 // brokerURL is the base URL of the Broker (e.g. "http://localhost:5866").
 // The resolver connects to brokerURL + "/v1/nodes/watch" via WebSocket.
 func NewBrokerResolver(brokerURL string, logger *zap.Logger) *BrokerResolver {
 	return NewBrokerResolverWithDeployment(brokerURL, DefaultDeploymentID, logger)
 }
 
-// NewBrokerResolverWithDeployment creates a Broker-push-based resolver
+// NewBrokerResolverWithDeployment creates a Broker-based resolver
 // scoped to a specific deployment ID.
 func NewBrokerResolverWithDeployment(brokerURL, deploymentID string, logger *zap.Logger) *BrokerResolver {
 	if deploymentID == "" {

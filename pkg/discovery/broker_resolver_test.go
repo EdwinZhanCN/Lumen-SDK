@@ -10,33 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// The compiler enforces this: PushResolver is a type alias (not a defined
-// type) for BrokerResolver, so this assignment only compiles if they are
-// identical types with no conversion.
-var _ *BrokerResolver = (*PushResolver)(nil)
-
-func TestNewPushResolverAndNewBrokerResolverReturnTheSameType(t *testing.T) {
-	viaPush := NewPushResolver("http://localhost:5866", nil)
-	viaBroker := NewBrokerResolver("http://localhost:5866", nil)
-
-	// Both constructors must return *BrokerResolver: there is exactly one
-	// implementation behind both names, not two independent resolvers.
-	var _ *BrokerResolver = viaPush
-	var _ *BrokerResolver = viaBroker
-
-	if viaPush.brokerURL != viaBroker.brokerURL {
-		t.Fatalf("brokerURL mismatch: push=%q broker=%q", viaPush.brokerURL, viaBroker.brokerURL)
-	}
-	if viaPush.deploymentID != viaBroker.deploymentID {
-		t.Fatalf("deploymentID mismatch: push=%q broker=%q", viaPush.deploymentID, viaBroker.deploymentID)
-	}
-}
-
-// TestPushAndBrokerConstructorsHitTheSameWireImplementation drives the exact
-// same live /v1/nodes/watch server through both constructor names and
-// confirms they observe identical events, proving PR2's claim: renaming to
-// Broker terminology changed no networking or wire behavior.
-func TestPushAndBrokerConstructorsHitTheSameWireImplementation(t *testing.T) {
+func TestBrokerResolverReadsNodeWatch(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -44,9 +18,9 @@ func TestPushAndBrokerConstructorsHitTheSameWireImplementation(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_ = conn.WriteJSON(pushNodeEvent{
+		_ = conn.WriteJSON(brokerNodeEvent{
 			Type:  "snapshot",
-			Nodes: []pushNode{{NodeID: "node-shared", Address: "10.0.0.1:50051", Tasks: []string{"ocr"}}},
+			Nodes: []brokerNode{{NodeID: "node-shared", Address: "10.0.0.1:50051", Tasks: []string{"ocr"}}},
 		})
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -74,10 +48,5 @@ func TestPushAndBrokerConstructorsHitTheSameWireImplementation(t *testing.T) {
 		}
 	}
 
-	t.Run("via NewPushResolver", func(t *testing.T) {
-		assertSnapshot(t, NewPushResolver(srv.URL, nil))
-	})
-	t.Run("via NewBrokerResolver", func(t *testing.T) {
-		assertSnapshot(t, NewBrokerResolver(srv.URL, nil))
-	})
+	assertSnapshot(t, NewBrokerResolver(srv.URL, nil))
 }

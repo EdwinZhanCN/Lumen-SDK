@@ -14,7 +14,7 @@ import (
 // awaitEvent reads exactly one event within timeout, or fails the test. It
 // exists alongside collectEvents (static_resolver_test.go) because reconnect
 // tests need a longer, test-specific deadline to comfortably clear the
-// PushResolver's 1s minimum backoff.
+// BrokerResolver's 1s minimum backoff.
 func awaitEvent(t *testing.T, ch <-chan NodeEvent, timeout time.Duration) NodeEvent {
 	t.Helper()
 	select {
@@ -110,7 +110,7 @@ func TestParseNodeEventsRemoved(t *testing.T) {
 		t.Fatalf("type = %v, want NodeExpired", ev.Type)
 	}
 	if !ev.ExplicitRemove {
-		t.Fatal("Gateway removed event must be ExplicitRemove (unlike mDNS TTL expiry)")
+		t.Fatal("Broker removed event must be ExplicitRemove (unlike mDNS TTL expiry)")
 	}
 	if ev.Identity.Key() != "local-node-d" {
 		t.Fatalf("identity = %q, want local-node-d", ev.Identity.Key())
@@ -136,34 +136,34 @@ func TestParseNodeEventsErrors(t *testing.T) {
 	}
 }
 
-func TestPushAddresses(t *testing.T) {
+func TestBrokerAddresses(t *testing.T) {
 	tests := []struct {
 		name      string
-		node      pushNode
+		node      brokerNode
 		wantAddrs []string
 		wantPort  int
 	}{
 		{
 			name:      "address with port",
-			node:      pushNode{Address: "10.0.0.1:50051"},
+			node:      brokerNode{Address: "10.0.0.1:50051"},
 			wantAddrs: []string{"10.0.0.1"},
 			wantPort:  50051,
 		},
 		{
 			name:      "explicit port wins over parsed port",
-			node:      pushNode{Address: "10.0.0.1:50051", Port: 9999},
+			node:      brokerNode{Address: "10.0.0.1:50051", Port: 9999},
 			wantAddrs: []string{"10.0.0.1"},
 			wantPort:  9999,
 		},
 		{
 			name:      "addresses list combined with legacy address field",
-			node:      pushNode{Addresses: []string{"10.0.0.2"}, Address: "10.0.0.1:50051"},
+			node:      brokerNode{Addresses: []string{"10.0.0.2"}, Address: "10.0.0.1:50051"},
 			wantAddrs: []string{"10.0.0.2", "10.0.0.1"},
 			wantPort:  50051,
 		},
 		{
 			name:      "unparseable address falls back to raw string",
-			node:      pushNode{Address: "not-a-host-port", Port: 50051},
+			node:      brokerNode{Address: "not-a-host-port", Port: 50051},
 			wantAddrs: []string{"not-a-host-port"},
 			wantPort:  50051,
 		},
@@ -171,7 +171,7 @@ func TestPushAddresses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAddrs, gotPort := pushAddresses(tt.node)
+			gotAddrs, gotPort := brokerAddresses(tt.node)
 			if len(gotAddrs) != len(tt.wantAddrs) {
 				t.Fatalf("addresses = %v, want %v", gotAddrs, tt.wantAddrs)
 			}
@@ -189,12 +189,12 @@ func TestPushAddresses(t *testing.T) {
 
 func TestWsSchemeAndWsHost(t *testing.T) {
 	tests := []struct {
-		hubURL     string
+		brokerURL  string
 		wantScheme string
 		wantHost   string
 	}{
 		{"http://localhost:5866", "ws", "localhost:5866"},
-		{"https://gateway.example.com", "wss", "gateway.example.com"},
+		{"https://broker.example.com", "wss", "broker.example.com"},
 		{"localhost:5866", "ws", "localhost:5866"},
 		// Documented quirk: wsScheme only checks the first 5 bytes, so any
 		// string literally starting with "https" (not just an https:// URL)
@@ -204,23 +204,23 @@ func TestWsSchemeAndWsHost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.hubURL, func(t *testing.T) {
-			if got := wsScheme(tt.hubURL); got != tt.wantScheme {
-				t.Fatalf("wsScheme(%q) = %q, want %q", tt.hubURL, got, tt.wantScheme)
+		t.Run(tt.brokerURL, func(t *testing.T) {
+			if got := wsScheme(tt.brokerURL); got != tt.wantScheme {
+				t.Fatalf("wsScheme(%q) = %q, want %q", tt.brokerURL, got, tt.wantScheme)
 			}
-			if got := wsHost(tt.hubURL); got != tt.wantHost {
-				t.Fatalf("wsHost(%q) = %q, want %q", tt.hubURL, got, tt.wantHost)
+			if got := wsHost(tt.brokerURL); got != tt.wantHost {
+				t.Fatalf("wsHost(%q) = %q, want %q", tt.brokerURL, got, tt.wantHost)
 			}
 		})
 	}
 }
 
-// TestPushResolverReconnectsAfterDisconnectWithoutDuplicating drives a real
+// TestBrokerResolverReconnectsAfterDisconnectWithoutDuplicating drives a real
 // WebSocket server that serves one snapshot, drops the connection, and serves
-// a different snapshot on the next attempt. It characterizes PushResolver's
+// a different snapshot on the next attempt. It characterizes BrokerResolver's
 // reconnect behavior (Milestone 0 acceptance: reconnection must not create
 // duplicate active nodes at the event-stream level).
-func TestPushResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
+func TestBrokerResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
 	var attempts atomic.Int32
 	upgrader := websocket.Upgrader{}
 
@@ -233,16 +233,16 @@ func TestPushResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
 		defer conn.Close()
 
 		if n == 1 {
-			_ = conn.WriteJSON(pushNodeEvent{
+			_ = conn.WriteJSON(brokerNodeEvent{
 				Type:  "snapshot",
-				Nodes: []pushNode{{NodeID: "node-a", Address: "10.0.0.1:50051"}},
+				Nodes: []brokerNode{{NodeID: "node-a", Address: "10.0.0.1:50051"}},
 			})
 			return // abrupt drop: forces the resolver to reconnect
 		}
 
-		_ = conn.WriteJSON(pushNodeEvent{
+		_ = conn.WriteJSON(brokerNodeEvent{
 			Type:  "snapshot",
-			Nodes: []pushNode{{NodeID: "node-b", Address: "10.0.0.2:50051"}},
+			Nodes: []brokerNode{{NodeID: "node-b", Address: "10.0.0.2:50051"}},
 		})
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -255,7 +255,7 @@ func TestPushResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	resolver := NewPushResolver(srv.URL, nil)
+	resolver := NewBrokerResolver(srv.URL, nil)
 	ch, err := resolver.Watch(ctx)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
@@ -266,7 +266,7 @@ func TestPushResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
 		t.Fatalf("first event identity = %q, want local-node-a", first.Identity.Key())
 	}
 
-	// The reconnect happens after PushResolver's 1s minimum backoff.
+	// The reconnect happens after BrokerResolver's 1s minimum backoff.
 	second := awaitEvent(t, ch, 5*time.Second)
 	if second.Identity.Key() != "local-node-b" {
 		t.Fatalf("second event identity = %q, want local-node-b", second.Identity.Key())
@@ -277,24 +277,24 @@ func TestPushResolverReconnectsAfterDisconnectWithoutDuplicating(t *testing.T) {
 	}
 }
 
-// TestPushResolverUnavailableGatewayDoesNotCrashAndStopsOnCancel exercises
+// TestBrokerResolverUnavailableDoesNotCrashAndStopsOnCancel exercises
 // invariant 6.3: the SDK keeps retrying quietly (no panic, no event, no
-// closed channel) while the Gateway/Broker is unreachable, and Watch's
+// closed channel) while the Broker is unreachable, and Watch's
 // channel still closes promptly once ctx is cancelled mid-backoff.
-func TestPushResolverUnavailableGatewayDoesNotCrashAndStopsOnCancel(t *testing.T) {
+func TestBrokerResolverUnavailableDoesNotCrashAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Port 1 is privileged and refuses connections immediately on loopback.
-	resolver := NewPushResolver("http://127.0.0.1:1", nil)
+	resolver := NewBrokerResolver("http://127.0.0.1:1", nil)
 	ch, err := resolver.Watch(ctx)
 	if err != nil {
-		t.Fatalf("Watch returned error for an unreachable gateway: %v", err)
+		t.Fatalf("Watch returned error for an unreachable Broker: %v", err)
 	}
 
 	select {
 	case ev, ok := <-ch:
 		if ok {
-			t.Fatalf("unexpected event from unreachable gateway: %+v", ev)
+			t.Fatalf("unexpected event from unreachable Broker: %+v", ev)
 		}
 		t.Fatal("channel closed unexpectedly before context cancellation")
 	case <-time.After(200 * time.Millisecond):

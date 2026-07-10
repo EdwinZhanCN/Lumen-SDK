@@ -74,7 +74,7 @@ func (s *HostdService) Start(ctx context.Context) error {
 func (s *HostdService) startBroker(ctx context.Context) error {
 	_ = ctx
 
-	if !s.config.Server.REST.Enabled {
+	if !s.config.Broker.Enabled {
 		return nil
 	}
 
@@ -90,7 +90,7 @@ func (s *HostdService) startBroker(ctx context.Context) error {
 	// s.broker: if Stop() runs before this goroutine is scheduled, it nils
 	// out s.broker, and reading that (rather than the stable local) here
 	// would nil-pointer panic on broker.Start.
-	addr := fmt.Sprintf("%s:%d", s.config.Server.REST.Host, s.config.Server.REST.Port)
+	addr := fmt.Sprintf("%s:%d", s.config.Broker.Host, s.config.Broker.Port)
 	go func() {
 		if err := broker.Start(addr); err != nil {
 			s.logger.Error("Broker server stopped with error", zap.Error(err))

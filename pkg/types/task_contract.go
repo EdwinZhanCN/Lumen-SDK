@@ -1,8 +1,6 @@
 package types
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -45,7 +43,7 @@ const (
 
 var TopKMetaAliases = []string{"TopK", "topK", "top_k", "top-k", "lumen.top_k"}
 
-// WithService records the target Lumen Hub service in InferRequest.Meta.
+// WithService records the target service in InferRequest.Meta.
 func (b *InferRequestBuilder) WithService(service string) *InferRequestBuilder {
 	return b.WithMeta(MetaService, strings.TrimSpace(service))
 }
@@ -157,7 +155,7 @@ func (b *InferRequestBuilder) ForFaceRecognitionTensor(payload []byte, dtype str
 	return b
 }
 
-// ValidateTaskRequest validates the public Lumen Hub task request contract.
+// ValidateTaskRequest validates the public task request contract.
 func ValidateTaskRequest(req *pb.InferRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
@@ -239,25 +237,6 @@ func TensorBatchingKey(req *pb.InferRequest) (string, bool, error) {
 	}
 	key := strings.Join([]string{service, req.Task, desc.ModelID, desc.DType, shapeTail, desc.PreprocessID}, "|")
 	return key, true, nil
-}
-
-func DecodeRESTPayload(raw json.RawMessage, payloadMIME string) ([]byte, error) {
-	var asString string
-	if err := json.Unmarshal(raw, &asString); err == nil {
-		if payloadMIME == "text/plain" {
-			return []byte(asString), nil
-		}
-		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(asString))
-		if err != nil {
-			return nil, fmt.Errorf("payload must be base64 for %s: %w", payloadMIME, err)
-		}
-		return decoded, nil
-	}
-	var bytes []byte
-	if err := json.Unmarshal(raw, &bytes); err == nil {
-		return bytes, nil
-	}
-	return nil, fmt.Errorf("payload must be a string")
 }
 
 func validateImageTensorTask(req *pb.InferRequest, preprocessIDs []string, allowBatch bool) error {

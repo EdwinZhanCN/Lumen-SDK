@@ -144,25 +144,14 @@ func (r *lumenResolver) Close() {
 	r.cancel()
 }
 
-// resolvedFromEvent reconstructs a ResolvedNode from a NodeEvent,
-// filling in fields from the deprecated convenience fields when needed.
+// resolvedFromEvent reconstructs a ResolvedNode from a NodeEvent.
 func resolvedFromEvent(ev discovery.NodeEvent) discovery.ResolvedNode {
 	resolved := ev.Resolved
 	if resolved.Identity.IsZero() && ev.Identity.NodeID != "" {
 		resolved.Identity = ev.Identity
 	}
-	if resolved.Identity.IsZero() && ev.NodeID != "" {
-		resolved.Identity = discovery.ParseNodeIdentity(ev.NodeID, discovery.DefaultDeploymentID)
-	}
 	if len(resolved.Addresses) == 0 && len(ev.Addresses) > 0 {
 		resolved.Addresses = append([]string(nil), ev.Addresses...)
-	}
-	if resolved.Port == 0 && ev.Address != "" {
-		host, port, err := splitEndpoint(ev.Address)
-		if err == nil {
-			resolved.Port = port
-			resolved.Addresses = append(resolved.Addresses, host)
-		}
 	}
 	if resolved.Txt == nil && ev.Txt != nil {
 		resolved.Txt = copyStringMap(ev.Txt)
@@ -176,17 +165,13 @@ func resolvedFromEvent(ev discovery.NodeEvent) discovery.ResolvedNode {
 	return resolved.Normalized()
 }
 
-// eventKey extracts the node key from either the resolved node or the event's
-// deprecated fields.
+// eventKey extracts the node key from the resolved node or event identity.
 func eventKey(ev discovery.NodeEvent, resolved discovery.ResolvedNode) string {
 	if !resolved.Identity.IsZero() {
 		return resolved.Key()
 	}
 	if ev.Identity.NodeID != "" {
 		return ev.Identity.Key()
-	}
-	if ev.NodeID != "" {
-		return discovery.ParseNodeIdentity(ev.NodeID, discovery.DefaultDeploymentID).Key()
 	}
 	return ""
 }

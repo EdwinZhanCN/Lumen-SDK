@@ -6,44 +6,17 @@ import (
 	"net"
 	"strconv"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
-// PushResolver is a deprecated alias for BrokerResolver, kept so existing
-// callers built against the earlier "Gateway push" name keep compiling.
-// There is exactly one implementation (broker_resolver.go); no logic lives
-// on this name.
-//
-// Deprecated: use BrokerResolver.
-type PushResolver = BrokerResolver
-
-// NewPushResolver is a deprecated alias for NewBrokerResolver.
-//
-// Deprecated: use NewBrokerResolver.
-func NewPushResolver(hubURL string, logger *zap.Logger) *BrokerResolver {
-	return NewBrokerResolver(hubURL, logger)
+// brokerNodeEvent is the wire JSON format received from the Broker WebSocket.
+type brokerNodeEvent struct {
+	Type   string       `json:"type"` // "snapshot", "added", "removed"
+	Nodes  []brokerNode `json:"nodes,omitempty"`
+	Node   *brokerNode  `json:"node,omitempty"`
+	NodeID string       `json:"node_id,omitempty"`
 }
 
-// NewPushResolverWithDeployment is a deprecated alias for
-// NewBrokerResolverWithDeployment.
-//
-// Deprecated: use NewBrokerResolverWithDeployment.
-func NewPushResolverWithDeployment(hubURL, deploymentID string, logger *zap.Logger) *BrokerResolver {
-	return NewBrokerResolverWithDeployment(hubURL, deploymentID, logger)
-}
-
-// pushNodeEvent is the wire JSON format received from the Broker WebSocket.
-// The field name predates the Broker rename; kept as-is since Milestone 3
-// (not this change) is where the wire protocol itself gets formalized.
-type pushNodeEvent struct {
-	Type   string     `json:"type"` // "snapshot", "added", "removed"
-	Nodes  []pushNode `json:"nodes,omitempty"`
-	Node   *pushNode  `json:"node,omitempty"`
-	NodeID string     `json:"node_id,omitempty"`
-}
-
-type pushNode struct {
+type brokerNode struct {
 	NodeID       string            `json:"node_id"`
 	DeploymentID string            `json:"deployment_id,omitempty"`
 	Address      string            `json:"address"`
@@ -58,7 +31,7 @@ func parseNodeEvents(raw []byte) ([]NodeEvent, error) {
 }
 
 func parseNodeEventsWithDeployment(raw []byte, deploymentID string) ([]NodeEvent, error) {
-	var msg pushNodeEvent
+	var msg brokerNodeEvent
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return nil, fmt.Errorf("unmarshal node event: %w", err)
 	}
@@ -67,7 +40,7 @@ func parseNodeEventsWithDeployment(raw []byte, deploymentID string) ([]NodeEvent
 	case "snapshot":
 		events := make([]NodeEvent, 0, len(msg.Nodes))
 		for _, n := range msg.Nodes {
-			events = append(events, nodeEventFromPush(NodeDiscovered, n, deploymentID, false))
+			events = append(events, nodeEventFromBroker(NodeDiscovered, n, deploymentID, false))
 		}
 		return events, nil
 
@@ -75,26 +48,26 @@ func parseNodeEventsWithDeployment(raw []byte, deploymentID string) ([]NodeEvent
 		if msg.Node == nil {
 			return nil, fmt.Errorf("added event missing node")
 		}
-		return []NodeEvent{nodeEventFromPush(NodeDiscovered, *msg.Node, deploymentID, false)}, nil
+		return []NodeEvent{nodeEventFromBroker(NodeDiscovered, *msg.Node, deploymentID, false)}, nil
 
 	case "removed":
 		if msg.NodeID == "" {
 			return nil, fmt.Errorf("removed event missing node_id")
 		}
-		return []NodeEvent{nodeEventFromPush(NodeExpired, pushNode{NodeID: msg.NodeID}, deploymentID, true)}, nil
+		return []NodeEvent{nodeEventFromBroker(NodeExpired, brokerNode{NodeID: msg.NodeID}, deploymentID, true)}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown event type: %s", msg.Type)
 	}
 }
 
-func nodeEventFromPush(eventType NodeEventType, n pushNode, defaultDeploymentID string, explicitRemove bool) NodeEvent {
+func nodeEventFromBroker(eventType NodeEventType, n brokerNode, defaultDeploymentID string, explicitRemove bool) NodeEvent {
 	deploymentID := n.DeploymentID
 	if deploymentID == "" {
 		deploymentID = defaultDeploymentID
 	}
 	identity := ParseNodeIdentity(n.NodeID, deploymentID)
-	addresses, port := pushAddresses(n)
+	addresses, port := brokerAddresses(n)
 	txt := make(map[string]string, len(n.Txt)+1)
 	for k, v := range n.Txt {
 		txt[k] = v
@@ -114,7 +87,7 @@ func nodeEventFromPush(eventType NodeEventType, n pushNode, defaultDeploymentID 
 	return ev
 }
 
-func pushAddresses(n pushNode) ([]string, int) {
+func brokerAddresses(n brokerNode) ([]string, int) {
 	port := n.Port
 	addresses := append([]string(nil), n.Addresses...)
 	if n.Address != "" {
@@ -160,21 +133,21 @@ func joinCSV(values []string) string {
 	return strings.Join(out, ",")
 }
 
-// wsScheme returns "ws" or "wss" based on the hub URL scheme.
-func wsScheme(hubURL string) string {
-	if len(hubURL) >= 5 && hubURL[:5] == "https" {
+// wsScheme returns "ws" or "wss" based on the Broker URL scheme.
+func wsScheme(brokerURL string) string {
+	if len(brokerURL) >= 5 && brokerURL[:5] == "https" {
 		return "wss"
 	}
 	return "ws"
 }
 
-// wsHost strips the scheme prefix from the hub URL to get the host:port.
-func wsHost(hubURL string) string {
-	if len(hubURL) >= 7 && hubURL[:7] == "http://" {
-		return hubURL[7:]
+// wsHost strips the scheme prefix from the Broker URL to get the host:port.
+func wsHost(brokerURL string) string {
+	if len(brokerURL) >= 7 && brokerURL[:7] == "http://" {
+		return brokerURL[7:]
 	}
-	if len(hubURL) >= 8 && hubURL[:8] == "https://" {
-		return hubURL[8:]
+	if len(brokerURL) >= 8 && brokerURL[:8] == "https://" {
+		return brokerURL[8:]
 	}
-	return hubURL
+	return brokerURL
 }

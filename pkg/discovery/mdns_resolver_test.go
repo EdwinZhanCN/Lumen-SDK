@@ -104,8 +104,8 @@ func TestEventFromResolvedTTLExpiryShape(t *testing.T) {
 	if ev.ExplicitRemove {
 		t.Fatal("mDNS-style expiry should not be explicit remove")
 	}
-	if ev.Address != "127.0.0.1:5866" {
-		t.Fatalf("Address = %q, want 127.0.0.1:5866", ev.Address)
+	if len(ev.Addresses) != 1 || ev.Addresses[0] != "127.0.0.1:5866" {
+		t.Fatalf("Addresses = %v, want [127.0.0.1:5866]", ev.Addresses)
 	}
 }
 

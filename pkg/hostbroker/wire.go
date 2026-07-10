@@ -15,10 +15,9 @@ type nodesResponse struct {
 // ---- /v1/nodes/watch wire format ----
 //
 // Must stay byte-compatible with discovery.BrokerResolver's parsing
-// (pkg/discovery/push_resolver.go): snapshot/added/removed messages with
+// (pkg/discovery/broker_resolver.go): snapshot/added/removed messages with
 // node_id, address, tasks, and txt fields. This intentionally duplicates
-// pkg/server/rest/node_watch.go's wire shape rather than importing it, so
-// pkg/hostbroker has no dependency on pkg/server/rest or pkg/client.
+// the endpoint wire shape rather than importing another package.
 
 type wsNodeInfo struct {
 	NodeID  string            `json:"node_id"`

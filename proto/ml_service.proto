@@ -32,7 +32,7 @@ message IOTask {
   // Empty means this task has no client-side tensor fast path.
   string tensor_preprocess_id = 5;
 
-  // True means tensor requests for this task can be dynamically batched by the Hub.
+  // True means tensor requests for this task can be dynamically batched by the routing layer.
   bool tensor_batching_supported = 6;
 }
 

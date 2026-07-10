@@ -83,7 +83,8 @@ func TestPreprocessPrefersMatchingDecodedInput(t *testing.T) {
 }
 
 // Decoded input with the wrong shape must degrade to the encoded path instead
-// of failing, because callers pass both and Hub owns the contract.
+// of failing, because callers pass both and the inference node owns the
+// contract.
 func TestPreprocessFallsBackToEncodedOnShapeMismatch(t *testing.T) {
 	preprocessor := siglipPreprocessor(t)
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // overrides via LoadConfig, or created programmatically via DefaultConfig.
 type Config struct {
 	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
-	Server    ServerConfig    `yaml:"server" json:"server"`
+	Broker    BrokerConfig    `yaml:"broker" json:"broker"`
 	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
 	Chunk     ChunkConfig     `yaml:"chunk" json:"chunk"`
 }
@@ -36,42 +37,26 @@ type DiscoveryConfig struct {
 	RediscoveryBackoffMin time.Duration `yaml:"rediscovery_backoff_min" json:"rediscovery_backoff_min"`
 	RediscoveryBackoffMax time.Duration `yaml:"rediscovery_backoff_max" json:"rediscovery_backoff_max"`
 	ScanInterval          time.Duration `yaml:"scan_interval" json:"scan_interval"` // mDNS poll interval: how often to re-query for services.
-	NodeTimeout           time.Duration `yaml:"node_timeout" json:"node_timeout"`   // Deprecated: DNS-SD is not operational liveness.
 	MDNSEnabled           bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
-	// BrokerURL is the base URL of a Lumen Host Broker (or legacy Gateway)
-	// exposing the /v1/nodes/watch push-discovery endpoint.
+	// BrokerURL is the base URL of a Lumen Host Broker exposing the
+	// /v1/nodes/watch push-discovery endpoint.
 	BrokerURL string `yaml:"broker_url" json:"broker_url"`
-	// Deprecated: use BrokerURL. Retained for compatibility; see
-	// DiscoveryConfig.EffectiveBrokerURL. Validate rejects configs that set
-	// both to different non-empty values.
-	HubURL string `yaml:"hub_url" json:"hub_url"`
 	// StaticNodes pins node gRPC endpoints ("host:port") that are always
 	// resolved without any dynamic discovery. Connection health is still
 	// managed by the pool; entries only need to be reachable eventually.
 	StaticNodes []string `yaml:"static_nodes" json:"static_nodes"`
 }
 
-// EffectiveBrokerURL resolves the configured Broker push-discovery URL,
-// preferring BrokerURL over the deprecated HubURL. Returns "" if neither is
-// set, meaning no Broker resolver should be created.
+// EffectiveBrokerURL returns the configured Broker push-discovery URL.
 func (c DiscoveryConfig) EffectiveBrokerURL() string {
-	if c.BrokerURL != "" {
-		return c.BrokerURL
-	}
-	return c.HubURL
+	return c.BrokerURL
 }
 
-// ServerConfig holds REST server configuration.
-type ServerConfig struct {
-	REST RESTConfig `yaml:"rest" json:"rest"`
-}
-
-// RESTConfig configures the REST API server.
-type RESTConfig struct {
+// BrokerConfig configures the Host Broker control-plane server.
+type BrokerConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Host    string `yaml:"host" json:"host"`
 	Port    int    `yaml:"port" json:"port"`
-	CORS    bool   `yaml:"cors" json:"cors"`
 }
 
 // LoggingConfig configures logging output.
@@ -117,7 +102,11 @@ func LoadConfig(configPath string) (*Config, error) {
 // LoadFromEnv applies LUMEN_* environment variable overrides.
 func (c *Config) LoadFromEnv() error {
 	if os.Getenv("LUMEN_DISCOVERY_ENABLED") != "" {
-		c.Discovery.Enabled = os.Getenv("LUMEN_DISCOVERY_ENABLED") == "true"
+		v, err := strconv.ParseBool(os.Getenv("LUMEN_DISCOVERY_ENABLED"))
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_ENABLED: %w", err)
+		}
+		c.Discovery.Enabled = v
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_SERVICE_TYPE"); v != "" {
 		c.Discovery.ServiceType = v
@@ -129,33 +118,42 @@ func (c *Config) LoadFromEnv() error {
 		c.Discovery.DeploymentID = v
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Discovery.ResolveTimeout = d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_RESOLVE_TIMEOUT: %w", err)
 		}
+		c.Discovery.ResolveTimeout = d
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Discovery.ConnectTimeout = d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_CONNECT_TIMEOUT: %w", err)
 		}
+		c.Discovery.ConnectTimeout = d
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Discovery.RediscoveryBackoffMin = d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN: %w", err)
 		}
+		c.Discovery.RediscoveryBackoffMin = d
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Discovery.RediscoveryBackoffMax = d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX: %w", err)
 		}
+		c.Discovery.RediscoveryBackoffMax = d
 	}
 	if os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") != "" {
-		c.Discovery.MDNSEnabled = os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") == "true"
+		v, err := strconv.ParseBool(os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED"))
+		if err != nil {
+			return fmt.Errorf("LUMEN_DISCOVERY_MDNS_ENABLED: %w", err)
+		}
+		c.Discovery.MDNSEnabled = v
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_BROKER_URL"); v != "" {
 		c.Discovery.BrokerURL = v
-	}
-	if v := os.Getenv("LUMEN_DISCOVERY_HUB_URL"); v != "" {
-		c.Discovery.HubURL = v
 	}
 	if v := os.Getenv("LUMEN_DISCOVERY_STATIC_NODES"); v != "" {
 		var nodes []string
@@ -166,13 +164,15 @@ func (c *Config) LoadFromEnv() error {
 		}
 		c.Discovery.StaticNodes = nodes
 	}
-	if v := os.Getenv("LUMEN_REST_HOST"); v != "" {
-		c.Server.REST.Host = v
+	if v := os.Getenv("LUMEN_BROKER_HOST"); v != "" {
+		c.Broker.Host = v
 	}
-	if v := os.Getenv("LUMEN_REST_PORT"); v != "" {
-		if p, err := parsePort(v); err == nil {
-			c.Server.REST.Port = p
+	if v := os.Getenv("LUMEN_BROKER_PORT"); v != "" {
+		p, err := parsePort(v)
+		if err != nil {
+			return fmt.Errorf("LUMEN_BROKER_PORT: %w", err)
 		}
+		c.Broker.Port = p
 	}
 	if v := os.Getenv("LUMEN_LOG_LEVEL"); v != "" {
 		c.Logging.Level = v
@@ -188,9 +188,6 @@ func (c *Config) LoadFromEnv() error {
 
 // Validate checks for configuration correctness.
 func (c *Config) Validate() error {
-	if c.Discovery.BrokerURL != "" && c.Discovery.HubURL != "" && c.Discovery.BrokerURL != c.Discovery.HubURL {
-		return fmt.Errorf("discovery.broker_url (%q) and deprecated discovery.hub_url (%q) are both set and differ; set only broker_url", c.Discovery.BrokerURL, c.Discovery.HubURL)
-	}
 	if c.Discovery.Enabled {
 		if c.Discovery.ServiceType == "" {
 			return fmt.Errorf("discovery.service_type is required when enabled")
@@ -213,18 +210,15 @@ func (c *Config) Validate() error {
 		if c.Discovery.ScanInterval < 0 {
 			return fmt.Errorf("discovery.scan_interval must be non-negative")
 		}
-		if c.Discovery.NodeTimeout < 0 {
-			return fmt.Errorf("discovery.node_timeout must be non-negative")
-		}
 		for _, node := range c.Discovery.StaticNodes {
 			if _, _, err := net.SplitHostPort(strings.TrimSpace(node)); err != nil {
 				return fmt.Errorf("discovery.static_nodes entry %q must be host:port: %w", node, err)
 			}
 		}
 	}
-	if c.Server.REST.Enabled {
-		if c.Server.REST.Port <= 0 || c.Server.REST.Port > 65535 {
-			return fmt.Errorf("rest.port must be in 1-65535")
+	if c.Broker.Enabled {
+		if c.Broker.Port <= 0 || c.Broker.Port > 65535 {
+			return fmt.Errorf("broker.port must be in 1-65535")
 		}
 	}
 	if !validLogLevel[c.Logging.Level] {
@@ -252,9 +246,5 @@ func (c *Config) SaveConfig(path string) error {
 }
 
 func parsePort(s string) (int, error) {
-	var port int
-	if _, err := fmt.Sscanf(s, "%d", &port); err != nil {
-		return 0, err
-	}
-	return port, nil
+	return strconv.Atoi(strings.TrimSpace(s))
 }

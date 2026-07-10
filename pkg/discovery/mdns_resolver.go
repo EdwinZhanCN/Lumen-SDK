@@ -223,16 +223,10 @@ func extractInstanceName(fullName, serviceType, domain string) string {
 func eventFromResolved(eventType NodeEventType, resolved ResolvedNode) NodeEvent {
 	resolved = resolved.Normalized()
 	endpoints := resolved.CandidateEndpoints()
-	address := ""
-	if len(endpoints) > 0 {
-		address = endpoints[0]
-	}
 	return NodeEvent{
 		Type:      eventType,
 		Identity:  resolved.Identity,
 		Resolved:  resolved,
-		NodeID:    resolved.Key(),
-		Address:   address,
 		Addresses: endpoints,
 		Tasks:     resolved.HintTasks(),
 		Txt:       resolved.Txt,

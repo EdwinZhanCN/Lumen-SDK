@@ -53,7 +53,7 @@ func runDoctor(configFile string) error {
 	results = append(results, checkServiceInstalled())
 	results = append(results, checkNetworkInterfaces())
 
-	addr := fmt.Sprintf("%s:%d", loopbackHost(cfg.Server.REST.Host), cfg.Server.REST.Port)
+	addr := fmt.Sprintf("%s:%d", loopbackHost(cfg.Broker.Host), cfg.Broker.Port)
 	healthResult, reachable := checkBrokerPort(addr)
 	results = append(results, healthResult)
 

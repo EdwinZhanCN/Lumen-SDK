@@ -96,8 +96,8 @@ func (h *nodeWatchHub) dropClient(conn *ws.Conn) {
 // handler returns), so this uses SetReadDeadline instead: that reliably
 // unblocks serve's ReadMessage loop with an i/o timeout, serve returns, and
 // fasthttp performs the real close once the handler has returned. See
-// pkg/server/rest.Router.Close, whose investigation motivated building this
-// correctly from the start here rather than repeating that dead end.
+// Host Broker shutdown closes hijacked connections explicitly so that watch
+// goroutines exit promptly.
 //
 // The lock is held for the whole call (matching broadcast) so a
 // connection's own teardown can't race this same object concurrently with

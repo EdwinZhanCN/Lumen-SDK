@@ -34,7 +34,7 @@ type options struct {
 	concurrency []int
 	limit       int
 	warmup      int
-	hubPID      int
+	nodePID     int
 	outDir      string
 	topK        int
 }
@@ -62,7 +62,7 @@ type sample struct {
 type memorySample struct {
 	Timestamp       time.Time `json:"timestamp"`
 	ClientRSSMB     float64   `json:"client_rss_mb"`
-	HubRSSMB        float64   `json:"hub_rss_mb,omitempty"`
+	NodeRSSMB       float64   `json:"node_rss_mb,omitempty"`
 	ClientHeapMB    float64   `json:"client_heap_mb"`
 	ClientHeapSysMB float64   `json:"client_heap_sys_mb"`
 }
@@ -94,7 +94,7 @@ type latencySummary struct {
 
 type memorySummary struct {
 	ClientPeakRSSMB  float64 `json:"client_peak_rss_mb"`
-	HubPeakRSSMB     float64 `json:"hub_peak_rss_mb,omitempty"`
+	NodePeakRSSMB    float64 `json:"node_peak_rss_mb,omitempty"`
 	ClientPeakHeapMB float64 `json:"client_peak_heap_mb"`
 }
 
@@ -132,13 +132,13 @@ func main() {
 
 	client := pb.NewInferenceClient(conn)
 	if _, err := client.Health(ctx, &emptypb.Empty{}); err != nil {
-		fatal(fmt.Errorf("hub health check failed: %w", err))
+		fatal(fmt.Errorf("node health check failed: %w", err))
 	}
 	contract, err := findTaskContract(ctx, client, opts.task)
 	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("hub=%s task=%s service=%s preprocess_id=%s images=%d\n", opts.addr, opts.task, contract.ServiceName, contract.PreprocessID, len(paths))
+	fmt.Printf("node=%s task=%s service=%s preprocess_id=%s images=%d\n", opts.addr, opts.task, contract.ServiceName, contract.PreprocessID, len(paths))
 
 	for _, mode := range opts.modes {
 		for _, concurrency := range opts.concurrency {
@@ -162,14 +162,14 @@ func parseOptions() (options, error) {
 	var modeText string
 	var concurrencyText string
 	opts := options{}
-	flag.StringVar(&opts.addr, "addr", "127.0.0.1:50051", "Lumen Hub gRPC address")
+	flag.StringVar(&opts.addr, "addr", "127.0.0.1:50051", "Lumen node gRPC address")
 	flag.StringVar(&opts.imageDir, "image-dir", "", "directory containing benchmark images")
 	flag.StringVar(&opts.task, "task", types.TaskSemanticImageEmbed, "task: semantic_image_embed or bioclip_classify")
 	flag.StringVar(&modeText, "mode", "both", "raw, tensor, or both")
 	flag.StringVar(&concurrencyText, "concurrency", "1,4,8", "comma-separated concurrency values")
 	flag.IntVar(&opts.limit, "limit", 500, "maximum image count")
 	flag.IntVar(&opts.warmup, "warmup", 20, "warmup image count per scenario")
-	flag.IntVar(&opts.hubPID, "hub-pid", 0, "optional Hub process PID for RSS sampling")
+	flag.IntVar(&opts.nodePID, "node-pid", 0, "optional node process PID for RSS sampling")
 	flag.StringVar(&opts.outDir, "out", "", "optional output directory for JSONL and summary JSON")
 	flag.IntVar(&opts.topK, "top-k", 5, "BioCLIP top_k")
 	flag.Parse()
@@ -266,7 +266,7 @@ func findTaskContract(ctx context.Context, client pb.InferenceClient, taskName s
 			}
 		}
 	}
-	return taskContract{}, fmt.Errorf("task %q not advertised by Hub", taskName)
+	return taskContract{}, fmt.Errorf("task %q not advertised by node", taskName)
 }
 
 func runScenario(ctx context.Context, client pb.InferenceClient, contract taskContract, opts options, paths []string, mode string, concurrency int, record bool) (summary, error) {
@@ -280,7 +280,7 @@ func runScenario(ctx context.Context, client pb.InferenceClient, contract taskCo
 	if record {
 		memStop = make(chan struct{})
 		memDone = make(chan []memorySample, 1)
-		go monitorMemory(memStop, memDone, opts.hubPID)
+		go monitorMemory(memStop, memDone, opts.nodePID)
 	}
 
 	var wg sync.WaitGroup
@@ -447,7 +447,7 @@ func summarize(task, mode string, concurrency int, samples []sample, memory []me
 	mem := memorySummary{}
 	for _, m := range memory {
 		mem.ClientPeakRSSMB = math.Max(mem.ClientPeakRSSMB, m.ClientRSSMB)
-		mem.HubPeakRSSMB = math.Max(mem.HubPeakRSSMB, m.HubRSSMB)
+		mem.NodePeakRSSMB = math.Max(mem.NodePeakRSSMB, m.NodeRSSMB)
 		mem.ClientPeakHeapMB = math.Max(mem.ClientPeakHeapMB, m.ClientHeapMB)
 	}
 	if len(errorsByText) == 0 {
@@ -537,26 +537,26 @@ func writeJSON(path string, value any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func monitorMemory(stop <-chan struct{}, done chan<- []memorySample, hubPID int) {
+func monitorMemory(stop <-chan struct{}, done chan<- []memorySample, nodePID int) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	samples := []memorySample{readMemory(hubPID)}
+	samples := []memorySample{readMemory(nodePID)}
 	for {
 		select {
 		case <-stop:
-			samples = append(samples, readMemory(hubPID))
+			samples = append(samples, readMemory(nodePID))
 			done <- samples
 			return
 		case <-ticker.C:
-			samples = append(samples, readMemory(hubPID))
+			samples = append(samples, readMemory(nodePID))
 		}
 	}
 }
 
-func readMemory(hubPID int) memorySample {
+func readMemory(nodePID int) memorySample {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	return memorySample{Timestamp: time.Now(), ClientRSSMB: rssMB(os.Getpid()), HubRSSMB: rssMB(hubPID), ClientHeapMB: bytesToMB(stats.HeapAlloc), ClientHeapSysMB: bytesToMB(stats.HeapSys)}
+	return memorySample{Timestamp: time.Now(), ClientRSSMB: rssMB(os.Getpid()), NodeRSSMB: rssMB(nodePID), ClientHeapMB: bytesToMB(stats.HeapAlloc), ClientHeapSysMB: bytesToMB(stats.HeapSys)}
 }
 
 func rssMB(pid int) float64 {
@@ -585,8 +585,8 @@ func minInt(a, b int) int {
 }
 
 func printSummary(sum summary) {
-	fmt.Printf("%s/%s c=%d images=%d ok=%d fail=%d throughput=%.2f img/s total_p50=%.1fms total_p95=%.1fms infer_p95=%.1fms pre_p95=%.1fms client_rss_peak=%.1fMB hub_rss_peak=%.1fMB\n",
-		sum.Task, sum.Mode, sum.Concurrency, sum.Images, sum.Success, sum.Failed, sum.Throughput, sum.LatencyTotal.P50, sum.LatencyTotal.P95, sum.LatencyInfer.P95, sum.LatencyPre.P95, sum.Memory.ClientPeakRSSMB, sum.Memory.HubPeakRSSMB)
+	fmt.Printf("%s/%s c=%d images=%d ok=%d fail=%d throughput=%.2f img/s total_p50=%.1fms total_p95=%.1fms infer_p95=%.1fms pre_p95=%.1fms client_rss_peak=%.1fMB node_rss_peak=%.1fMB\n",
+		sum.Task, sum.Mode, sum.Concurrency, sum.Images, sum.Success, sum.Failed, sum.Throughput, sum.LatencyTotal.P50, sum.LatencyTotal.P95, sum.LatencyInfer.P95, sum.LatencyPre.P95, sum.Memory.ClientPeakRSSMB, sum.Memory.NodePeakRSSMB)
 	if len(sum.Errors) > 0 {
 		fmt.Printf("errors: %+v\n", sum.Errors)
 	}
