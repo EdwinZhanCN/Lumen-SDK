@@ -622,6 +622,11 @@ When a client reconnects, it receives a complete snapshot. The first implementat
 
 # 12. Milestone 4 — Add minimum viable authentication
 
+**Status: skipped for the initial rollout (2026-07-10)** — see §23 PR 5.
+The Broker API ships without bearer-token auth in this rollout; anyone on
+the LAN who can reach the Broker's port can read node topology. Revisit
+before recommending the Broker for untrusted or shared networks.
+
 ## Goal
 
 Prevent arbitrary LAN clients from reading Broker state while avoiding a full PKI project.
@@ -846,6 +851,12 @@ Lumilio container
 
 # 14. Milestone 6 — Integrate Broker discovery into Lumilio deployment
 
+**Status: skipped for the initial rollout (2026-07-10)** — see §23 PR 6.
+Lumilio-Photos (separate repo) is not updated to consume Broker discovery in
+this rollout; direct mDNS, static nodes, and `LUMEN_DISCOVERY_HUB_URL` remain
+the only ways Lumilio finds nodes. This also means Milestone 7's "move node
+UI into Lumilio" has no destination yet — see the note there.
+
 ## Goal
 
 Make Host Broker discovery a first-class Lumilio configuration without making it mandatory.
@@ -958,6 +969,12 @@ Remove `cmd/lumen-gateway` only after:
 - configuration migration has shipped.
 
 Do not delete the GUI at the same time as the first Broker refactor. That would combine architectural, deployment and user-interface risk in one release.
+
+**Scope note (2026-07-10):** Milestone 6 is skipped in this rollout, so
+"Lumilio displays discovered nodes" will not be true when this milestone
+ships. §23 PR 8 therefore deprecates rather than deletes `cmd/lumen-gateway`
+— kept buildable but marked discouraged — so anyone still depending on its
+node UI isn't left with nothing until a future Lumilio integration pass.
 
 ## CLI
 
@@ -1327,6 +1344,11 @@ No database migration is required for the first Host Broker implementation, so r
 
 # 22. Definition of done
 
+**Note (2026-07-10):** items 4, 6, and 11 below depend on Milestone 6
+(Lumilio Docker integration) and Milestone 4 (token authentication), both
+skipped for the initial rollout (§23). They remain the eventual target, not
+current scope.
+
 The Host Broker project is complete when all of the following are true:
 
 1. A macOS user can install one background service with no tray application.
@@ -1356,12 +1378,36 @@ The Host Broker project is complete when all of the following are true:
 
 The first pull requests should be deliberately small.
 
+**Rollout scope decision (2026-07-10):** PR 5 (token authentication) and
+PR 6 (Lumilio Docker integration) are skipped for this rollout. PR 3, PR 4,
+and PR 7 are squashed into one combined PR, since they are all purely
+additive (new package, new binary, new packaging — nothing existing is
+removed or changed). PR 8 is kept as its own PR rather than folded in,
+because it is destructive (deprecates the existing tray app and CLI
+surface) where the others are additive — squashing architectural,
+deployment, and UI-removal risk into one release is exactly what §15 warns
+against. Mapping from the original numbering:
+
+| Original PR | Status |
+|---|---|
+| PR 1 — Characterization tests | Done (commit `7b6d896`) |
+| PR 2 — Broker naming and configuration aliases | Done (commit `da9c93a`) |
+| PR 3 — Discovery-only server package | Squashed into combined PR 3, below |
+| PR 4 — `lumen-hostd` binary | Squashed into combined PR 3, below |
+| PR 5 — Token authentication | Skipped (§12) |
+| PR 6 — Lumilio Docker integration | Skipped (§14) |
+| PR 7 — Native service packaging | Squashed into combined PR 3, below |
+| PR 8 — UI and CLI retirement | Kept separate, scope narrowed (§15) |
+| PR 9 — Matter exploration | Unchanged, still separate/optional |
+
 ## PR 1 — Characterization tests
 
 ```text
 Test current PushResolver and node-watch behavior.
 No production behavior changes.
 ```
+
+Done — commit `7b6d896`.
 
 ## PR 2 — Broker naming and configuration aliases
 
@@ -1371,23 +1417,18 @@ BrokerResolver
 deprecated HubURL compatibility
 ```
 
-## PR 3 — Discovery-only server package
+Done — commit `da9c93a`.
+
+## PR 3 (combined) — Host Broker binary, discovery-only server, and native packaging
 
 ```text
-pkg/hostbroker
-health/version/nodes/watch
-no inference routes
+pkg/hostbroker: health/version/nodes/watch, no inference routes         [was PR 3]
+cmd/lumen-hostd: foreground process + compatibility lumengatewayd binary [was PR 4]
+Native service packaging: macOS LaunchAgent, Windows user startup,
+    Linux systemd units, doctor command                                 [was PR 7]
 ```
 
-## PR 4 — `lumen-hostd` binary
-
-```text
-foreground process
-compatibility lumengatewayd binary
-no native installer yet
-```
-
-## PR 5 — Token authentication
+## ~~PR 5 — Token authentication~~ (skipped)
 
 ```text
 token generation
@@ -1395,7 +1436,9 @@ WebSocket authorization
 SDK token-file support
 ```
 
-## PR 6 — Lumilio Docker integration
+Skipped for this rollout — see §12.
+
+## ~~PR 6 — Lumilio Docker integration~~ (skipped)
 
 ```text
 Broker configuration
@@ -1404,22 +1447,17 @@ settings status
 graceful unavailable state
 ```
 
-## PR 7 — Native service packaging
-
-```text
-LaunchAgent
-Windows user startup
-systemd units
-doctor command
-```
+Skipped for this rollout — see §14.
 
 ## PR 8 — UI and CLI retirement
 
 ```text
-move node UI into Lumilio
-deprecate tray app
-remove inference CLI surface
+deprecate tray app (cmd/lumen-gateway) — mark discouraged, do not delete
+remove/deprecate inference CLI surface (cmd/lumengateway `infer` command)
 ```
+
+Scope narrowed by skipping PR 6 — "move node UI into Lumilio" has no
+destination without it. See the scope note under §15.
 
 ## PR 9 — Matter exploration
 
