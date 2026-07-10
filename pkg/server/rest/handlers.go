@@ -49,6 +49,14 @@ func (h *handler) NodeWatch(c *fiber.Ctx) error {
 	return h.watch.upgrade(c)
 }
 
+// Close closes any node-watch clients still connected to this handler. It is
+// a lifecycle operation, not a request handler, so it is deliberately not
+// part of the Handlers interface; Router.Close reaches it via a type
+// assertion.
+func (h *handler) Close() {
+	h.watch.Close()
+}
+
 func (h *handler) HealthCheck(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(APIResponse{
 		Success:   true,

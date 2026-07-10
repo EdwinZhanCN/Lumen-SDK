@@ -79,3 +79,19 @@ func (r *Router) ShutdownWithTimeout(timeout time.Duration) error {
 	}
 	return r.app.ShutdownWithTimeout(timeout)
 }
+
+// watchCloser is implemented by Handlers that own hijacked WebSocket
+// connections needing an explicit close on shutdown.
+type watchCloser interface {
+	Close()
+}
+
+// Close closes any node-watch clients still connected to the router's
+// handler. Call this in addition to Shutdown/ShutdownWithTimeout, which only
+// stop the listener and wait for in-flight regular HTTP requests: they do not
+// close connections already hijacked for a WebSocket upgrade.
+func (r *Router) Close() {
+	if wc, ok := r.handler.(watchCloser); ok {
+		wc.Close()
+	}
+}

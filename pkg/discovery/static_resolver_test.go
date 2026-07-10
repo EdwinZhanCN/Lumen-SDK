@@ -73,43 +73,4 @@ func TestStaticResolverEmitsConfiguredEndpoints(t *testing.T) {
 	}
 }
 
-func TestCompositeResolverMergesBackends(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	a := NewStaticResolver([]string{"10.0.0.1:50051"}, "", nil)
-	b := NewStaticResolver([]string{"10.0.0.2:50051"}, "", nil)
-	merged, err := NewCompositeResolver(a, b, nil).Watch(ctx)
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-
-	events := collectEvents(t, merged, 2)
-	seen := map[string]bool{}
-	for _, ev := range events {
-		seen[ev.Addresses[0]] = true
-	}
-	if !seen["10.0.0.1:50051"] || !seen["10.0.0.2:50051"] {
-		t.Fatalf("merged events missing endpoints: %v", seen)
-	}
-
-	cancel()
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case _, ok := <-merged:
-			if !ok {
-				return // closed once all backends stopped
-			}
-		case <-deadline:
-			t.Fatal("merged channel did not close after ctx cancellation")
-		}
-	}
-}
-
-func TestCompositeResolverSingleBackendPassthrough(t *testing.T) {
-	r := NewStaticResolver([]string{"10.0.0.1:50051"}, "", nil)
-	if got := NewCompositeResolver(nil, r); got != NodeResolver(r) {
-		t.Fatalf("single backend should be returned as-is, got %T", got)
-	}
-}
+// CompositeResolver behavior is covered in composite_resolver_test.go.

@@ -85,7 +85,11 @@ func (s *GatewaydService) startServers(ctx context.Context) error {
 			return router.Start(addr)
 		})
 		s.serverShutdowns = append(s.serverShutdowns, func() error {
-			return router.ShutdownWithTimeout(5 * time.Second)
+			err := router.ShutdownWithTimeout(5 * time.Second)
+			// ShutdownWithTimeout does not track hijacked connections (the
+			// /v1/nodes/watch WebSocket upgrade), so close those separately.
+			router.Close()
+			return err
 		})
 	}
 

@@ -198,6 +198,9 @@ func (s *GatewayService) Stop() error {
 		if err := s.router.ShutdownWithTimeout(3 * time.Second); err != nil {
 			s.logger.Error("Failed to stop REST server", zap.Error(err))
 		}
+		// ShutdownWithTimeout does not track hijacked connections (the
+		// /v1/nodes/watch WebSocket upgrade), so close those separately.
+		s.router.Close()
 		s.router = nil
 	}
 
@@ -277,6 +280,9 @@ func (s *GatewayService) Reload() error {
 		if err := s.router.ShutdownWithTimeout(3 * time.Second); err != nil {
 			s.logger.Error("Failed to stop REST server during reload", zap.Error(err))
 		}
+		// ShutdownWithTimeout does not track hijacked connections (the
+		// /v1/nodes/watch WebSocket upgrade), so close those separately.
+		s.router.Close()
 		s.router = nil
 	}
 

@@ -2,6 +2,7 @@ package rest
 
 import (
 	"sync"
+	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/client"
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
@@ -88,6 +89,35 @@ func (h *nodeWatchHub) dropClient(conn *ws.Conn) {
 	h.mu.Lock()
 	delete(h.clients, conn)
 	h.mu.Unlock()
+}
+
+// Close closes every currently connected watch client. fiber/fasthttp's
+// graceful shutdown does not track hijacked connections (WebSocket upgrades
+// are handed off to serve's own read loop), so without this, watch clients
+// connected before shutdown would stay open — and their goroutines blocked in
+// ReadMessage — until the process itself exits rather than when the daemon
+// stops.
+//
+// This calls SetReadDeadline, not Close: fasthttp only closes a hijacked
+// connection itself once its handler returns (KeepHijackedConns defaults to
+// false), so the *websocket.Conn.Close() a client-facing caller reaches is a
+// deliberate no-op here — it would return nil having done nothing, and the
+// client would never observe a close. SetReadDeadline is not similarly
+// intercepted, so setting a past deadline reliably unblocks the blocked
+// ReadMessage in serve's loop with an i/o timeout, serve returns, and
+// fasthttp performs the real close once the handler has returned.
+//
+// Each unblocked connection's own serve goroutine then observes the read
+// error and calls dropClient, so Close does not mutate h.clients itself. The
+// lock is held for the whole call (matching broadcast) so a connection's own
+// teardown can't race this same object concurrently with gofiber-contrib's
+// *ws.Conn recycling into its package-level sync.Pool.
+func (h *nodeWatchHub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for conn := range h.clients {
+		_ = conn.SetReadDeadline(time.Now())
+	}
 }
 
 // broadcast diffs the active node set against the previous one and pushes
