@@ -12,9 +12,9 @@ import (
 )
 
 // nodeWatchHub implements the push-based discovery endpoint consumed by
-// discovery.PushResolver: GET /v1/nodes/watch upgrades to a WebSocket that
-// receives a "snapshot" message followed by incremental "added"/"removed"
-// diffs of active nodes.
+// discovery.BrokerResolver (formerly PushResolver): GET /v1/nodes/watch
+// upgrades to a WebSocket that receives a "snapshot" message followed by
+// incremental "added"/"removed" diffs of active nodes.
 //
 // One hub serves all WebSocket clients. The node watcher callback is
 // registered once, and all connection writes are serialized under the hub
@@ -163,7 +163,7 @@ func (h *nodeWatchHub) broadcast(nodes []*discovery.NodeInfo) {
 	}
 }
 
-// ---- wire format (must stay compatible with discovery.PushResolver) ----
+// ---- wire format (must stay compatible with discovery.BrokerResolver) ----
 
 type wsNodeInfo struct {
 	NodeID  string            `json:"node_id"`

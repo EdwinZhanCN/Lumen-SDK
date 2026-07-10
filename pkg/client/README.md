@@ -114,14 +114,18 @@ fmt.Printf("Requests: %d, Success rate: %.1f%%\n",
 
 ## Discovery Backends
 
-The client selects a discovery backend based on config:
+Discovery backends are additive, not prioritized: every configured backend
+runs concurrently and their node events are merged. At least one must be
+configured.
 
-| Config                         | Backend        | Description                    |
-|--------------------------------|----------------|--------------------------------|
-| `Discovery.MDNSEnabled = true` | `MDNSResolver` | Zeroconf mDNS on local network |
-| `Discovery.HubURL = "..."`    | `PushResolver` | WebSocket push from Gateway    |
+| Config                          | Backend          | Description                                             |
+|----------------------------------|-------------------|----------------------------------------------------------|
+| `Discovery.MDNSEnabled = true`   | `MDNSResolver`    | Zeroconf mDNS on local network                            |
+| `Discovery.BrokerURL = "..."`    | `BrokerResolver`  | WebSocket push from a Lumen Host Broker (or legacy Gateway) |
+| `Discovery.StaticNodes = [...]`  | `StaticResolver`  | Fixed `host:port` endpoints, no dynamic discovery          |
 
-Priority: mDNS > HubURL. At least one must be configured.
+`Discovery.HubURL` is a deprecated alias for `BrokerURL`; so is the
+`PushResolver` name for `BrokerResolver` (`type PushResolver = BrokerResolver`).
 
 ## Pool Behavior
 

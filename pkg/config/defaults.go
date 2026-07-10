@@ -17,6 +17,7 @@ func DefaultConfig() *Config {
 			ScanInterval:          30 * time.Second,
 			NodeTimeout:           5 * time.Minute,
 			MDNSEnabled:           true,
+			BrokerURL:             "",
 			HubURL:                "",
 		},
 		Server: ServerConfig{

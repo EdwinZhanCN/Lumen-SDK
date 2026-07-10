@@ -203,6 +203,81 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+func TestEffectiveBrokerURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		brokerURL string
+		hubURL    string
+		want      string
+	}{
+		{"broker only", "http://broker:5866", "", "http://broker:5866"},
+		{"hub only (deprecated)", "", "http://hub:5866", "http://hub:5866"},
+		{"broker preferred over hub", "http://broker:5866", "http://hub:5866", "http://broker:5866"},
+		{"neither set", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dc := config2.DiscoveryConfig{BrokerURL: tt.brokerURL, HubURL: tt.hubURL}
+			if got := dc.EffectiveBrokerURL(); got != tt.want {
+				t.Errorf("EffectiveBrokerURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsConflictingBrokerAndHubURL(t *testing.T) {
+	cfg := config2.DefaultConfig()
+	cfg.Discovery.Enabled = false // isolate the conflict check from unrelated discovery validation
+	cfg.Discovery.BrokerURL = "http://broker:5866"
+	cfg.Discovery.HubURL = "http://hub:5866"
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected Validate() to reject differing broker_url and hub_url, got nil")
+	}
+}
+
+func TestValidateAllowsEqualBrokerAndHubURL(t *testing.T) {
+	cfg := config2.DefaultConfig()
+	cfg.Discovery.Enabled = false
+	cfg.Discovery.BrokerURL = "http://broker:5866"
+	cfg.Discovery.HubURL = "http://broker:5866"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with equal broker_url/hub_url = %v, want nil", err)
+	}
+}
+
+func TestLoadFromEnvBrokerURL(t *testing.T) {
+	os.Setenv("LUMEN_DISCOVERY_BROKER_URL", "http://broker-from-env:5866")
+	defer os.Unsetenv("LUMEN_DISCOVERY_BROKER_URL")
+
+	config := config2.DefaultConfig()
+	if err := config.LoadFromEnv(); err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if config.Discovery.BrokerURL != "http://broker-from-env:5866" {
+		t.Errorf("Expected broker_url from env, got %q", config.Discovery.BrokerURL)
+	}
+}
+
+// TestLoadFromEnvHubURLStillWorks locks down that the deprecated
+// LUMEN_DISCOVERY_HUB_URL environment variable keeps working unchanged.
+func TestLoadFromEnvHubURLStillWorks(t *testing.T) {
+	os.Setenv("LUMEN_DISCOVERY_HUB_URL", "http://hub-from-env:5866")
+	defer os.Unsetenv("LUMEN_DISCOVERY_HUB_URL")
+
+	config := config2.DefaultConfig()
+	if err := config.LoadFromEnv(); err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if config.Discovery.HubURL != "http://hub-from-env:5866" {
+		t.Errorf("Expected hub_url from env, got %q", config.Discovery.HubURL)
+	}
+	if got := config.Discovery.EffectiveBrokerURL(); got != "http://hub-from-env:5866" {
+		t.Errorf("EffectiveBrokerURL() = %q, want the deprecated hub_url value", got)
+	}
+}
+
 func TestSaveAndLoadConfig(t *testing.T) {
 	// 创建临时配置文件
 	tmpFile := "/tmp/test_lumen_config.yaml"

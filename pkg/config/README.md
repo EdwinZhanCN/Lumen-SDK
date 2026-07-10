@@ -16,7 +16,7 @@ pkg/config/
 **Configuration hierarchy**:
 ```
 Config
-├── Discovery   (service discovery: mDNS, hub URL)
+├── Discovery   (service discovery: mDNS, Broker URL)
 ├── Server
 │   └── REST    (REST API server)
 ├── Logging     (level, format, output)
@@ -28,11 +28,16 @@ Config
 | Type              | Purpose                                       |
 |-------------------|-----------------------------------------------|
 | `Config`          | Top-level config, contains all sub-configs     |
-| `DiscoveryConfig` | mDNS / Hub push discovery settings             |
+| `DiscoveryConfig` | mDNS / Broker push discovery settings          |
 | `ServerConfig`    | Server settings (REST)                         |
 | `RESTConfig`      | REST API host, port, CORS                      |
 | `LoggingConfig`   | Log level, format, output                      |
 | `ChunkConfig`     | Automatic payload chunking thresholds          |
+
+`DiscoveryConfig.BrokerURL` is the current field for push discovery.
+`DiscoveryConfig.HubURL` is a deprecated alias kept for compatibility;
+`DiscoveryConfig.EffectiveBrokerURL()` resolves whichever is set, preferring
+`BrokerURL`. Setting both to different non-empty values fails `Validate()`.
 
 ## Usage
 
@@ -61,7 +66,8 @@ export LUMEN_DISCOVERY_RESOLVE_TIMEOUT=10s
 export LUMEN_DISCOVERY_CONNECT_TIMEOUT=10s
 export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN=10s
 export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX=2m
-export LUMEN_DISCOVERY_HUB_URL=http://hub:5866
+export LUMEN_DISCOVERY_BROKER_URL=http://broker:5866
+export LUMEN_DISCOVERY_HUB_URL=http://hub:5866  # deprecated alias for LUMEN_DISCOVERY_BROKER_URL
 export LUMEN_REST_HOST=0.0.0.0
 export LUMEN_REST_PORT=5866
 export LUMEN_LOG_LEVEL=debug
@@ -83,7 +89,8 @@ discovery:
   rediscovery_backoff_max: 2m
   max_nodes: 20
   mdns_enabled: true
-  hub_url: ""
+  broker_url: ""
+  hub_url: ""  # deprecated alias for broker_url
 
 server:
   rest:

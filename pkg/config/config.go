@@ -23,7 +23,7 @@ type Config struct {
 
 // DiscoveryConfig controls service discovery for finding ML nodes.
 //
-// The three discovery backends (mDNS, Gateway push via HubURL, StaticNodes)
+// The three discovery backends (mDNS, Broker push via BrokerURL, StaticNodes)
 // are additive: every configured backend runs and their node events are
 // merged. At least one must be configured when discovery is enabled.
 type DiscoveryConfig struct {
@@ -38,11 +38,27 @@ type DiscoveryConfig struct {
 	ScanInterval          time.Duration `yaml:"scan_interval" json:"scan_interval"` // mDNS poll interval: how often to re-query for services.
 	NodeTimeout           time.Duration `yaml:"node_timeout" json:"node_timeout"`   // Deprecated: DNS-SD is not operational liveness.
 	MDNSEnabled           bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
-	HubURL                string        `yaml:"hub_url" json:"hub_url"`
+	// BrokerURL is the base URL of a Lumen Host Broker (or legacy Gateway)
+	// exposing the /v1/nodes/watch push-discovery endpoint.
+	BrokerURL string `yaml:"broker_url" json:"broker_url"`
+	// Deprecated: use BrokerURL. Retained for compatibility; see
+	// DiscoveryConfig.EffectiveBrokerURL. Validate rejects configs that set
+	// both to different non-empty values.
+	HubURL string `yaml:"hub_url" json:"hub_url"`
 	// StaticNodes pins node gRPC endpoints ("host:port") that are always
 	// resolved without any dynamic discovery. Connection health is still
 	// managed by the pool; entries only need to be reachable eventually.
 	StaticNodes []string `yaml:"static_nodes" json:"static_nodes"`
+}
+
+// EffectiveBrokerURL resolves the configured Broker push-discovery URL,
+// preferring BrokerURL over the deprecated HubURL. Returns "" if neither is
+// set, meaning no Broker resolver should be created.
+func (c DiscoveryConfig) EffectiveBrokerURL() string {
+	if c.BrokerURL != "" {
+		return c.BrokerURL
+	}
+	return c.HubURL
 }
 
 // ServerConfig holds REST server configuration.
@@ -135,6 +151,9 @@ func (c *Config) LoadFromEnv() error {
 	if os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") != "" {
 		c.Discovery.MDNSEnabled = os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") == "true"
 	}
+	if v := os.Getenv("LUMEN_DISCOVERY_BROKER_URL"); v != "" {
+		c.Discovery.BrokerURL = v
+	}
 	if v := os.Getenv("LUMEN_DISCOVERY_HUB_URL"); v != "" {
 		c.Discovery.HubURL = v
 	}
@@ -169,6 +188,9 @@ func (c *Config) LoadFromEnv() error {
 
 // Validate checks for configuration correctness.
 func (c *Config) Validate() error {
+	if c.Discovery.BrokerURL != "" && c.Discovery.HubURL != "" && c.Discovery.BrokerURL != c.Discovery.HubURL {
+		return fmt.Errorf("discovery.broker_url (%q) and deprecated discovery.hub_url (%q) are both set and differ; set only broker_url", c.Discovery.BrokerURL, c.Discovery.HubURL)
+	}
 	if c.Discovery.Enabled {
 		if c.Discovery.ServiceType == "" {
 			return fmt.Errorf("discovery.service_type is required when enabled")

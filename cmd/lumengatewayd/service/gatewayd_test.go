@@ -107,7 +107,7 @@ func TestGatewaydServiceStartFailsWithoutDiscoveryBackend(t *testing.T) {
 	t.Cleanup(func() { _ = internal.CloseClient() })
 
 	cfg := &config.Config{
-		Discovery: config.DiscoveryConfig{Enabled: true}, // no mDNS, HubURL, or StaticNodes
+		Discovery: config.DiscoveryConfig{Enabled: true}, // no mDNS, BrokerURL, or StaticNodes
 		Server:    config.ServerConfig{REST: config.RESTConfig{Enabled: false}},
 	}
 	svc, err := NewGatewaydService(cfg, zap.NewNop())

@@ -1,6 +1,6 @@
 // Package discovery defines the unified operational discovery abstraction.
 //
-// All discovery backends (mDNS, Gateway push, manual) implement the
+// All discovery backends (mDNS, Broker push, manual) implement the
 // NodeResolver interface. Consumers receive a stream of NodeEvent values that
 // describe address-resolution facts. Discovery does not prove node liveness;
 // connection health belongs to the operational session / gRPC pool layer.
@@ -47,7 +47,8 @@ type NodeEvent struct {
 //
 // Implementations:
 //   - MDNSResolver: watches and resolves zeroconf mDNS service records.
-//   - PushResolver: subscribes to a Gateway WebSocket for node events.
+//   - BrokerResolver: subscribes to a Broker WebSocket for node events
+//     (formerly PushResolver, kept as a deprecated alias).
 type NodeResolver interface {
 	// Watch returns a channel that emits operational discovery events.
 	// The channel is closed when ctx is cancelled or the backend stops.

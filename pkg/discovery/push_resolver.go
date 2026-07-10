@@ -1,129 +1,41 @@
 package discovery
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
-
-	"github.com/gorilla/websocket"
 )
 
-// PushResolver subscribes to a Gateway WebSocket endpoint for node change
-// events. It implements the NodeResolver interface.
-type PushResolver struct {
-	hubURL       string
-	deploymentID string
-	logger       *zap.Logger
+// PushResolver is a deprecated alias for BrokerResolver, kept so existing
+// callers built against the earlier "Gateway push" name keep compiling.
+// There is exactly one implementation (broker_resolver.go); no logic lives
+// on this name.
+//
+// Deprecated: use BrokerResolver.
+type PushResolver = BrokerResolver
+
+// NewPushResolver is a deprecated alias for NewBrokerResolver.
+//
+// Deprecated: use NewBrokerResolver.
+func NewPushResolver(hubURL string, logger *zap.Logger) *BrokerResolver {
+	return NewBrokerResolver(hubURL, logger)
 }
 
-// NewPushResolver creates a Gateway-push-based resolver.
-// hubURL is the base URL of the Gateway (e.g. "http://localhost:5866").
-// The resolver connects to hubURL + "/v1/nodes/watch" via WebSocket.
-func NewPushResolver(hubURL string, logger *zap.Logger) *PushResolver {
-	return NewPushResolverWithDeployment(hubURL, DefaultDeploymentID, logger)
+// NewPushResolverWithDeployment is a deprecated alias for
+// NewBrokerResolverWithDeployment.
+//
+// Deprecated: use NewBrokerResolverWithDeployment.
+func NewPushResolverWithDeployment(hubURL, deploymentID string, logger *zap.Logger) *BrokerResolver {
+	return NewBrokerResolverWithDeployment(hubURL, deploymentID, logger)
 }
 
-func NewPushResolverWithDeployment(hubURL, deploymentID string, logger *zap.Logger) *PushResolver {
-	if deploymentID == "" {
-		deploymentID = DefaultDeploymentID
-	}
-	return &PushResolver{
-		hubURL:       hubURL,
-		deploymentID: deploymentID,
-		logger:       ensureLogger(logger),
-	}
-}
-
-// Watch connects to the Gateway WebSocket and emits node events.
-// On disconnect it reconnects with exponential backoff.
-func (r *PushResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
-	wsURL := wsScheme(r.hubURL) + "://" + wsHost(r.hubURL) + "/v1/nodes/watch"
-
-	ch := make(chan NodeEvent, 32)
-
-	go func() {
-		defer close(ch)
-
-		backoff := 1 * time.Second
-		const maxBackoff = 30 * time.Second
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			if err := r.connect(ctx, wsURL, ch); err != nil {
-				r.logger.Warn("push resolver disconnected, reconnecting",
-					zap.String("url", wsURL),
-					zap.Error(err),
-					zap.Duration("backoff", backoff),
-				)
-			} else {
-				backoff = 1 * time.Second // reset on clean disconnect
-			}
-
-			// Exponential backoff with jitter.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
-	}()
-
-	return ch, nil
-}
-
-func (r *PushResolver) connect(ctx context.Context, wsURL string, ch chan<- NodeEvent) error {
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
-	if err != nil {
-		return fmt.Errorf("dial ws: %w", err)
-	}
-	defer conn.Close()
-
-	r.logger.Info("push resolver connected", zap.String("url", wsURL))
-
-	// Ping handler to keep the connection alive.
-	conn.SetPingHandler(func(appData string) error {
-		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
-	})
-
-	// Read pump.
-	for {
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			return fmt.Errorf("read ws: %w", err)
-		}
-
-		events, err := parseNodeEventsWithDeployment(raw, r.deploymentID)
-		if err != nil {
-			r.logger.Warn("failed to parse node event", zap.Error(err))
-			continue
-		}
-
-		for _, ev := range events {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case ch <- ev:
-			}
-		}
-	}
-}
-
-// pushNodeEvent is the JSON format received from the Gateway WebSocket.
+// pushNodeEvent is the wire JSON format received from the Broker WebSocket.
+// The field name predates the Broker rename; kept as-is since Milestone 3
+// (not this change) is where the wire protocol itself gets formalized.
 type pushNodeEvent struct {
 	Type   string     `json:"type"` // "snapshot", "added", "removed"
 	Nodes  []pushNode `json:"nodes,omitempty"`

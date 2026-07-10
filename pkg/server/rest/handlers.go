@@ -19,7 +19,7 @@ type Handlers interface {
 	Infer(c *fiber.Ctx) error
 	GetNodes(c *fiber.Ctx) error
 	// NodeWatch upgrades to the push-discovery WebSocket consumed by
-	// discovery.PushResolver (snapshot + added/removed diffs).
+	// discovery.BrokerResolver (snapshot + added/removed diffs).
 	NodeWatch(c *fiber.Ctx) error
 	GetNodeCapabilities(c *fiber.Ctx) error
 	GetConfig(c *fiber.Ctx) error
