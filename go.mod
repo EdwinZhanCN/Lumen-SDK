@@ -3,11 +3,12 @@ module github.com/edwinzhancn/lumen-sdk
 go 1.25.0
 
 require (
+	github.com/disintegration/imaging v1.6.2
 	github.com/gabriel-vasile/mimetype v1.4.10
 	github.com/gofiber/contrib/websocket v1.3.4
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/gorilla/websocket v1.5.3
-	github.com/hashicorp/mdns v1.0.6
+	github.com/hashicorp/mdns v1.0.7
 	github.com/sethvargo/go-retry v0.3.0
 	github.com/spf13/cobra v1.10.1
 	go.uber.org/zap v1.27.0
@@ -20,7 +21,6 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
-	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/fasthttp/websocket v1.5.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -29,7 +29,7 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/miekg/dns v1.1.55 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
