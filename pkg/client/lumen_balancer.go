@@ -349,14 +349,18 @@ func (lb *lumenBalancer) syncRegistryLocked() {
 }
 
 const (
-	capFetchAttempts   = 5
 	capFetchBackoffMin = 1 * time.Second
 	capFetchBackoffMax = 8 * time.Second
 )
 
-// fetchCapabilitiesWithRetry keeps trying to fetch node capabilities while the
-// SubConn stays Ready on the same address. It clears the per-node capFetching
-// guard on exit so a later Ready transition can start a fresh fetch.
+// fetchCapabilitiesWithRetry keeps trying to fetch node capabilities for as
+// long as the SubConn stays Ready on the same address. Unbounded on purpose: a
+// hub that binds its port before models are downloaded (control-plane-first
+// startup) answers UNAVAILABLE for many minutes while the connection stays
+// Ready, so giving up after a fixed attempt count would leave the node
+// capability-less until an unrelated reconnect. It clears the per-node
+// capFetching guard on exit so a later Ready transition can start a fresh
+// fetch.
 func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
 	defer func() {
 		lb.mu.Lock()
@@ -367,7 +371,7 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
 	}()
 
 	backoff := capFetchBackoffMin
-	for attempt := 1; attempt <= capFetchAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		if lb.fetchCapabilitiesForNode(key, addr) {
 			return
 		}
@@ -379,8 +383,11 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
 		if stale {
 			return
 		}
-		if attempt == capFetchAttempts {
-			break
+		if attempt%10 == 0 {
+			lb.log().Warn("cap fetch: node still not reporting capabilities; retrying",
+				zap.String("id", key),
+				zap.Int("attempts", attempt),
+			)
 		}
 
 		time.Sleep(backoff)
@@ -389,10 +396,6 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
 			backoff = capFetchBackoffMax
 		}
 	}
-	lb.log().Warn("cap fetch: giving up until next reconnect",
-		zap.String("id", key),
-		zap.Int("attempts", capFetchAttempts),
-	)
 }
 
 // fetchCapabilitiesForNode performs one capability fetch. It reports success
