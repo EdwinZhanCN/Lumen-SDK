@@ -22,6 +22,13 @@ type NodeInfo struct {
 	LastSeen     time.Time              `json:"last_seen"`
 	Tasks        []*pb.IOTask           `json:"tasks,omitempty"`
 
+	// Compatible reports whether the node speaks a data-plane protocol major
+	// this SDK supports. Incompatible nodes stay visible (listed here) but are
+	// never dialed into the task pool, so no task is routed to them.
+	Compatible bool `json:"compatible"`
+	// IncompatibleReason explains why the node was excluded from the task pool.
+	IncompatibleReason string `json:"incompatible_reason,omitempty"`
+
 	connections    int64           `json:"-"`
 	supportedTasks map[string]bool `json:"-"`
 	mu             sync.RWMutex    `json:"-"`

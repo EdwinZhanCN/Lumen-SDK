@@ -27,13 +27,15 @@ func CloneNode(node *NodeInfo) *NodeInfo {
 	defer node.mu.RUnlock()
 
 	out := &NodeInfo{
-		ID:           node.ID,
-		Address:      node.Address,
-		Status:       node.Status,
-		Availability: node.Availability,
-		Version:      node.Version,
-		Runtime:      node.Runtime,
-		LastSeen:     node.LastSeen,
+		ID:                 node.ID,
+		Address:            node.Address,
+		Status:             node.Status,
+		Availability:       node.Availability,
+		Version:            node.Version,
+		Runtime:            node.Runtime,
+		LastSeen:           node.LastSeen,
+		Compatible:         node.Compatible,
+		IncompatibleReason: node.IncompatibleReason,
 	}
 
 	if node.Metadata != nil {

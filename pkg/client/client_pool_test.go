@@ -525,13 +525,17 @@ func waitUntil(t *testing.T, condition func() bool) {
 }
 
 func startCapabilityServer(t *testing.T, tasks ...string) string {
+	return startCapabilityServerWithVersion(t, "", tasks...)
+}
+
+func startCapabilityServerWithVersion(t *testing.T, protocolVersion string, tasks ...string) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	server := grpc.NewServer()
-	pb.RegisterInferenceServer(server, &testInferenceServer{tasks: tasks})
+	pb.RegisterInferenceServer(server, &testInferenceServer{tasks: tasks, protocolVersion: protocolVersion})
 	go func() {
 		_ = server.Serve(lis)
 	}()
@@ -544,7 +548,8 @@ func startCapabilityServer(t *testing.T, tasks ...string) string {
 
 type testInferenceServer struct {
 	pb.UnimplementedInferenceServer
-	tasks []string
+	tasks           []string
+	protocolVersion string
 }
 
 func (s *testInferenceServer) GetCapabilities(context.Context, *emptypb.Empty) (*pb.Capability, error) {
@@ -555,14 +560,30 @@ func (s *testInferenceServer) StreamCapabilities(_ *emptypb.Empty, stream grpc.S
 	return stream.Send(s.capability())
 }
 
+func (s *testInferenceServer) Infer(stream grpc.BidiStreamingServer[pb.InferRequest, pb.InferResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(&pb.InferResponse{CorrelationId: req.CorrelationId, IsFinal: true}); err != nil {
+			return err
+		}
+	}
+}
+
 func (s *testInferenceServer) Health(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }
 
 func (s *testInferenceServer) capability() *pb.Capability {
 	cap := &pb.Capability{
-		ServiceName: "test",
-		Tasks:       make([]*pb.IOTask, 0, len(s.tasks)),
+		ServiceName:     "test",
+		Tasks:           make([]*pb.IOTask, 0, len(s.tasks)),
+		ProtocolVersion: s.protocolVersion,
 	}
 	for _, task := range s.tasks {
 		cap.Tasks = append(cap.Tasks, &pb.IOTask{Name: task})
@@ -585,6 +606,213 @@ func (r *fakeNodeResolver) Watch(ctx context.Context) (<-chan discovery.NodeEven
 		close(ch)
 	}()
 	return ch, nil
+}
+
+// inferViaStream routes one request through the pool and returns the error
+// surfaced by the RPC. A nil error means the task reached a node. The request
+// carries a deadline so pools with no schedulable node fail promptly instead
+// of blocking on the channel's Connecting state.
+func inferViaStream(client pb.InferenceClient, task string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.Infer(ctx)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&pb.InferRequest{Task: task}); err != nil {
+		return err
+	}
+	if err := stream.CloseSend(); err != nil {
+		return err
+	}
+	_, err = stream.Recv()
+	return err
+}
+
+// --- Protocol compatibility scheduling tests ---
+
+// TestPoolExcludesIncompatibleTXTNode verifies that a node announcing an
+// unsupported data-plane major in its TXT records is visible but never added
+// to the task pool: it gets no connection, no stats entry, and no task.
+func TestPoolExcludesIncompatibleTXTNode(t *testing.T) {
+	addr := startCapabilityServer(t, "semantic")
+	host, port, _ := splitEndpoint(addr)
+
+	resolver := &fakeNodeResolver{
+		events: []discovery.NodeEvent{
+			{
+				Type: discovery.NodeDiscovered,
+				Resolved: discovery.ResolvedNode{
+					Identity:  discovery.NewNodeIdentity("local", "node-compatible"),
+					Addresses: []string{host},
+					Port:      port,
+					Txt:       map[string]string{"proto": "1.0"},
+				},
+			},
+			{
+				Type: discovery.NodeDiscovered,
+				Resolved: discovery.ResolvedNode{
+					Identity:  discovery.NewNodeIdentity("local", "node-future"),
+					Addresses: []string{"192.0.2.99"},
+					Port:      5866,
+					Txt:       map[string]string{"proto": "2.0"},
+				},
+			},
+		},
+	}
+
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
+		ConnectTimeout:        2 * time.Second,
+		RediscoveryBackoffMin: time.Second,
+		RediscoveryBackoffMax: 5 * time.Second,
+	})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		if len(infos) != 2 {
+			return false
+		}
+		for _, info := range infos {
+			if info.ID == "local-node-future" && !info.Compatible && info.Availability == discovery.NodeAvailabilityIncompatible {
+				return true
+			}
+		}
+		return false
+	})
+
+	infos := pool.NodeInfos()
+	var compatible, incompatible int
+	for _, info := range infos {
+		if info.Compatible {
+			compatible++
+		} else {
+			incompatible++
+			if info.IncompatibleReason == "" {
+				t.Fatalf("incompatible node missing reason: %+v", info)
+			}
+		}
+	}
+	if compatible != 1 || incompatible != 1 {
+		t.Fatalf("expected 1 compatible + 1 incompatible node, got %d + %d", compatible, incompatible)
+	}
+
+	// The incompatible node never joined the pool: it has no connection, and
+	// stats only count connection-backed nodes.
+	stats := pool.Stats()
+	if stats.TotalConnections != 1 || stats.HealthyConnections != 1 {
+		t.Fatalf("pool stats = %+v, want 1/1 (incompatible node excluded)", stats)
+	}
+}
+
+// TestPoolMarksCapabilityIncompatibleNode verifies the optimistic path: a
+// legacy node without a TXT protocol hint that reports an unsupported major
+// over the capability stream is demoted after the fetch and never scheduled.
+func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
+	incompatAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
+	compatAddr := startCapabilityServer(t, "semantic")
+	hostI, portI, _ := splitEndpoint(incompatAddr)
+	hostC, portC, _ := splitEndpoint(compatAddr)
+
+	resolver := &fakeNodeResolver{
+		events: []discovery.NodeEvent{
+			{
+				Type: discovery.NodeDiscovered,
+				Resolved: discovery.ResolvedNode{
+					Identity:  discovery.NewNodeIdentity("local", "node-v2"),
+					Addresses: []string{hostI},
+					Port:      portI,
+					Txt:       map[string]string{"v": "0.2.0"},
+				},
+			},
+			{
+				Type: discovery.NodeDiscovered,
+				Resolved: discovery.ResolvedNode{
+					Identity:  discovery.NewNodeIdentity("local", "node-v1"),
+					Addresses: []string{hostC},
+					Port:      portC,
+					Txt:       map[string]string{"v": "0.1.1"},
+				},
+			},
+		},
+	}
+
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
+		ConnectTimeout:        2 * time.Second,
+		RediscoveryBackoffMin: time.Second,
+		RediscoveryBackoffMax: 5 * time.Second,
+	})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	// The v2 node connects (optimistic), then is demoted once its
+	// capabilities report the unsupported major.
+	waitUntil(t, func() bool {
+		for _, info := range pool.NodeInfos() {
+			if info.ID == "local-node-v2" && !info.Compatible &&
+				info.Availability == discovery.NodeAvailabilityIncompatible {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The v1 node stays healthy and takes the task.
+	client := pool.Client()
+	waitUntil(t, func() bool {
+		return inferViaStream(client, "semantic") == nil
+	})
+
+	stats := pool.Stats()
+	if stats.HealthyConnections != 1 {
+		t.Fatalf("expected exactly one healthy connection (v1), got %+v", stats)
+	}
+}
+
+// TestPoolIncompatibleNodeNeverReceivesTasks verifies that with only an
+// incompatible node present, inference fails instead of being sent to it.
+func TestPoolIncompatibleNodeNeverReceivesTasks(t *testing.T) {
+	incompatAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
+	host, port, _ := splitEndpoint(incompatAddr)
+
+	resolver := &fakeNodeResolver{
+		events: []discovery.NodeEvent{
+			{
+				Type: discovery.NodeDiscovered,
+				Resolved: discovery.ResolvedNode{
+					Identity:  discovery.NewNodeIdentity("local", "node-v2"),
+					Addresses: []string{host},
+					Port:      port,
+					Txt:       map[string]string{"proto": "2.0"},
+				},
+			},
+		},
+	}
+
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
+		ConnectTimeout:        2 * time.Second,
+		RediscoveryBackoffMin: time.Second,
+		RediscoveryBackoffMax: 5 * time.Second,
+	})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && !infos[0].Compatible
+	})
+
+	client := pool.Client()
+	if err := inferViaStream(client, "semantic"); err == nil {
+		t.Fatal("inference must not be routed to an incompatible node")
+	}
 }
 
 // --- Fake gRPC clients for testing ---
@@ -634,10 +862,10 @@ func (f *fakeCapabilityStream) Recv() (*pb.Capability, error) {
 
 func (f *fakeCapabilityStream) Header() (metadata.MD, error) { return nil, nil }
 func (f *fakeCapabilityStream) Trailer() metadata.MD         { return nil }
-func (f *fakeCapabilityStream) CloseSend() error              { return nil }
-func (f *fakeCapabilityStream) Context() context.Context      { return context.Background() }
-func (f *fakeCapabilityStream) SendMsg(any) error             { return nil }
-func (f *fakeCapabilityStream) RecvMsg(any) error             { return nil }
+func (f *fakeCapabilityStream) CloseSend() error             { return nil }
+func (f *fakeCapabilityStream) Context() context.Context     { return context.Background() }
+func (f *fakeCapabilityStream) SendMsg(any) error            { return nil }
+func (f *fakeCapabilityStream) RecvMsg(any) error            { return nil }
 
 type fakeInferStream struct {
 	sendErr      error
@@ -664,7 +892,7 @@ func (f *fakeInferStream) Recv() (*pb.InferResponse, error) {
 
 func (f *fakeInferStream) Header() (metadata.MD, error) { return nil, nil }
 func (f *fakeInferStream) Trailer() metadata.MD         { return nil }
-func (f *fakeInferStream) CloseSend() error              { return f.closeSendErr }
-func (f *fakeInferStream) Context() context.Context      { return context.Background() }
-func (f *fakeInferStream) SendMsg(any) error             { return nil }
-func (f *fakeInferStream) RecvMsg(any) error             { return nil }
+func (f *fakeInferStream) CloseSend() error             { return f.closeSendErr }
+func (f *fakeInferStream) Context() context.Context     { return context.Background() }
+func (f *fakeInferStream) SendMsg(any) error            { return nil }
+func (f *fakeInferStream) RecvMsg(any) error            { return nil }

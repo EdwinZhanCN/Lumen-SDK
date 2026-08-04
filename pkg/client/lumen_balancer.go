@@ -14,10 +14,12 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -53,15 +55,17 @@ type nodeRegistry struct {
 }
 
 type registeredNode struct {
-	identity      discovery.NodeIdentity
-	addr          string
-	state         connectivity.State
-	capabilities  []*pb.Capability
-	tasks         []string
-	hardFailures  int
-	cooldownUntil time.Time
-	cooldown      time.Duration
-	txt           map[string]string
+	identity       discovery.NodeIdentity
+	addr           string
+	state          connectivity.State
+	capabilities   []*pb.Capability
+	tasks          []string
+	hardFailures   int
+	cooldownUntil  time.Time
+	cooldown       time.Duration
+	txt            map[string]string
+	incompatible   bool
+	incompatReason string
 }
 
 func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
@@ -72,17 +76,19 @@ func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
 	for _, rn := range r.nodes {
 		availability := availabilityFromRegistered(rn)
 		out = append(out, &discovery.NodeInfo{
-			ID:           rn.identity.Key(),
-			Address:      rn.addr,
-			Status:       availability.NodeStatus(),
-			Availability: availability,
-			Metadata:     buildCapabilityMetadata(rn.capabilities),
-			Models:       buildModelInfos(rn.capabilities),
-			Tasks:        tasksToIOTasksFromCapabilities(rn.capabilities, rn.tasks),
-			Capabilities: discovery.CloneCapabilities(rn.capabilities),
-			Version:      rn.txt["v"],
-			Runtime:      rn.txt["runtime"],
-			LastSeen:     time.Now(),
+			ID:                 rn.identity.Key(),
+			Address:            rn.addr,
+			Status:             availability.NodeStatus(),
+			Availability:       availability,
+			Metadata:           buildCapabilityMetadata(rn.capabilities),
+			Models:             buildModelInfos(rn.capabilities),
+			Tasks:              tasksToIOTasksFromCapabilities(rn.capabilities, rn.tasks),
+			Capabilities:       discovery.CloneCapabilities(rn.capabilities),
+			Version:            rn.txt["v"],
+			Runtime:            rn.txt["runtime"],
+			LastSeen:           time.Now(),
+			Compatible:         !rn.incompatible,
+			IncompatibleReason: rn.incompatReason,
 		})
 	}
 	return out
@@ -93,6 +99,10 @@ func (r *nodeRegistry) stats() (total, healthy int) {
 	defer r.mu.RUnlock()
 	total = len(r.nodes)
 	for _, rn := range r.nodes {
+		if rn.incompatible {
+			total--
+			continue
+		}
 		if rn.state == connectivity.Ready {
 			healthy++
 		}
@@ -124,17 +134,19 @@ func (b *lumenBalancerBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOpt
 // --- Balancer ---
 
 type subConnState struct {
-	sc            balancer.SubConn
-	addr          resolver.Address
-	identity      discovery.NodeIdentity
-	state         connectivity.State
-	capabilities  []*pb.Capability
-	tasks         []string
-	hardFailures  int
-	cooldownUntil time.Time
-	cooldown      time.Duration
-	txt           map[string]string
-	capFetching   bool
+	sc             balancer.SubConn
+	addr           resolver.Address
+	identity       discovery.NodeIdentity
+	state          connectivity.State
+	capabilities   []*pb.Capability
+	tasks          []string
+	hardFailures   int
+	cooldownUntil  time.Time
+	cooldown       time.Duration
+	txt            map[string]string
+	capFetching    bool
+	incompatible   bool
+	incompatReason string
 }
 
 type lumenBalancer struct {
@@ -164,13 +176,36 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 		if exists {
 			if existing.addr.Addr != addr.Addr {
 				existing.addr = addr
-				lb.cc.UpdateAddresses(existing.sc, []resolver.Address{addr})
+				if existing.sc != nil {
+					lb.cc.UpdateAddresses(existing.sc, []resolver.Address{addr})
+				}
 			}
 			existing.tasks = mergeTasks(existing.tasks, attr.Tasks)
 			existing.txt = attr.Txt
+			if existing.incompatible == attr.Compatible {
+				lb.setCompatibilityLocked(existing, key, attr)
+			} else if existing.incompatible {
+				// Both sides incompatible; keep the freshest reason.
+				existing.incompatReason = attr.IncompatReason
+			}
 			continue
 		}
 
+		scs := &subConnState{
+			identity: attr.Identity,
+			addr:     addr,
+			state:    connectivity.Idle,
+			tasks:    attr.Tasks,
+			txt:      attr.Txt,
+		}
+		if !attr.Compatible {
+			// Incompatible nodes stay visible in the registry but never get a
+			// SubConn, so no RPC can be routed to them.
+			scs.incompatible = true
+			scs.incompatReason = attr.IncompatReason
+			lb.subConns[key] = scs
+			continue
+		}
 		sc, err := lb.cc.NewSubConn([]resolver.Address{addr}, balancer.NewSubConnOptions{
 			StateListener: lb.makeStateListener(key),
 		})
@@ -178,14 +213,8 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 			lb.log().Warn("failed to create SubConn", zap.String("id", key), zap.Error(err))
 			continue
 		}
-		lb.subConns[key] = &subConnState{
-			sc:       sc,
-			addr:     addr,
-			identity: attr.Identity,
-			state:    connectivity.Idle,
-			tasks:    attr.Tasks,
-			txt:      attr.Txt,
-		}
+		scs.sc = sc
+		lb.subConns[key] = scs
 		sc.Connect()
 	}
 
@@ -193,7 +222,9 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 		if activeKeys[key] {
 			continue
 		}
-		lb.cc.RemoveSubConn(scs.sc)
+		if scs.sc != nil {
+			lb.cc.RemoveSubConn(scs.sc)
+		}
 		delete(lb.subConns, key)
 	}
 
@@ -208,10 +239,47 @@ func (lb *lumenBalancer) makeStateListener(key string) func(balancer.SubConnStat
 	}
 }
 
+// setCompatibilityLocked transitions a node between the compatible and
+// incompatible sets. Compatible nodes get a SubConn (created on demand when
+// they previously had none); incompatible nodes have theirs removed so they
+// can never be picked.
+func (lb *lumenBalancer) setCompatibilityLocked(scs *subConnState, key string, attr nodeAttr) {
+	if attr.Compatible {
+		scs.incompatible = false
+		scs.incompatReason = ""
+		if scs.sc == nil {
+			sc, err := lb.cc.NewSubConn([]resolver.Address{scs.addr}, balancer.NewSubConnOptions{
+				StateListener: lb.makeStateListener(key),
+			})
+			if err != nil {
+				lb.log().Warn("failed to create SubConn for compatible node", zap.String("id", key), zap.Error(err))
+				return
+			}
+			scs.sc = sc
+			scs.state = connectivity.Idle
+			scs.capabilities = nil
+			scs.hardFailures = 0
+			scs.cooldownUntil = time.Time{}
+			scs.cooldown = 0
+		}
+		scs.sc.Connect()
+		return
+	}
+	scs.incompatible = true
+	scs.incompatReason = attr.IncompatReason
+	if scs.sc != nil {
+		lb.cc.RemoveSubConn(scs.sc)
+		scs.sc = nil
+		scs.state = connectivity.Idle
+		scs.capabilities = nil
+	}
+}
+
 func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.SubConnState) {
 	lb.mu.Lock()
 	scs, ok := lb.subConns[key]
-	if !ok {
+	if !ok || scs.incompatible {
+		// Stale callback after removal, or a node that is no longer routable.
 		lb.mu.Unlock()
 		return
 	}
@@ -287,6 +355,10 @@ func (lb *lumenBalancer) rebuildPickerLocked() {
 	var probes []*subConnState
 
 	for _, scs := range lb.subConns {
+		if scs.incompatible {
+			// Incompatible nodes are visible but never routable.
+			continue
+		}
 		switch {
 		case scs.state == connectivity.Ready:
 			if scs.cooldownUntil.IsZero() || now.After(scs.cooldownUntil) {
@@ -330,15 +402,17 @@ func (lb *lumenBalancer) syncRegistryLocked() {
 	lb.registry.nodes = make(map[string]*registeredNode, len(lb.subConns))
 	for key, scs := range lb.subConns {
 		lb.registry.nodes[key] = &registeredNode{
-			identity:      scs.identity,
-			addr:          scs.addr.Addr,
-			state:         scs.state,
-			capabilities:  scs.capabilities,
-			tasks:         scs.tasks,
-			hardFailures:  scs.hardFailures,
-			cooldownUntil: scs.cooldownUntil,
-			cooldown:      scs.cooldown,
-			txt:           scs.txt,
+			identity:       scs.identity,
+			addr:           scs.addr.Addr,
+			state:          scs.state,
+			capabilities:   scs.capabilities,
+			tasks:          scs.tasks,
+			hardFailures:   scs.hardFailures,
+			cooldownUntil:  scs.cooldownUntil,
+			cooldown:       scs.cooldown,
+			txt:            scs.txt,
+			incompatible:   scs.incompatible,
+			incompatReason: scs.incompatReason,
 		}
 	}
 	lb.registry.mu.Unlock()
@@ -421,6 +495,21 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 	cli := pb.NewInferenceClient(conn)
 	stream, err := cli.StreamCapabilities(ctx, &emptypb.Empty{})
 	if err != nil {
+		// A node that does not implement the capability RPC speaks a different
+		// protocol; it cannot be parsed or scheduled. Mark it incompatible once
+		// instead of retrying forever.
+		if status.Code(err) == codes.Unimplemented {
+			lb.mu.Lock()
+			if scs, ok := lb.subConns[key]; ok {
+				scs.incompatible = true
+				scs.incompatReason = "capability RPC not implemented; node does not speak the supported data-plane protocol"
+			}
+			lb.syncRegistryLocked()
+			lb.rebuildPickerLocked()
+			lb.mu.Unlock()
+			lb.log().Info("node marked incompatible: capability RPC unimplemented", zap.String("id", key))
+			return true
+		}
 		lb.log().Warn("cap fetch: stream failed", zap.String("id", key), zap.Error(err))
 		return false
 	}
@@ -444,12 +533,17 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 	}
 
 	tasks := tasksFromCapabilities(caps)
+	compat := compatibilityFromCapabilities(caps)
 
 	lb.mu.Lock()
 	scs, ok := lb.subConns[key]
 	if ok {
 		scs.capabilities = caps
 		scs.tasks = mergeTasks(scs.tasks, tasks)
+		if !compat.compatible {
+			scs.incompatible = true
+			scs.incompatReason = compat.incompatReason()
+		}
 	}
 	lb.syncRegistryLocked()
 	lb.rebuildPickerLocked()
@@ -472,6 +566,9 @@ func (lb *lumenBalancer) log() *zap.Logger {
 // --- helpers ---
 
 func availabilityFromRegistered(rn *registeredNode) discovery.NodeAvailability {
+	if rn.incompatible {
+		return discovery.NodeAvailabilityIncompatible
+	}
 	switch rn.state {
 	case connectivity.Ready:
 		return discovery.NodeAvailabilityReady
@@ -592,6 +689,9 @@ func (p *lumenPicker) makeDone(scs *subConnState) func(balancer.DoneInfo) {
 func filterByTask(candidates []*subConnState, task string, requireExpiredCooldown bool, now time.Time) []*subConnState {
 	var out []*subConnState
 	for _, scs := range candidates {
+		if scs.incompatible {
+			continue
+		}
 		if task != "" && !nodeSupportsTaskSlice(scs.tasks, task) {
 			continue
 		}

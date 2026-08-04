@@ -91,3 +91,35 @@ jobs:
 
                   echo "=== Testing lumen-hostd version ==="
                   ./dist/lumen-hostd-${{ matrix.goos }}-${{ matrix.goarch }} version
+
+    proto:
+        name: Proto contract check
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+
+            - name: Setup Go
+              uses: actions/setup-go@v6
+              with:
+                  go-version: ${{ env.GO_VERSION }}
+
+            # Pinned toolchain so the generated-code drift check is byte-exact
+            # (the committed .pb.go headers record protoc v6.32.0 / plugins).
+            - name: Install buf
+              run: |
+                  curl -sSL https://github.com/bufbuild/buf/releases/download/v1.72.0/buf-Linux-x86_64 -o /usr/local/bin/buf
+                  chmod +x /usr/local/bin/buf
+                  buf --version
+
+            - name: Install protoc and Go plugins
+              run: |
+                  curl -sSL https://github.com/protocolbuffers/protobuf/releases/download/v32.0/protoc-32.0-linux-x86_64.zip -o /tmp/protoc.zip
+                  sudo unzip -o /tmp/protoc.zip -d /usr/local 'bin/protoc*' 'include/*'
+                  sudo chmod +x /usr/local/bin/protoc
+                  go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.8
+                  go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+                  protoc --version
+
+            - name: Proto contract check
+              run: make proto:check

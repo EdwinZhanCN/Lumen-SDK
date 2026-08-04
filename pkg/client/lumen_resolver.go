@@ -18,9 +18,11 @@ type nodeAttrKey struct{}
 
 // nodeAttr carries discovery metadata for a single resolved address.
 type nodeAttr struct {
-	Identity discovery.NodeIdentity
-	Tasks    []string
-	Txt      map[string]string
+	Identity       discovery.NodeIdentity
+	Tasks          []string
+	Txt            map[string]string
+	Compatible     bool
+	IncompatReason string
 }
 
 func setNodeAttr(addr resolver.Address, attr nodeAttr) resolver.Address {
@@ -107,9 +109,11 @@ func (r *lumenResolver) handleEvent(ev discovery.NodeEvent) {
 		if key == "" {
 			return
 		}
-		if ev.ExplicitRemove {
-			delete(r.nodes, key)
-		}
+		// Every expiry removes the address from the active set, regardless of
+		// backend: the mDNS resolver only expires after consecutive missed
+		// polls, and broker/static backends revoke explicitly. A node that
+		// comes back is re-added on its next discovery event.
+		delete(r.nodes, key)
 
 	case discovery.NodeResolveFailed:
 		// Don't remove — the balancer handles degraded state.
@@ -124,10 +128,13 @@ func (r *lumenResolver) pushStateLocked() {
 		if len(entry.endpoints) == 0 {
 			continue
 		}
+		compat := compatibilityFromTXT(entry.node.Txt)
 		attr := nodeAttr{
-			Identity: entry.node.Identity,
-			Tasks:    entry.node.HintTasks(),
-			Txt:      entry.node.Txt,
+			Identity:       entry.node.Identity,
+			Tasks:          entry.node.HintTasks(),
+			Txt:            entry.node.Txt,
+			Compatible:     compat.compatible,
+			IncompatReason: compat.incompatReason(),
 		}
 		// Use first endpoint as primary address; the balancer creates one
 		// SubConn per unique address.

@@ -12,10 +12,18 @@ LDFLAGS = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X '
 GO_FLAGS = -v
 CGO_ENABLED ?= 0
 
+# Fixed current-major baseline tag for `buf breaking` (WIRE_JSON policy).
+# The data-plane contract is frozen within this major; wire-level breaks
+# against this tag fail CI. Bump only on a protocol-major release.
+PROTO_BASELINE ?= v1.3.2
+
+# Proto module directory (buf.yaml lives here).
+PROTO_DIR = proto
+
 # Platform specific variables
 PLATFORMS = linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps run-hostd release tag show-version quick-start ci ci-fast test test-coverage lint fmt vet deps
+.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps run-hostd release tag show-version quick-start ci ci-fast test test-coverage lint fmt vet deps proto\:check
 
 # Default target
 .DEFAULT_GOAL := help
@@ -31,6 +39,20 @@ help: ## Show this help message
 deps: ## Download dependencies
 	go mod download
 	go mod verify
+
+proto\:check: ## Lint the data-plane proto, check wire compatibility against the fixed baseline tag, and verify committed generated code
+	cd $(PROTO_DIR) && buf lint
+	cd $(PROTO_DIR) && buf breaking --against "https://github.com/EdwinZhanCN/Lumen-SDK.git#ref=$(PROTO_BASELINE),subdir=proto"
+	@tmp=$$(mktemp -d); \
+	protoc --proto_path=. --go_out=paths=source_relative:$$tmp --go-grpc_out=paths=source_relative:$$tmp proto/ml_service.proto && \
+	for f in proto/ml_service.pb.go proto/ml_service_grpc.pb.go; do \
+		if ! diff -q $$f $$tmp/$$f >/dev/null 2>&1; then \
+			echo "generated code out of date: $$f (run: protoc --proto_path=. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. proto/ml_service.proto)"; \
+			exit 1; \
+		fi; \
+	done; \
+	rm -rf $$tmp
+	@echo "proto:check ok (lint, WIRE_JSON baseline $(PROTO_BASELINE), generated code in sync)"
 
 fmt: ## Format Go code
 	go fmt ./...

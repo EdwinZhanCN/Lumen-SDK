@@ -29,9 +29,11 @@ type NodeEvent struct {
 	Txt       map[string]string // TXT key/value records
 	Err       error             // set when Type is NodeResolveFailed
 
-	// ExplicitRemove is true when the producer knows the node should be
-	// removed, such as a Broker "removed" event. mDNS TTL expiry should leave
-	// this false because stale DNS-SD records are not liveness proof.
+	// ExplicitRemove reports whether the producer knows the node should be
+	// removed, such as a Broker "removed" event. mDNS TTL expiry leaves this
+	// false (a quiet poll is not proof of offline-ness) — the resolver still
+	// removes the address after the resolver's own expiry threshold, and a
+	// returning node is re-added by its next discovery event.
 	ExplicitRemove bool
 }
 
