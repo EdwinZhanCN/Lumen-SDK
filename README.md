@@ -8,6 +8,14 @@ Lumen SDK 是 Go 工具包，用于发现并调用分布式 Lumen ML 推理节�
 - `cmd/lumen-hostd`：跨平台 Host Broker 服务和 CLI。
 - `pkg/types` / `proto`：统一任务、Tensor 和 gRPC 协议契约。
 
+## 部署定位
+
+Docker 正式路径是 Linux `network_mode: host` + mDNS 自动发现，参考
+Lumilio Photos 仓库发布的 `lumen-cpu.compose.yml` / `lumen-vulkan.compose.yml` /
+`lumen-cuda.compose.yml`。`cmd/lumen-hostd`（Host Broker）只保留为可选高级工具，
+用于无法自行完成局域网发现的场景（例如 Docker Desktop 内的应用）；它不进入
+主安装路径，也不代理推理 Payload。
+
 ```go
 cfg := config.DefaultConfig()
 c, err := client.NewLumenClient(cfg, logger)
