@@ -24,7 +24,7 @@ message Error {
 
 // ---- Structured task I/O description (for central routing and client negotiation) ----
 message IOTask {
-  string name = 1; // "embed","detect","ocr","asr","generate","tts",...
+  string name = 1; // Task name, e.g. "semantic_text_embed","semantic_image_embed","bioclip_classify","ocr","face_recognition"
   repeated string input_mimes = 2; // Allow multiple input types: "image/jpeg","audio/pcm;rate=16000","application/json"
   repeated string output_mimes = 3; // Typical outputs: "application/json;schema=bbox_v1","audio/wav"
   map<string, string> limits = 4; // e.g., max_hw=1024, max_batch=8, max_length=4096
@@ -38,9 +38,9 @@ message IOTask {
 
 // ---- Capability declaration (retrieve at startup or on demand) ----
 message Capability {
-  string service_name = 1; // "clip-embedder","ocr","llm","tts",...
+  string service_name = 1; // "siglip","face","ocr","bioclip"
   repeated string model_ids = 2; // Supported model IDs/versions
-  string runtime = 3; // "onnxrt-cuda","tensorrt","coreml","rknn","qnn","cpu"
+  string runtime = 3; // Burn backend name: "cpu","vulkan","cuda","rocm","metal","wgpu"
   uint32 max_concurrency = 4; // Suggested max concurrency
   repeated string precisions = 5; // ["fp32","fp16","int8"]
   map<string, string> extra = 6; // Resolution limits, ANE/NPU features, etc.
@@ -51,7 +51,7 @@ message Capability {
 // ---- Inference request (inbound message of bidi stream) ----
 message InferRequest {
   string correlation_id = 1; // Trace/correlation
-  string task = 2; // "embed","classify","detect","ocr","asr","generate","tts",...
+  string task = 2; // "semantic_text_embed","semantic_image_embed","bioclip_classify","ocr","face_recognition"
   bytes payload = 3; // Raw payload (binary or UTF-8 text)
   map<string, string> meta = 4; // Task-specific parameters: model_id, conf_thres, stop, etc.
 

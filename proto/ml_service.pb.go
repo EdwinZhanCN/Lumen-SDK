@@ -142,13 +142,13 @@ func (x *Error) GetDetail() string {
 // ---- Structured task I/O description (for central routing and client negotiation) ----
 type IOTask struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
-	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                               // "embed","detect","ocr","asr","generate","tts",...
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                               // Task name, e.g. "semantic_text_embed","semantic_image_embed","bioclip_classify","ocr","face_recognition"
 	InputMimes  []string               `protobuf:"bytes,2,rep,name=input_mimes,json=inputMimes,proto3" json:"input_mimes,omitempty"`                                                 // Allow multiple input types: "image/jpeg","audio/pcm;rate=16000","application/json"
 	OutputMimes []string               `protobuf:"bytes,3,rep,name=output_mimes,json=outputMimes,proto3" json:"output_mimes,omitempty"`                                              // Typical outputs: "application/json;schema=bbox_v1","audio/wav"
 	Limits      map[string]string      `protobuf:"bytes,4,rep,name=limits,proto3" json:"limits,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // e.g., max_hw=1024, max_batch=8, max_length=4096
 	// Empty means this task has no client-side tensor fast path.
 	TensorPreprocessId string `protobuf:"bytes,5,opt,name=tensor_preprocess_id,json=tensorPreprocessId,proto3" json:"tensor_preprocess_id,omitempty"`
-	// True means tensor requests for this task can be dynamically batched by the Hub.
+	// True means tensor requests for this task can be dynamically batched by the routing layer.
 	TensorBatchingSupported bool `protobuf:"varint,6,opt,name=tensor_batching_supported,json=tensorBatchingSupported,proto3" json:"tensor_batching_supported,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
@@ -229,9 +229,9 @@ func (x *IOTask) GetTensorBatchingSupported() bool {
 // ---- Capability declaration (retrieve at startup or on demand) ----
 type Capability struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName     string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`                                            // "clip-embedder","ocr","llm","tts",...
+	ServiceName     string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`                                            // "siglip","face","ocr","bioclip"
 	ModelIds        []string               `protobuf:"bytes,2,rep,name=model_ids,json=modelIds,proto3" json:"model_ids,omitempty"`                                                     // Supported model IDs/versions
-	Runtime         string                 `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`                                                                       // "onnxrt-cuda","tensorrt","coreml","rknn","qnn","cpu"
+	Runtime         string                 `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`                                                                       // Burn backend name: "cpu","vulkan","cuda","rocm","metal","wgpu"
 	MaxConcurrency  uint32                 `protobuf:"varint,4,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`                                  // Suggested max concurrency
 	Precisions      []string               `protobuf:"bytes,5,rep,name=precisions,proto3" json:"precisions,omitempty"`                                                                 // ["fp32","fp16","int8"]
 	Extra           map[string]string      `protobuf:"bytes,6,rep,name=extra,proto3" json:"extra,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Resolution limits, ANE/NPU features, etc.
@@ -331,7 +331,7 @@ func (x *Capability) GetProtocolVersion() string {
 type InferRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`                                    // Trace/correlation
-	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "embed","classify","detect","ocr","asr","generate","tts",...
+	Task          string                 `protobuf:"bytes,2,opt,name=task,proto3" json:"task,omitempty"`                                                                           // "semantic_text_embed","semantic_image_embed","bioclip_classify","ocr","face_recognition"
 	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`                                                                     // Raw payload (binary or UTF-8 text)
 	Meta          map[string]string      `protobuf:"bytes,4,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Task-specific parameters: model_id, conf_thres, stop, etc.
 	// --- Added: input content type and chunking control ---
