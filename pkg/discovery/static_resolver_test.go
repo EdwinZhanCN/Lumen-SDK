@@ -40,16 +40,16 @@ func TestStaticResolverEmitsConfiguredEndpoints(t *testing.T) {
 	if first.Type != NodeDiscovered {
 		t.Fatalf("event type = %v, want NodeDiscovered", first.Type)
 	}
-	if first.Identity.DeploymentID != DefaultDeploymentID {
-		t.Fatalf("deployment = %q, want default", first.Identity.DeploymentID)
+	if first.Resolved.Identity.DeploymentID != DefaultDeploymentID {
+		t.Fatalf("deployment = %q, want default", first.Resolved.Identity.DeploymentID)
 	}
-	if len(first.Addresses) != 1 || first.Addresses[0] != "10.0.0.5:50051" {
-		t.Fatalf("addresses = %v, want [10.0.0.5:50051]", first.Addresses)
+	if endpoint := first.Resolved.Endpoint(); endpoint != "10.0.0.5:50051" {
+		t.Fatalf("endpoint = %q, want 10.0.0.5:50051", endpoint)
 	}
-	if events[1].Addresses[0] != "nas.local:50052" {
-		t.Fatalf("second endpoint = %v, want trimmed nas.local:50052", events[1].Addresses)
+	if endpoint := events[1].Resolved.Endpoint(); endpoint != "nas.local:50052" {
+		t.Fatalf("second endpoint = %q, want nas.local:50052", endpoint)
 	}
-	if events[0].Identity.Key() == events[1].Identity.Key() {
+	if events[0].Resolved.Identity.Key() == events[1].Resolved.Identity.Key() {
 		t.Fatal("static endpoints must have distinct identities")
 	}
 

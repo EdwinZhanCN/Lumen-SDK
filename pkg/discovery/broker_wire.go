@@ -4,150 +4,94 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
 
-// brokerNodeEvent is the wire JSON format received from the Broker WebSocket.
+// brokerNodeEvent is a complete address snapshot received from Host Broker.
 type brokerNodeEvent struct {
-	Type   string       `json:"type"` // "snapshot", "added", "removed"
-	Nodes  []brokerNode `json:"nodes,omitempty"`
-	Node   *brokerNode  `json:"node,omitempty"`
-	NodeID string       `json:"node_id,omitempty"`
+	Type  string       `json:"type"`
+	Nodes []brokerNode `json:"nodes"`
 }
 
 type brokerNode struct {
-	NodeID       string            `json:"node_id"`
-	DeploymentID string            `json:"deployment_id,omitempty"`
-	Address      string            `json:"address"`
-	Addresses    []string          `json:"addresses,omitempty"`
-	Port         int               `json:"port,omitempty"`
-	Tasks        []string          `json:"tasks,omitempty"`
-	Txt          map[string]string `json:"txt,omitempty"`
+	NodeID  string            `json:"node_id"`
+	Address string            `json:"address"`
+	Txt     map[string]string `json:"txt,omitempty"`
 }
 
-func parseNodeEvents(raw []byte) ([]NodeEvent, error) {
-	return parseNodeEventsWithDeployment(raw, DefaultDeploymentID)
-}
-
-func parseNodeEventsWithDeployment(raw []byte, deploymentID string) ([]NodeEvent, error) {
+func parseNodeSnapshot(raw []byte, deploymentID string) ([]ResolvedNode, error) {
 	var msg brokerNodeEvent
 	if err := json.Unmarshal(raw, &msg); err != nil {
-		return nil, fmt.Errorf("unmarshal node event: %w", err)
+		return nil, fmt.Errorf("unmarshal node snapshot: %w", err)
+	}
+	if msg.Type != "snapshot" {
+		return nil, fmt.Errorf("unsupported Broker event type %q; expected snapshot", msg.Type)
 	}
 
-	switch msg.Type {
-	case "snapshot":
-		events := make([]NodeEvent, 0, len(msg.Nodes))
-		for _, n := range msg.Nodes {
-			events = append(events, nodeEventFromBroker(NodeDiscovered, n, deploymentID, false))
+	seen := make(map[string]struct{}, len(msg.Nodes))
+	resolved := make([]ResolvedNode, 0, len(msg.Nodes))
+	for index, node := range msg.Nodes {
+		identity := ParseNodeIdentity(node.NodeID, deploymentID)
+		if identity.IsZero() {
+			return nil, fmt.Errorf("snapshot node %d is missing node_id", index)
 		}
-		return events, nil
-
-	case "added":
-		if msg.Node == nil {
-			return nil, fmt.Errorf("added event missing node")
+		host, portString, err := net.SplitHostPort(strings.TrimSpace(node.Address))
+		port, portErr := strconv.Atoi(portString)
+		if err != nil || portErr != nil || strings.TrimSpace(host) == "" || port <= 0 || port > 65535 {
+			return nil, fmt.Errorf("snapshot node %q has invalid address %q", node.NodeID, node.Address)
 		}
-		return []NodeEvent{nodeEventFromBroker(NodeDiscovered, *msg.Node, deploymentID, false)}, nil
-
-	case "removed":
-		if msg.NodeID == "" {
-			return nil, fmt.Errorf("removed event missing node_id")
+		if _, exists := seen[identity.Key()]; exists {
+			return nil, fmt.Errorf("snapshot contains duplicate node identity %q", identity.Key())
 		}
-		return []NodeEvent{nodeEventFromBroker(NodeExpired, brokerNode{NodeID: msg.NodeID}, deploymentID, true)}, nil
+		seen[identity.Key()] = struct{}{}
 
+		// Host Broker metadata is descriptive only. Authority-like task/protocol
+		// hints are discarded before they enter the resolver state.
+		txt := make(map[string]string, 2)
+		if version := strings.TrimSpace(node.Txt["v"]); version != "" {
+			txt["v"] = version
+		}
+		if runtime := strings.TrimSpace(node.Txt["runtime"]); runtime != "" {
+			txt["runtime"] = runtime
+		}
+		resolved = append(resolved, ResolvedNode{
+			Identity:     identity,
+			InstanceName: identity.Key(),
+			Addresses:    []string{host},
+			Port:         port,
+			Txt:          txt,
+		}.Normalized())
+	}
+	return resolved, nil
+}
+
+func brokerWebSocketURL(baseURL string) (string, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("Broker URL is empty")
+	}
+	if !strings.Contains(baseURL, "://") {
+		baseURL = "http://" + baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse Broker URL: %w", err)
+	}
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	case "https":
+		u.Scheme = "wss"
 	default:
-		return nil, fmt.Errorf("unknown event type: %s", msg.Type)
+		return "", fmt.Errorf("unsupported Broker URL scheme %q", u.Scheme)
 	}
-}
-
-func nodeEventFromBroker(eventType NodeEventType, n brokerNode, defaultDeploymentID string, explicitRemove bool) NodeEvent {
-	deploymentID := n.DeploymentID
-	if deploymentID == "" {
-		deploymentID = defaultDeploymentID
+	if u.Host == "" {
+		return "", fmt.Errorf("Broker URL has no host")
 	}
-	identity := ParseNodeIdentity(n.NodeID, deploymentID)
-	addresses, port := brokerAddresses(n)
-	txt := make(map[string]string, len(n.Txt)+1)
-	for k, v := range n.Txt {
-		txt[k] = v
-	}
-	if len(n.Tasks) > 0 {
-		txt["tasks"] = joinCSV(n.Tasks)
-	}
-	resolved := ResolvedNode{
-		Identity:     identity,
-		InstanceName: identity.Key(),
-		Addresses:    addresses,
-		Port:         port,
-		Txt:          txt,
-	}.Normalized()
-	ev := eventFromResolved(eventType, resolved)
-	ev.ExplicitRemove = explicitRemove
-	return ev
-}
-
-func brokerAddresses(n brokerNode) ([]string, int) {
-	port := n.Port
-	addresses := append([]string(nil), n.Addresses...)
-	if n.Address != "" {
-		host, parsedPort, err := splitHostPort(n.Address)
-		if err == nil {
-			if port == 0 {
-				port = parsedPort
-			}
-			addresses = append(addresses, host)
-		} else {
-			addresses = append(addresses, n.Address)
-		}
-	}
-	return addresses, port
-}
-
-func splitHostPort(address string) (string, int, error) {
-	host, portString, err := net.SplitHostPort(address)
-	if err != nil {
-		return "", 0, err
-	}
-	port, err := strconv.Atoi(portString)
-	if err != nil {
-		return "", 0, err
-	}
-	return host, port, nil
-}
-
-func joinCSV(values []string) string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return strings.Join(out, ",")
-}
-
-// wsScheme returns "ws" or "wss" based on the Broker URL scheme.
-func wsScheme(brokerURL string) string {
-	if len(brokerURL) >= 5 && brokerURL[:5] == "https" {
-		return "wss"
-	}
-	return "ws"
-}
-
-// wsHost strips the scheme prefix from the Broker URL to get the host:port.
-func wsHost(brokerURL string) string {
-	if len(brokerURL) >= 7 && brokerURL[:7] == "http://" {
-		return brokerURL[7:]
-	}
-	if len(brokerURL) >= 8 && brokerURL[:8] == "https://" {
-		return brokerURL[8:]
-	}
-	return brokerURL
+	u.Path = strings.TrimRight(u.Path, "/") + "/v1/nodes/watch"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
 }

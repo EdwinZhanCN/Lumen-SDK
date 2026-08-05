@@ -1,9 +1,8 @@
 // Package discovery defines the unified operational discovery abstraction.
 //
 // All discovery backends (mDNS, Broker push, manual) implement the
-// NodeResolver interface. Consumers receive a stream of NodeEvent values that
-// describe address-resolution facts. Discovery does not prove node liveness;
-// connection health belongs to the operational session / gRPC pool layer.
+// NodeResolver interface. Consumers receive address-resolution facts only;
+// connection health and protocol compatibility belong to the gRPC pool.
 package discovery
 
 import "context"
@@ -12,36 +11,20 @@ import "context"
 type NodeEventType int
 
 const (
-	NodeDiscovered    NodeEventType = iota // a service instance or resolved address was discovered
-	NodeExpired                            // DNS-SD TTL expired or a push backend explicitly revoked the node
-	NodeResolveFailed                      // address resolution failed; this is not a liveness verdict
-
+	NodeDiscovered    NodeEventType = iota // a service instance or address was discovered
+	NodeExpired                            // the resolver revoked or expired the address
+	NodeResolveFailed                      // address resolution failed; not a liveness verdict
 )
 
-// NodeEvent carries a single operational discovery notification.
+// NodeEvent carries one canonical discovery record. Resolved contains the
+// identity, addresses, and discovery metadata; parallel copies are forbidden.
 type NodeEvent struct {
 	Type     NodeEventType
-	Identity NodeIdentity
 	Resolved ResolvedNode
-
-	Addresses []string          // candidate "host:port" values suitable for grpc.Dial
-	Tasks     []string          // lightweight task hints from TXT / push payload
-	Txt       map[string]string // TXT key/value records
-	Err       error             // set when Type is NodeResolveFailed
-
-	// ExplicitRemove is true when the producer knows the node should be
-	// removed, such as a Broker "removed" event. mDNS TTL expiry should leave
-	// this false because stale DNS-SD records are not liveness proof.
-	ExplicitRemove bool
+	Err      error // set when Type is NodeResolveFailed
 }
 
 // NodeResolver is the single discovery abstraction consumed by the gRPC Pool.
-//
-// Implementations:
-//   - MDNSResolver: watches and resolves zeroconf mDNS service records.
-//   - BrokerResolver: subscribes to a Host Broker WebSocket for node events.
 type NodeResolver interface {
-	// Watch returns a channel that emits operational discovery events.
-	// The channel is closed when ctx is cancelled or the backend stops.
 	Watch(ctx context.Context) (<-chan NodeEvent, error)
 }

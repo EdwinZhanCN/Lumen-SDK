@@ -14,18 +14,20 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // balancerOptions holds tunable parameters for the lumen balancer.
 type balancerOptions struct {
-	connectTimeout        time.Duration
-	rediscoveryBackoffMin time.Duration
-	rediscoveryBackoffMax time.Duration
+	connectTimeout     time.Duration
+	failureCooldownMin time.Duration
+	failureCooldownMax time.Duration
 }
 
 var balancerSeq int64
@@ -53,15 +55,14 @@ type nodeRegistry struct {
 }
 
 type registeredNode struct {
-	identity      discovery.NodeIdentity
-	addr          string
-	state         connectivity.State
-	capabilities  []*pb.Capability
-	tasks         []string
-	hardFailures  int
-	cooldownUntil time.Time
-	cooldown      time.Duration
-	txt           map[string]string
+	identity       discovery.NodeIdentity
+	addr           string
+	state          connectivity.State
+	capabilities   []*pb.Capability
+	metadata       map[string]string
+	compatibility  discovery.CompatibilityState
+	incompatReason string
+	updatedAt      time.Time
 }
 
 func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
@@ -69,35 +70,35 @@ func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
 	defer r.mu.RUnlock()
 
 	out := make([]*discovery.NodeInfo, 0, len(r.nodes))
-	for _, rn := range r.nodes {
-		availability := availabilityFromRegistered(rn)
+	for _, node := range r.nodes {
 		out = append(out, &discovery.NodeInfo{
-			ID:           rn.identity.Key(),
-			Address:      rn.addr,
-			Status:       availability.NodeStatus(),
-			Availability: availability,
-			Metadata:     buildCapabilityMetadata(rn.capabilities),
-			Models:       buildModelInfos(rn.capabilities),
-			Tasks:        tasksToIOTasksFromCapabilities(rn.capabilities, rn.tasks),
-			Capabilities: discovery.CloneCapabilities(rn.capabilities),
-			Version:      rn.txt["v"],
-			Runtime:      rn.txt["runtime"],
-			LastSeen:     time.Now(),
+			ID:                 node.identity.Key(),
+			Address:            node.addr,
+			Availability:       availabilityFromRegistered(node),
+			Compatibility:      node.compatibility,
+			Metadata:           buildCapabilityMetadata(node.capabilities),
+			Models:             buildModelInfos(node.capabilities),
+			Capabilities:       discovery.CloneCapabilities(node.capabilities),
+			Version:            node.metadata["v"],
+			Runtime:            node.metadata["runtime"],
+			UpdatedAt:          node.updatedAt,
+			IncompatibleReason: node.incompatReason,
 		})
 	}
 	return out
 }
 
-func (r *nodeRegistry) stats() (total, healthy int) {
+func (r *nodeRegistry) stats() (total, routable int) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	total = len(r.nodes)
-	for _, rn := range r.nodes {
-		if rn.state == connectivity.Ready {
-			healthy++
+	for _, node := range r.nodes {
+		if availabilityFromRegistered(node) == discovery.NodeAvailabilityReady &&
+			node.compatibility == discovery.CompatibilityCompatible {
+			routable++
 		}
 	}
-	return
+	return total, routable
 }
 
 // --- Balancer Builder ---
@@ -124,31 +125,41 @@ func (b *lumenBalancerBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOpt
 // --- Balancer ---
 
 type subConnState struct {
-	sc            balancer.SubConn
-	addr          resolver.Address
-	identity      discovery.NodeIdentity
-	state         connectivity.State
-	capabilities  []*pb.Capability
-	tasks         []string
-	hardFailures  int
-	cooldownUntil time.Time
-	cooldown      time.Duration
-	txt           map[string]string
-	capFetching   bool
+	sc                 balancer.SubConn
+	generation         uint64
+	addr               resolver.Address
+	identity           discovery.NodeIdentity
+	state              connectivity.State
+	capabilities       []*pb.Capability
+	hardFailures       int
+	cooldownUntil      time.Time
+	cooldown           time.Duration
+	cooldownTimer      *time.Timer
+	metadata           map[string]string
+	compatibility      discovery.CompatibilityState
+	compatibilityGen   uint64
+	capabilityFetchGen uint64
+	incompatReason     string
+	updatedAt          time.Time
 }
 
 type lumenBalancer struct {
-	cc       balancer.ClientConn
-	mu       sync.Mutex
-	subConns map[string]*subConnState
-	registry *nodeRegistry
-	options  balancerOptions
-	logger   *zap.Logger
+	cc             balancer.ClientConn
+	mu             sync.Mutex
+	subConns       map[string]*subConnState
+	registry       *nodeRegistry
+	options        balancerOptions
+	logger         *zap.Logger
+	nextSubConnGen uint64
+	closed         bool
 }
 
 func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
+	if lb.closed {
+		return nil
+	}
 
 	activeKeys := make(map[string]bool, len(state.ResolverState.Addresses))
 
@@ -164,28 +175,37 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 		if exists {
 			if existing.addr.Addr != addr.Addr {
 				existing.addr = addr
+				lb.resetCompatibilityLocked(existing)
 				lb.cc.UpdateAddresses(existing.sc, []resolver.Address{addr})
+				if existing.state == connectivity.Ready {
+					lb.startCapabilityFetchLocked(key, existing)
+				}
 			}
-			existing.tasks = mergeTasks(existing.tasks, attr.Tasks)
-			existing.txt = attr.Txt
+			existing.metadata = copyStringMap(attr.Metadata)
+			existing.updatedAt = time.Now()
 			continue
 		}
 
+		lb.nextSubConnGen++
+		generation := lb.nextSubConnGen
+		scs := &subConnState{
+			generation:    generation,
+			identity:      attr.Identity,
+			addr:          addr,
+			state:         connectivity.Idle,
+			metadata:      copyStringMap(attr.Metadata),
+			compatibility: discovery.CompatibilityPending,
+			updatedAt:     time.Now(),
+		}
 		sc, err := lb.cc.NewSubConn([]resolver.Address{addr}, balancer.NewSubConnOptions{
-			StateListener: lb.makeStateListener(key),
+			StateListener: lb.makeStateListener(key, generation),
 		})
 		if err != nil {
 			lb.log().Warn("failed to create SubConn", zap.String("id", key), zap.Error(err))
 			continue
 		}
-		lb.subConns[key] = &subConnState{
-			sc:       sc,
-			addr:     addr,
-			identity: attr.Identity,
-			state:    connectivity.Idle,
-			tasks:    attr.Tasks,
-			txt:      attr.Txt,
-		}
+		scs.sc = sc
+		lb.subConns[key] = scs
 		sc.Connect()
 	}
 
@@ -193,7 +213,12 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 		if activeKeys[key] {
 			continue
 		}
-		lb.cc.RemoveSubConn(scs.sc)
+		if scs.cooldownTimer != nil {
+			scs.cooldownTimer.Stop()
+		}
+		if scs.sc != nil {
+			lb.cc.RemoveSubConn(scs.sc)
+		}
 		delete(lb.subConns, key)
 	}
 
@@ -202,33 +227,56 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 	return nil
 }
 
-func (lb *lumenBalancer) makeStateListener(key string) func(balancer.SubConnState) {
+func (lb *lumenBalancer) makeStateListener(key string, generation uint64) func(balancer.SubConnState) {
 	return func(state balancer.SubConnState) {
-		lb.handleSubConnStateChange(key, state)
+		lb.handleSubConnStateChange(key, generation, state)
 	}
 }
 
-func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.SubConnState) {
+func (lb *lumenBalancer) resetCompatibilityLocked(scs *subConnState) {
+	scs.compatibilityGen++
+	scs.compatibility = discovery.CompatibilityPending
+	scs.incompatReason = ""
+	scs.capabilities = nil
+	scs.updatedAt = time.Now()
+}
+
+func (lb *lumenBalancer) startCapabilityFetchLocked(key string, scs *subConnState) {
+	if scs.capabilityFetchGen == scs.compatibilityGen && scs.capabilityFetchGen != 0 {
+		return
+	}
+	scs.capabilityFetchGen = scs.compatibilityGen
+	go lb.fetchCapabilitiesWithRetry(key, scs.addr.Addr, scs.compatibilityGen)
+}
+
+func (lb *lumenBalancer) handleSubConnStateChange(key string, generation uint64, state balancer.SubConnState) {
 	lb.mu.Lock()
 	scs, ok := lb.subConns[key]
-	if !ok {
+	if lb.closed || !ok || scs.generation != generation {
+		// A removed SubConn can report one final state after the same identity has
+		// already been re-added. Generation matching prevents that stale callback
+		// from mutating the replacement session.
 		lb.mu.Unlock()
 		return
 	}
 	prevState := scs.state
 	scs.state = state.ConnectivityState
+	scs.updatedAt = time.Now()
 
 	if state.ConnectivityState == connectivity.Ready && prevState != connectivity.Ready {
+		// Every transport connection gets a fresh in-band verdict. Resolver
+		// refreshes do not reset this state, but a genuine reconnect does.
+		lb.resetCompatibilityLocked(scs)
 		scs.hardFailures = 0
+		if scs.cooldownTimer != nil {
+			scs.cooldownTimer.Stop()
+			scs.cooldownTimer = nil
+		}
 		scs.cooldownUntil = time.Time{}
 		scs.cooldown = 0
-		// Publish the Ready node immediately (TXT task hints may already allow
-		// routing); the capability fetch refines the task set asynchronously
-		// and retries with backoff instead of giving up on one failure.
-		if !scs.capFetching {
-			scs.capFetching = true
-			go lb.fetchCapabilitiesWithRetry(key, scs.addr.Addr)
-		}
+		// Pending nodes stay visible but are not routable until the capability
+		// stream proves that they speak the supported protocol major.
+		lb.startCapabilityFetchLocked(key, scs)
 		lb.syncRegistryLocked()
 		lb.rebuildPickerLocked()
 		lb.mu.Unlock()
@@ -238,11 +286,11 @@ func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.Sub
 	if state.ConnectivityState == connectivity.TransientFailure {
 		scs.hardFailures++
 		if scs.hardFailures >= hardFailureThreshold {
-			lb.startCooldownLocked(scs, time.Now())
+			lb.startCooldownLocked(key, scs, time.Now())
 		}
 	}
 
-	if state.ConnectivityState == connectivity.Idle {
+	if state.ConnectivityState == connectivity.Idle && scs.sc != nil {
 		scs.sc.Connect()
 	}
 
@@ -251,16 +299,37 @@ func (lb *lumenBalancer) handleSubConnStateChange(key string, state balancer.Sub
 	lb.mu.Unlock()
 }
 
-func (lb *lumenBalancer) startCooldownLocked(scs *subConnState, now time.Time) {
-	next := lb.options.rediscoveryBackoffMin
+func (lb *lumenBalancer) startCooldownLocked(key string, scs *subConnState, now time.Time) {
+	next := lb.options.failureCooldownMin
 	if scs.cooldown > 0 {
 		next = scs.cooldown * 2
-		if next > lb.options.rediscoveryBackoffMax {
-			next = lb.options.rediscoveryBackoffMax
+		if next > lb.options.failureCooldownMax {
+			next = lb.options.failureCooldownMax
 		}
 	}
 	scs.cooldown = next
-	scs.cooldownUntil = now.Add(next)
+	deadline := now.Add(next)
+	scs.cooldownUntil = deadline
+	if scs.cooldownTimer != nil {
+		scs.cooldownTimer.Stop()
+		scs.cooldownTimer = nil
+	}
+	if key == "" || lb.closed {
+		return
+	}
+	scs.cooldownTimer = time.AfterFunc(next, func() {
+		lb.mu.Lock()
+		defer lb.mu.Unlock()
+		current, ok := lb.subConns[key]
+		if lb.closed || !ok || current != scs || !current.cooldownUntil.Equal(deadline) {
+			return
+		}
+		current.cooldownTimer = nil
+		// A Picker that returned ErrNoSubConnAvailable remains queued until gRPC
+		// receives a state update. Rebuild exactly at cooldown expiry so existing
+		// RPCs can probe the node again without requiring an unrelated event.
+		lb.rebuildPickerLocked()
+	})
 }
 
 func (lb *lumenBalancer) ResolverError(err error) {
@@ -269,13 +338,26 @@ func (lb *lumenBalancer) ResolverError(err error) {
 
 func (lb *lumenBalancer) UpdateSubConnState(_ balancer.SubConn, _ balancer.SubConnState) {}
 
-func (lb *lumenBalancer) Close() {}
+func (lb *lumenBalancer) Close() {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	lb.closed = true
+	for _, scs := range lb.subConns {
+		if scs.cooldownTimer != nil {
+			scs.cooldownTimer.Stop()
+			scs.cooldownTimer = nil
+		}
+	}
+}
 
 func (lb *lumenBalancer) ExitIdle() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
+	if lb.closed {
+		return
+	}
 	for _, scs := range lb.subConns {
-		if scs.state == connectivity.Idle {
+		if scs.state == connectivity.Idle && scs.sc != nil {
 			scs.sc.Connect()
 		}
 	}
@@ -283,24 +365,43 @@ func (lb *lumenBalancer) ExitIdle() {
 
 func (lb *lumenBalancer) rebuildPickerLocked() {
 	now := time.Now()
-	var ready []*subConnState
-	var probes []*subConnState
+	var ready []pickerNode
+	var known []pickerNode
+	hasPending := false
 
-	for _, scs := range lb.subConns {
+	for key, scs := range lb.subConns {
+		switch scs.compatibility {
+		case discovery.CompatibilityPending:
+			if scs.state != connectivity.Shutdown {
+				hasPending = true
+			}
+			continue
+		case discovery.CompatibilityIncompatible:
+			// Incompatible nodes are visible but never routable.
+			continue
+		}
+
+		node := pickerNode{
+			key:           key,
+			sc:            scs.sc,
+			generation:    scs.compatibilityGen,
+			capabilities:  discovery.CloneCapabilities(scs.capabilities),
+			cooldownUntil: scs.cooldownUntil,
+		}
+		known = append(known, node)
 		switch {
 		case scs.state == connectivity.Ready:
 			if scs.cooldownUntil.IsZero() || now.After(scs.cooldownUntil) {
-				ready = append(ready, scs)
+				ready = append(ready, node)
 			}
-		case scs.state != connectivity.Shutdown && !scs.cooldownUntil.IsZero() && now.After(scs.cooldownUntil):
-			probes = append(probes, scs)
 		}
 	}
 
 	picker := &lumenPicker{
-		ready:    ready,
-		probes:   probes,
-		balancer: lb,
+		ready:      ready,
+		known:      known,
+		hasPending: hasPending,
+		balancer:   lb,
 	}
 
 	var aggState connectivity.State
@@ -330,15 +431,14 @@ func (lb *lumenBalancer) syncRegistryLocked() {
 	lb.registry.nodes = make(map[string]*registeredNode, len(lb.subConns))
 	for key, scs := range lb.subConns {
 		lb.registry.nodes[key] = &registeredNode{
-			identity:      scs.identity,
-			addr:          scs.addr.Addr,
-			state:         scs.state,
-			capabilities:  scs.capabilities,
-			tasks:         scs.tasks,
-			hardFailures:  scs.hardFailures,
-			cooldownUntil: scs.cooldownUntil,
-			cooldown:      scs.cooldown,
-			txt:           scs.txt,
+			identity:       scs.identity,
+			addr:           scs.addr.Addr,
+			state:          scs.state,
+			capabilities:   discovery.CloneCapabilities(scs.capabilities),
+			metadata:       copyStringMap(scs.metadata),
+			compatibility:  scs.compatibility,
+			incompatReason: scs.incompatReason,
+			updatedAt:      scs.updatedAt,
 		}
 	}
 	lb.registry.mu.Unlock()
@@ -354,31 +454,33 @@ const (
 )
 
 // fetchCapabilitiesWithRetry keeps trying to fetch node capabilities for as
-// long as the SubConn stays Ready on the same address. Unbounded on purpose: a
+// long as the same compatibility generation stays Ready on the same address.
+// Unbounded on purpose: a
 // hub that binds its port before models are downloaded (control-plane-first
 // startup) answers UNAVAILABLE for many minutes while the connection stays
 // Ready, so giving up after a fixed attempt count would leave the node
-// capability-less until an unrelated reconnect. It clears the per-node
-// capFetching guard on exit so a later Ready transition can start a fresh
-// fetch.
-func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
+// capability-less until an unrelated reconnect. A generation token prevents
+// a stale result from an old endpoint or transport from replacing a newer
+// verdict.
+func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string, generation uint64) {
 	defer func() {
 		lb.mu.Lock()
-		if scs, ok := lb.subConns[key]; ok {
-			scs.capFetching = false
+		if scs, ok := lb.subConns[key]; ok && scs.capabilityFetchGen == generation {
+			scs.capabilityFetchGen = 0
 		}
 		lb.mu.Unlock()
 	}()
 
 	backoff := capFetchBackoffMin
 	for attempt := 1; ; attempt++ {
-		if lb.fetchCapabilitiesForNode(key, addr) {
+		if lb.fetchCapabilitiesForNode(key, addr, generation) {
 			return
 		}
 
 		lb.mu.Lock()
 		scs, ok := lb.subConns[key]
-		stale := !ok || scs.state != connectivity.Ready || scs.addr.Addr != addr
+		stale := !ok || scs.state != connectivity.Ready || scs.addr.Addr != addr ||
+			scs.compatibilityGen != generation
 		lb.mu.Unlock()
 		if stale {
 			return
@@ -400,9 +502,8 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string) {
 
 // fetchCapabilitiesForNode performs one capability fetch. It reports success
 // only when at least one capability was received; the caller owns retries.
-func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
-	timeout := 10 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string, generation uint64) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), lb.options.connectTimeout)
 	defer cancel()
 
 	conn, err := grpc.NewClient(addr,
@@ -421,6 +522,13 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 	cli := pb.NewInferenceClient(conn)
 	stream, err := cli.StreamCapabilities(ctx, &emptypb.Empty{})
 	if err != nil {
+		// A node that does not implement the capability RPC speaks a different
+		// protocol; it cannot be parsed or scheduled. Mark it incompatible once
+		// instead of retrying forever.
+		if status.Code(err) == codes.Unimplemented {
+			lb.markCapabilityRPCUnimplemented(key, addr, generation)
+			return true
+		}
 		lb.log().Warn("cap fetch: stream failed", zap.String("id", key), zap.Error(err))
 		return false
 	}
@@ -432,8 +540,14 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 			break
 		}
 		if err != nil {
+			// Streaming status errors are commonly delivered by the first Recv
+			// rather than by StreamCapabilities itself.
+			if status.Code(err) == codes.Unimplemented {
+				lb.markCapabilityRPCUnimplemented(key, addr, generation)
+				return true
+			}
 			lb.log().Debug("cap fetch: recv failed", zap.String("id", key), zap.Error(err))
-			break
+			return false
 		}
 		if cap != nil {
 			caps = append(caps, cap)
@@ -443,23 +557,46 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string) bool {
 		return false
 	}
 
-	tasks := tasksFromCapabilities(caps)
+	compatibility, reason := compatibilityFromCapabilities(caps)
 
 	lb.mu.Lock()
 	scs, ok := lb.subConns[key]
-	if ok {
-		scs.capabilities = caps
-		scs.tasks = mergeTasks(scs.tasks, tasks)
+	applied := !lb.closed && ok && scs.addr.Addr == addr && scs.compatibilityGen == generation
+	if applied {
+		scs.capabilities = discovery.CloneCapabilities(caps)
+		scs.compatibility = compatibility
+		scs.incompatReason = reason
+		scs.updatedAt = time.Now()
+		lb.syncRegistryLocked()
+		lb.rebuildPickerLocked()
 	}
-	lb.syncRegistryLocked()
-	lb.rebuildPickerLocked()
 	lb.mu.Unlock()
 
-	lb.log().Info("capabilities fetched",
-		zap.String("id", key),
-		zap.Strings("tasks", tasks),
-	)
+	if applied {
+		lb.log().Info("capabilities fetched",
+			zap.String("id", key),
+			zap.Strings("tasks", taskNamesFromCapabilities(caps)),
+		)
+	}
 	return true
+}
+
+func (lb *lumenBalancer) markCapabilityRPCUnimplemented(key, addr string, generation uint64) {
+	lb.mu.Lock()
+	scs, ok := lb.subConns[key]
+	applied := !lb.closed && ok && scs.addr.Addr == addr && scs.compatibilityGen == generation
+	if applied {
+		scs.compatibility = discovery.CompatibilityIncompatible
+		scs.capabilities = nil
+		scs.incompatReason = "capability RPC not implemented; node does not speak the supported data-plane protocol"
+		scs.updatedAt = time.Now()
+		lb.syncRegistryLocked()
+		lb.rebuildPickerLocked()
+	}
+	lb.mu.Unlock()
+	if applied {
+		lb.log().Info("node marked incompatible: capability RPC unimplemented", zap.String("id", key))
+	}
 }
 
 func (lb *lumenBalancer) log() *zap.Logger {
@@ -471,21 +608,16 @@ func (lb *lumenBalancer) log() *zap.Logger {
 
 // --- helpers ---
 
-func availabilityFromRegistered(rn *registeredNode) discovery.NodeAvailability {
-	switch rn.state {
-	case connectivity.Ready:
-		return discovery.NodeAvailabilityReady
+func availabilityFromRegistered(node *registeredNode) discovery.NodeAvailability {
+	switch node.state {
+	case connectivity.Idle:
+		return discovery.NodeAvailabilityDiscovered
 	case connectivity.Connecting:
 		return discovery.NodeAvailabilityConnecting
-	case connectivity.Idle:
-		return discovery.NodeAvailabilityResolving
-	case connectivity.TransientFailure:
-		if rn.hardFailures >= hardFailureThreshold {
-			return discovery.NodeAvailabilityUnavailable
-		}
-		return discovery.NodeAvailabilityRediscovering
+	case connectivity.Ready:
+		return discovery.NodeAvailabilityReady
 	default:
-		return discovery.NodeAvailabilityUnknown
+		return discovery.NodeAvailabilityUnavailable
 	}
 }
 
@@ -532,23 +664,38 @@ func buildModelInfos(caps []*pb.Capability) []*discovery.ModelInfo {
 
 // --- Picker ---
 
+// pickerNode is an immutable projection built while the balancer lock is held.
+// gRPC may keep an old Picker alive after a newer state is published, so a
+// Picker must never retain pointers to mutable subConnState values.
+type pickerNode struct {
+	key           string
+	sc            balancer.SubConn
+	generation    uint64
+	capabilities  []*pb.Capability
+	cooldownUntil time.Time
+}
+
 type lumenPicker struct {
-	ready    []*subConnState
-	probes   []*subConnState
-	rrIdx    int64
-	balancer *lumenBalancer
+	ready      []pickerNode
+	known      []pickerNode
+	hasPending bool
+	rrIdx      int64
+	balancer   *lumenBalancer
 }
 
 func (p *lumenPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	task := TaskFromContext(info.Ctx)
 	now := time.Now()
 
-	candidates := filterByTask(p.ready, task, false, now)
+	candidates := filterByTask(p.ready, task, now)
 	if len(candidates) == 0 {
-		candidates = filterByTask(p.probes, task, true, now)
-	}
-	if len(candidates) == 0 {
-		if task != "" && !anySupportsTask(p.ready, task) && !anySupportsTask(p.probes, task) {
+		if p.hasPending {
+			// At least one node is connected or connecting but has not completed
+			// in-band compatibility validation. Ask gRPC to wait for the next
+			// picker update; the RPC context bounds the wait.
+			return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+		}
+		if task != "" && !anySupportsTask(p.known, task) {
 			return balancer.PickResult{}, fmt.Errorf("no node supports task %q", task)
 		}
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
@@ -563,64 +710,91 @@ func (p *lumenPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) 
 	}, nil
 }
 
-func (p *lumenPicker) makeDone(scs *subConnState) func(balancer.DoneInfo) {
+func (p *lumenPicker) makeDone(picked pickerNode) func(balancer.DoneInfo) {
 	return func(info balancer.DoneInfo) {
 		lb := p.balancer
+		if info.Err != nil && !shouldAffectNodeHealth(nil, info.Err) {
+			return
+		}
+
+		lb.mu.Lock()
+		defer lb.mu.Unlock()
+		scs, ok := lb.subConns[picked.key]
+		if !ok || scs.sc != picked.sc || scs.compatibilityGen != picked.generation {
+			// Completion from a removed/replaced endpoint must not mutate the
+			// current node generation.
+			return
+		}
+
 		if info.Err == nil {
-			lb.mu.Lock()
+			if scs.cooldownTimer != nil {
+				scs.cooldownTimer.Stop()
+				scs.cooldownTimer = nil
+			}
 			scs.hardFailures = 0
 			scs.cooldownUntil = time.Time{}
 			scs.cooldown = 0
-			lb.syncRegistryLocked()
-			lb.mu.Unlock()
-			return
+		} else {
+			scs.hardFailures++
+			if scs.hardFailures >= hardFailureThreshold {
+				lb.startCooldownLocked(picked.key, scs, time.Now())
+			}
 		}
-		if !shouldAffectNodeHealth(nil, info.Err) {
-			return
-		}
-		lb.mu.Lock()
-		scs.hardFailures++
-		if scs.hardFailures >= hardFailureThreshold {
-			lb.startCooldownLocked(scs, time.Now())
-		}
+		scs.updatedAt = time.Now()
 		lb.syncRegistryLocked()
 		lb.rebuildPickerLocked()
-		lb.mu.Unlock()
 	}
 }
 
-func filterByTask(candidates []*subConnState, task string, requireExpiredCooldown bool, now time.Time) []*subConnState {
-	var out []*subConnState
-	for _, scs := range candidates {
-		if task != "" && !nodeSupportsTaskSlice(scs.tasks, task) {
+func filterByTask(candidates []pickerNode, task string, now time.Time) []pickerNode {
+	out := make([]pickerNode, 0, len(candidates))
+	for _, candidate := range candidates {
+		if task != "" && !capabilitiesSupportTask(candidate.capabilities, task) {
 			continue
 		}
-		if requireExpiredCooldown {
-			if scs.cooldownUntil.IsZero() || now.Before(scs.cooldownUntil) {
-				continue
-			}
-		} else if !scs.cooldownUntil.IsZero() && now.Before(scs.cooldownUntil) {
+		if !candidate.cooldownUntil.IsZero() && now.Before(candidate.cooldownUntil) {
 			continue
 		}
-		out = append(out, scs)
+		out = append(out, candidate)
 	}
 	return out
 }
 
-func anySupportsTask(candidates []*subConnState, task string) bool {
-	for _, scs := range candidates {
-		if nodeSupportsTaskSlice(scs.tasks, task) {
+func anySupportsTask(candidates []pickerNode, task string) bool {
+	for _, candidate := range candidates {
+		if capabilitiesSupportTask(candidate.capabilities, task) {
 			return true
 		}
 	}
 	return false
 }
 
-func nodeSupportsTaskSlice(tasks []string, task string) bool {
-	for _, t := range tasks {
-		if t == task {
-			return true
+func capabilitiesSupportTask(capabilities []*pb.Capability, task string) bool {
+	for _, capability := range capabilities {
+		for _, ioTask := range capability.GetTasks() {
+			if ioTask.GetName() == task {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func taskNamesFromCapabilities(capabilities []*pb.Capability) []string {
+	seen := make(map[string]struct{})
+	var tasks []string
+	for _, capability := range capabilities {
+		for _, ioTask := range capability.GetTasks() {
+			task := ioTask.GetName()
+			if task == "" {
+				continue
+			}
+			if _, ok := seen[task]; ok {
+				continue
+			}
+			seen[task] = struct{}{}
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
 }

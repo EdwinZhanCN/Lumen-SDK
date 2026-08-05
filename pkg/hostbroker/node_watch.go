@@ -12,8 +12,8 @@ import (
 
 // nodeWatchHub implements the push-based discovery endpoint consumed by
 // discovery.BrokerResolver: GET /v1/nodes/watch upgrades to a WebSocket that
-// receives a "snapshot" message followed by incremental "added"/"removed"
-// diffs of active nodes.
+// receives an initial snapshot and a replacement snapshot whenever the
+// catalog changes.
 //
 // One hub serves all WebSocket clients. The node watcher callback is
 // registered once, and all connection writes are serialized under the hub
@@ -26,7 +26,6 @@ type nodeWatchHub struct {
 	watchOnce sync.Once
 	mu        sync.Mutex
 	clients   map[*ws.Conn]struct{}
-	prevNodes map[string]struct{}
 }
 
 func newNodeWatchHub(catalog NodeCatalog, logger *zap.Logger) *nodeWatchHub {
@@ -34,10 +33,9 @@ func newNodeWatchHub(catalog NodeCatalog, logger *zap.Logger) *nodeWatchHub {
 		logger = zap.NewNop()
 	}
 	hub := &nodeWatchHub{
-		catalog:   catalog,
-		logger:    logger,
-		clients:   make(map[*ws.Conn]struct{}),
-		prevNodes: make(map[string]struct{}),
+		catalog: catalog,
+		logger:  logger,
+		clients: make(map[*ws.Conn]struct{}),
 	}
 	hub.handler = ws.New(hub.serve)
 	return hub
@@ -74,7 +72,7 @@ func (h *nodeWatchHub) serve(conn *ws.Conn) {
 		return
 	}
 
-	// Keep the connection alive; broadcasts push diffs. Any read error means
+	// Keep the connection alive; broadcasts push replacement snapshots. Any read error means
 	// the client went away.
 	defer h.dropClient(conn)
 	for {
@@ -110,45 +108,19 @@ func (h *nodeWatchHub) Close() {
 	}
 }
 
-// broadcast diffs the active node set against the previous one and pushes
-// added/removed events to every connected client.
+// broadcast sends one complete address snapshot. Full snapshots avoid a second
+// node-state machine inside the Broker and correctly propagate endpoint changes
+// for an existing node identity.
 func (h *nodeWatchHub) broadcast(nodes []*discovery.NodeInfo) {
-	current := make(map[string]*discovery.NodeInfo, len(nodes))
-	for _, n := range nodes {
-		if n != nil && n.IsActive() {
-			current[n.ID] = n
-		}
-	}
+	msg := nodeSnapshotMsg(nodes)
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	var msgs []wsNodeEvent
-	for id, node := range current {
-		if _, ok := h.prevNodes[id]; !ok {
-			msgs = append(msgs, nodeAddedMsg(node))
-		}
-	}
-	for id := range h.prevNodes {
-		if _, ok := current[id]; !ok {
-			msgs = append(msgs, nodeRemovedMsg(id))
-		}
-	}
-
-	h.prevNodes = make(map[string]struct{}, len(current))
-	for id := range current {
-		h.prevNodes[id] = struct{}{}
-	}
-
-	if len(msgs) == 0 || len(h.clients) == 0 {
-		return
-	}
 	for conn := range h.clients {
-		for _, msg := range msgs {
-			if err := conn.WriteJSON(msg); err != nil {
-				h.logger.Debug("node watch: event write failed", zap.Error(err))
-				break
-			}
+		if err := conn.WriteJSON(msg); err != nil {
+			h.logger.Debug("node watch: snapshot write failed", zap.Error(err))
+			delete(h.clients, conn)
+			_ = conn.SetReadDeadline(time.Now())
 		}
 	}
 }

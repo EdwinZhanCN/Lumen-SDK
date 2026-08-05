@@ -10,8 +10,8 @@ discovery:
     deployment_id: "local"
     resolve_timeout: 10s # Standard resolve timeout
     connect_timeout: 10s # Standard operational dial timeout
-    rediscovery_backoff_min: 10s # Initial rediscovery cooldown
-    rediscovery_backoff_max: 2m # Maximum rediscovery cooldown
+    failure_cooldown_min: 10s # Initial failure cooldown
+    failure_cooldown_max: 2m # Maximum failure cooldown
     scan_interval: 30s # How often to re-query mDNS for services
     mdns_enabled: true # Discover nodes on the LAN via mDNS
     broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch

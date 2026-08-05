@@ -28,16 +28,16 @@ type Config struct {
 // are additive: every configured backend runs and their node events are
 // merged. At least one must be configured when discovery is enabled.
 type DiscoveryConfig struct {
-	Enabled               bool          `yaml:"enabled" json:"enabled"`
-	ServiceType           string        `yaml:"service_type" json:"service_type"`
-	Domain                string        `yaml:"domain" json:"domain"`
-	DeploymentID          string        `yaml:"deployment_id" json:"deployment_id"`
-	ResolveTimeout        time.Duration `yaml:"resolve_timeout" json:"resolve_timeout"`
-	ConnectTimeout        time.Duration `yaml:"connect_timeout" json:"connect_timeout"`
-	RediscoveryBackoffMin time.Duration `yaml:"rediscovery_backoff_min" json:"rediscovery_backoff_min"`
-	RediscoveryBackoffMax time.Duration `yaml:"rediscovery_backoff_max" json:"rediscovery_backoff_max"`
-	ScanInterval          time.Duration `yaml:"scan_interval" json:"scan_interval"` // mDNS poll interval: how often to re-query for services.
-	MDNSEnabled           bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	ServiceType        string        `yaml:"service_type" json:"service_type"`
+	Domain             string        `yaml:"domain" json:"domain"`
+	DeploymentID       string        `yaml:"deployment_id" json:"deployment_id"`
+	ResolveTimeout     time.Duration `yaml:"resolve_timeout" json:"resolve_timeout"`
+	ConnectTimeout     time.Duration `yaml:"connect_timeout" json:"connect_timeout"`
+	FailureCooldownMin time.Duration `yaml:"failure_cooldown_min" json:"failure_cooldown_min"`
+	FailureCooldownMax time.Duration `yaml:"failure_cooldown_max" json:"failure_cooldown_max"`
+	ScanInterval       time.Duration `yaml:"scan_interval" json:"scan_interval"` // mDNS poll interval: how often to re-query for services.
+	MDNSEnabled        bool          `yaml:"mdns_enabled" json:"mdns_enabled"`
 	// BrokerURL is the base URL of a Lumen Host Broker exposing the
 	// /v1/nodes/watch push-discovery endpoint.
 	BrokerURL string `yaml:"broker_url" json:"broker_url"`
@@ -131,19 +131,19 @@ func (c *Config) LoadFromEnv() error {
 		}
 		c.Discovery.ConnectTimeout = d
 	}
-	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN"); v != "" {
+	if v := os.Getenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MIN"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return fmt.Errorf("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN: %w", err)
+			return fmt.Errorf("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MIN: %w", err)
 		}
-		c.Discovery.RediscoveryBackoffMin = d
+		c.Discovery.FailureCooldownMin = d
 	}
-	if v := os.Getenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX"); v != "" {
+	if v := os.Getenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MAX"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return fmt.Errorf("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX: %w", err)
+			return fmt.Errorf("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MAX: %w", err)
 		}
-		c.Discovery.RediscoveryBackoffMax = d
+		c.Discovery.FailureCooldownMax = d
 	}
 	if os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED") != "" {
 		v, err := strconv.ParseBool(os.Getenv("LUMEN_DISCOVERY_MDNS_ENABLED"))
@@ -201,11 +201,11 @@ func (c *Config) Validate() error {
 		if c.Discovery.ConnectTimeout <= 0 {
 			return fmt.Errorf("discovery.connect_timeout must be positive")
 		}
-		if c.Discovery.RediscoveryBackoffMin <= 0 {
-			return fmt.Errorf("discovery.rediscovery_backoff_min must be positive")
+		if c.Discovery.FailureCooldownMin <= 0 {
+			return fmt.Errorf("discovery.failure_cooldown_min must be positive")
 		}
-		if c.Discovery.RediscoveryBackoffMax < c.Discovery.RediscoveryBackoffMin {
-			return fmt.Errorf("discovery.rediscovery_backoff_max must be >= rediscovery_backoff_min")
+		if c.Discovery.FailureCooldownMax < c.Discovery.FailureCooldownMin {
+			return fmt.Errorf("discovery.failure_cooldown_max must be >= failure_cooldown_min")
 		}
 		if c.Discovery.ScanInterval < 0 {
 			return fmt.Errorf("discovery.scan_interval must be non-negative")

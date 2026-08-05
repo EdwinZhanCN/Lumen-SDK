@@ -1,151 +1,82 @@
 # Client Module
 
-## Overview
+`pkg/client` composes discovery, one gRPC `ClientConn`, in-band capability validation, and task-aware routing.
 
-The client module provides a high-performance inference client for distributed ML nodes. It uses an **event-driven** architecture: discovery events drive connection management, gRPC native connectivity state drives health, and inference failures provide immediate feedback.
+## Authority model
 
-## Key Features
+Each fact has one owner:
 
-- **Event-driven discovery** via `NodeResolver` interface (mDNS or Broker push)
-- **gRPC-native health monitoring** — no polling, no timers, no health RPCs
-- **Task-aware round-robin** node selection
-- **Lock-free metrics** via atomic counters
-- **Automatic payload chunking** for large requests
-
-## Architecture
-
-```
-NodeResolver (mDNS / Broker)
-    │
-    │  NodeEvent stream
-    ▼
-  Pool ──── gRPC connectivity.State ──── healthy/unhealthy subsets
-    │
-    │  Pick(task) → round-robin
-    ▼
-LumenClient.Infer() ──► gRPC bidirectional stream ──► ML Node
+```text
+NodeResolver
+  owns: identity and candidate endpoint
+        │
+        ▼
+gRPC SubConn
+  owns: transport availability
+        │
+        ▼
+StreamCapabilities
+  owns: protocol compatibility, services, models, and tasks
+        │
+        ▼
+Picker
+  routes only Ready + Compatible nodes that advertise the requested task
 ```
 
-## Module Structure
+Discovery TXT values such as version and runtime are descriptive only. Task names, protocol versions, and capability hashes from discovery are intentionally ignored.
 
-```
-pkg/client/
-├── client.go    # LumenClient: composes Pool + NodeResolver
-├── pool.go      # Pool: event-driven gRPC connection management
-├── chunker.go   # Payload chunking utility
-├── logger.go    # ensureLogger helper
-└── README.md
-```
+## Node state
 
-## Core Types
+`discovery.NodeInfo` is an immutable snapshot. It exposes two orthogonal states:
 
-| Type            | Purpose                                              |
-|-----------------|------------------------------------------------------|
-| `LumenClient`   | Main client: inference, metrics, node listing         |
-| `Pool`          | gRPC connection pool driven by NodeResolver events    |
-| `ClientMetrics` | Lightweight metrics snapshot (atomic counters)         |
-| `PoolStats`     | Read-only pool state (total/healthy connections)       |
+- `Availability`: `discovered`, `connecting`, `ready`, or `unavailable`; derived only from gRPC connectivity.
+- `Compatibility`: `pending`, `compatible`, or `incompatible`; derived only from the capability stream.
 
-## Usage
+A node is active and routable only when availability is `ready` and compatibility is `compatible`. A transport-ready but incompatible node remains visible for diagnostics and is never selected.
 
-### Create and start
+Capabilities are the canonical task representation. `SupportsTask`, `SupportsServiceTask`, and `MatchingServices` read the capability snapshot directly; there is no parallel task cache.
+
+## Lifecycle
+
+1. A discovery event adds or replaces an endpoint.
+2. gRPC creates a `SubConn` and reports connectivity state.
+3. Every genuine transition to `Ready` starts a generation-scoped capability fetch.
+4. Temporary `Unavailable` responses are retried while the same endpoint generation remains ready.
+5. An unimplemented capability RPC, missing/unparseable protocol version, or unsupported protocol major marks the node incompatible.
+6. Endpoint replacement or transport reconnect starts a fresh validation generation. Results from older generations are discarded.
+7. Resolver expiry removes the endpoint. Rediscovery creates a new operational session.
+
+Inference/application errors do not affect transport health. Connection-level failures use a bounded cooldown before a node is probed again.
+
+## Core API
+
+| Type or method | Purpose |
+|---|---|
+| `LumenClient` | Starts discovery and performs inference |
+| `Pool` | Owns the gRPC connection, resolver, balancer, and node registry |
+| `PoolStats` | Reports `TotalNodes` and `RoutableNodes` |
+| `GetNodes` / `NodeInfos` | Returns immutable node snapshots |
+| `WatchNodes` / `OnNodesChanged` | Receives new immutable snapshots |
+| `WithTask` | Adds the routing task to an RPC context |
+
+## Example
 
 ```go
 cfg := config.DefaultConfig()
-cfg.Discovery.MDNSEnabled = true
-
-client, err := client.NewLumenClient(cfg, logger)
+c, err := client.NewLumenClient(cfg, logger)
 if err != nil {
-    log.Fatal(err)
+    return err
 }
-
-ctx := context.Background()
-if err := client.Start(ctx); err != nil {
-    log.Fatal(err)
+if err := c.Start(ctx); err != nil {
+    return err
 }
-defer client.Close()
-```
+defer c.Close()
 
-### Synchronous inference
-
-```go
-resp, err := client.Infer(ctx, &pb.InferRequest{
-    Task:     "ocr",
-    Data:     imageBytes,
-    MimeType: "image/png",
+resp, err := c.Infer(ctx, &pb.InferRequest{
+    Task:        "ocr",
+    Payload:     imageBytes,
+    PayloadMime: "image/png",
 })
 ```
 
-### Streaming inference
-
-```go
-respChan, err := client.InferStream(ctx, req)
-if err != nil {
-    log.Fatal(err)
-}
-for resp := range respChan {
-    fmt.Printf("Chunk: %s\n", string(resp.Result))
-    if resp.IsFinal {
-        break
-    }
-}
-```
-
-### Monitor nodes
-
-```go
-// List nodes
-nodes := client.GetNodes()
-
-// Watch for changes
-client.WatchNodes(func(nodes []*discovery.NodeInfo) {
-    fmt.Printf("Nodes updated: %d\n", len(nodes))
-})
-```
-
-### Metrics
-
-```go
-metrics := client.GetMetrics()
-fmt.Printf("Requests: %d, Success rate: %.1f%%\n",
-    metrics.TotalRequests,
-    (1 - metrics.ErrorRate) * 100)
-```
-
-## Discovery Backends
-
-Discovery backends are additive, not prioritized: every configured backend
-runs concurrently and their node events are merged. At least one must be
-configured.
-
-| Config                          | Backend          | Description                                             |
-|----------------------------------|-------------------|----------------------------------------------------------|
-| `Discovery.MDNSEnabled = true`   | `MDNSResolver`    | Zeroconf mDNS on local network                            |
-| `Discovery.BrokerURL = "..."`    | `BrokerResolver`  | WebSocket push from a Lumen Host Broker                  |
-| `Discovery.StaticNodes = [...]`  | `StaticResolver`  | Fixed `host:port` endpoints, no dynamic discovery          |
-
-
-## Pool Behavior
-
-- **NodeDiscovered** → caches resolved address candidates, dials gRPC, fetches capabilities, then marks ready
-- **NodeExpired** → marks the discovery record stale but keeps an existing operational session unless removal is explicit
-- **Explicit remove** → closes connection and removes the node from the pool
-- **connectivity.Ready** → clears degradation state and moves to healthy subset
-- **connectivity.TransientFailure/Shutdown** → enters temporary cooldown
-- **Inference request/application errors** → do not affect node health
-- **Inference connection errors** → count as hard failures; after 3 consecutive failures the node enters cooldown
-- **Cooldown** → starts at 10s, doubles up to 2m, then the node may be picked again as a probe when no healthy node is available
-
-## API Reference
-
-| Method                | Description                          |
-|-----------------------|--------------------------------------|
-| `Start(ctx)`          | Start discovery and pool management  |
-| `Close()`             | Stop discovery, close all connections|
-| `Infer(ctx, req)`     | Synchronous inference                |
-| `InferStream(ctx, req)` | Streaming inference                |
-| `GetNodes()`          | List all pool connections            |
-| `GetMetrics()`        | Get metrics snapshot                 |
-| `PoolStats()`         | Get pool connection counts           |
-| `WatchNodes(cb)`      | Register node change callback        |
-| `GetConfig()`         | Get config copy                      |
+`Start` waits for at least one routable node. A node that is merely discovered, connecting, pending validation, or incompatible does not satisfy startup readiness.

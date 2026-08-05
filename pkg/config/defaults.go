@@ -6,17 +6,17 @@ import "time"
 func DefaultConfig() *Config {
 	return &Config{
 		Discovery: DiscoveryConfig{
-			Enabled:               true,
-			ServiceType:           "_lumen._tcp",
-			Domain:                "local",
-			DeploymentID:          "local",
-			ResolveTimeout:        10 * time.Second,
-			ConnectTimeout:        10 * time.Second,
-			RediscoveryBackoffMin: 10 * time.Second,
-			RediscoveryBackoffMax: 2 * time.Minute,
-			ScanInterval:          30 * time.Second,
-			MDNSEnabled:           true,
-			BrokerURL:             "",
+			Enabled:            true,
+			ServiceType:        "_lumen._tcp",
+			Domain:             "local",
+			DeploymentID:       "local",
+			ResolveTimeout:     10 * time.Second,
+			ConnectTimeout:     10 * time.Second,
+			FailureCooldownMin: 10 * time.Second,
+			FailureCooldownMax: 2 * time.Minute,
+			ScanInterval:       30 * time.Second,
+			MDNSEnabled:        true,
+			BrokerURL:          "",
 		},
 		Broker: BrokerConfig{
 			Enabled: true,

@@ -32,12 +32,12 @@ func newTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{
 		Discovery: config.DiscoveryConfig{
-			Enabled:               true,
-			DeploymentID:          "local",
-			ResolveTimeout:        200 * time.Millisecond,
-			ConnectTimeout:        200 * time.Millisecond,
-			RediscoveryBackoffMin: 200 * time.Millisecond,
-			RediscoveryBackoffMax: 500 * time.Millisecond,
+			Enabled:            true,
+			DeploymentID:       "local",
+			ResolveTimeout:     200 * time.Millisecond,
+			ConnectTimeout:     200 * time.Millisecond,
+			FailureCooldownMin: 200 * time.Millisecond,
+			FailureCooldownMax: 500 * time.Millisecond,
 			// Port 1 refuses connections immediately on loopback, so the pool
 			// keeps retrying without ever going ready, without needing a real
 			// Lumen node in the test environment.

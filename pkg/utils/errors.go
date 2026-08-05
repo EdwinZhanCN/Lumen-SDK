@@ -17,7 +17,7 @@ type ErrorCode string
 
 const (
 	// General error codes applicable across all components
-	ErrCodeInternal     ErrorCode = "INTERNAL"     // Internal server/SDK error
+	ErrCodeInternal     ErrorCode = "INTERNAL" // Internal server/SDK error
 	ErrCodeInvalid      ErrorCode = "INVALID"
 	ErrCodeTimeout      ErrorCode = "TIMEOUT"
 	ErrCodeUnavailable  ErrorCode = "UNAVAILABLE"

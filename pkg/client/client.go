@@ -82,8 +82,7 @@ type LumenClient struct {
 	config   *config.Config
 	logger   *zap.Logger
 
-	cancel context.CancelFunc
-	mu     sync.Mutex
+	mu sync.Mutex
 
 	totalReqs      atomic.Int64
 	successReqs    atomic.Int64
@@ -106,9 +105,9 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 	}
 
 	pool := NewPoolWithOptions(logger, PoolOptions{
-		ConnectTimeout:        cfg.Discovery.ConnectTimeout,
-		RediscoveryBackoffMin: cfg.Discovery.RediscoveryBackoffMin,
-		RediscoveryBackoffMax: cfg.Discovery.RediscoveryBackoffMax,
+		ConnectTimeout:     cfg.Discovery.ConnectTimeout,
+		FailureCooldownMin: cfg.Discovery.FailureCooldownMin,
+		FailureCooldownMax: cfg.Discovery.FailureCooldownMax,
 	})
 
 	var resolvers []discovery.NodeResolver
@@ -143,12 +142,10 @@ func (c *LumenClient) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, c.cancel = context.WithCancel(ctx)
-
 	ready := make(chan struct{}, 1)
 	c.pool.OnNodesChanged(func(nodes []*discovery.NodeInfo) {
 		for _, n := range nodes {
-			if n.IsActive() && len(n.Tasks) > 0 {
+			if n.IsActive() {
 				select {
 				case ready <- struct{}{}:
 				default:
@@ -430,8 +427,8 @@ func (c *LumenClient) GetMetrics() *ClientMetrics {
 	}
 
 	return &ClientMetrics{
-		TotalNodes:      s.TotalConnections,
-		ActiveNodes:     s.HealthyConnections,
+		TotalNodes:      s.TotalNodes,
+		ActiveNodes:     s.RoutableNodes,
 		TotalRequests:   total,
 		SuccessRequests: success,
 		FailedRequests:  failed,
@@ -458,6 +455,9 @@ func (c *LumenClient) resolveService(req *pb.InferRequest) {
 		return
 	}
 	for _, node := range c.pool.NodeInfos() {
+		if node == nil || !node.IsActive() {
+			continue
+		}
 		if services := node.MatchingServices(req.Task); len(services) == 1 {
 			if req.Meta == nil {
 				req.Meta = make(map[string]string)
@@ -473,8 +473,5 @@ func (c *LumenClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.cancel != nil {
-		c.cancel()
-	}
 	return c.pool.Close()
 }

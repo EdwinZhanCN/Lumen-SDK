@@ -60,8 +60,8 @@ export LUMEN_DISCOVERY_MDNS_ENABLED=true
 export LUMEN_DISCOVERY_DEPLOYMENT_ID=local
 export LUMEN_DISCOVERY_RESOLVE_TIMEOUT=10s
 export LUMEN_DISCOVERY_CONNECT_TIMEOUT=10s
-export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN=10s
-export LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX=2m
+export LUMEN_DISCOVERY_FAILURE_COOLDOWN_MIN=10s
+export LUMEN_DISCOVERY_FAILURE_COOLDOWN_MAX=2m
 export LUMEN_DISCOVERY_BROKER_URL=http://broker:5866
 export LUMEN_BROKER_HOST=0.0.0.0
 export LUMEN_BROKER_PORT=5866
@@ -80,8 +80,8 @@ discovery:
   deployment_id: "local"
   resolve_timeout: 10s
   connect_timeout: 10s
-  rediscovery_backoff_min: 10s
-  rediscovery_backoff_max: 2m
+  failure_cooldown_min: 10s
+  failure_cooldown_max: 2m
   scan_interval: 30s
   mdns_enabled: true
   broker_url: ""
@@ -112,7 +112,7 @@ if err := cfg.Validate(); err != nil {
 ```
 
 Validates:
-- Discovery fields (`service_type`, `deployment_id`, resolve/connect timeouts, rediscovery backoff, `static_nodes` entries) when enabled
+- Discovery fields (`service_type`, `deployment_id`, resolve/connect timeouts, failure cooldown, `static_nodes` entries) when enabled
 - Broker port range (1–65535) when the Broker is enabled
 - Log level (`debug`, `info`, `warn`, `error`, `fatal`)
 - Log format (`json`, `text`)

@@ -39,7 +39,7 @@ func TestCompositeResolverMergesBackends(t *testing.T) {
 	events := collectEvents(t, merged, 2)
 	seen := map[string]bool{}
 	for _, ev := range events {
-		seen[ev.Addresses[0]] = true
+		seen[ev.Resolved.Endpoint()] = true
 	}
 	if !seen["10.0.0.1:50051"] || !seen["10.0.0.2:50051"] {
 		t.Fatalf("merged events missing endpoints: %v", seen)
@@ -100,8 +100,8 @@ func TestCompositeResolverStaysOpenUntilAllBackendsClose(t *testing.T) {
 	}
 
 	ev := awaitEvent(t, merged, 2*time.Second)
-	if len(ev.Addresses) != 1 || ev.Addresses[0] != "10.0.0.9:50051" {
-		t.Fatalf("addresses = %v, want [10.0.0.9:50051]", ev.Addresses)
+	if endpoint := ev.Resolved.Endpoint(); endpoint != "10.0.0.9:50051" {
+		t.Fatalf("endpoint = %q, want 10.0.0.9:50051", endpoint)
 	}
 
 	select {
@@ -141,8 +141,8 @@ func TestCompositeResolverDoesNotDeduplicateAcrossSources(t *testing.T) {
 	}
 
 	events := collectEvents(t, merged, 2)
-	if events[0].Identity.Key() != events[1].Identity.Key() {
+	if events[0].Resolved.Identity.Key() != events[1].Resolved.Identity.Key() {
 		t.Fatalf("expected both sources to report the same identity, got %q and %q",
-			events[0].Identity.Key(), events[1].Identity.Key())
+			events[0].Resolved.Identity.Key(), events[1].Resolved.Identity.Key())
 	}
 }
