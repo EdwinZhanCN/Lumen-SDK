@@ -136,8 +136,8 @@ const (
 	NodeAvailabilityRediscovering NodeAvailability = "rediscovering"
 	NodeAvailabilityUnavailable   NodeAvailability = "unavailable"
 	// NodeAvailabilityIncompatible marks a node that speaks an unsupported
-	// data-plane protocol major (or one that cannot be parsed). The node is
-	// visible but is never added to the task pool.
+	// data-plane protocol major (or one that cannot be parsed). The node stays
+	// visible and connected for reconnect detection but is never pickable.
 	NodeAvailabilityIncompatible NodeAvailability = "incompatible"
 )
 

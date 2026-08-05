@@ -94,7 +94,7 @@ func TestLumenResolverBrokerRemoveIsAlsoApplied(t *testing.T) {
 	}
 }
 
-func TestLumenResolverAttributesCarryProtocolCompatibility(t *testing.T) {
+func TestLumenResolverAttributesCarryMetadataButNoCompatibilityVerdict(t *testing.T) {
 	cc := &fakeResolverCC{}
 	r := &lumenResolver{
 		cc:     cc,
@@ -102,38 +102,29 @@ func TestLumenResolverAttributesCarryProtocolCompatibility(t *testing.T) {
 		nodes:  make(map[string]resolvedEntry),
 	}
 
-	compatible := nodeEvent(discovery.NodeDiscovered, "node-ok", false)
-	compatible.Resolved.Txt = map[string]string{"proto": "1.0"}
-	incompatible := nodeEvent(discovery.NodeDiscovered, "node-old", false)
-	incompatible.Resolved.Txt = map[string]string{"proto": "2.0"}
-	r.handleEvent(compatible)
-	r.handleEvent(incompatible)
+	first := nodeEvent(discovery.NodeDiscovered, "node-a", false)
+	first.Resolved.Txt = map[string]string{"v": "0.1.1", "runtime": "burn", "proto": "1.0"}
+	second := nodeEvent(discovery.NodeDiscovered, "node-b", false)
+	second.Resolved.Txt = map[string]string{"v": "0.2.0", "runtime": "burn", "proto": "2.0"}
+	r.handleEvent(first)
+	r.handleEvent(second)
 
 	last := cc.states[len(cc.states)-1]
 	if len(last.Addresses) != 2 {
 		t.Fatalf("both nodes must be pushed to the balancer, got %+v", last.Addresses)
 	}
-	byAttr := make(map[bool]int)
 	for _, addr := range last.Addresses {
 		attr, ok := getNodeAttr(addr)
 		if !ok {
 			t.Fatal("address missing node attributes")
 		}
-		if attr.Compatible {
-			byAttr[true]++
-		} else {
-			byAttr[false]++
-			if attr.IncompatReason == "" {
-				t.Fatalf("incompatible node must carry a reason: %+v", attr)
-			}
+		if attr.Identity.IsZero() || attr.Txt["runtime"] != "burn" {
+			t.Fatalf("address metadata was not preserved: %+v", attr)
 		}
-	}
-	if byAttr[true] != 1 || byAttr[false] != 1 {
-		t.Fatalf("expected one compatible and one incompatible address, got %+v", byAttr)
 	}
 }
 
-func TestLumenResolverAttributesLegacyNodeWithoutHintIsOptimistic(t *testing.T) {
+func TestLumenResolverDoesNotPromoteDiscoveryTaskHintsIntoAttributes(t *testing.T) {
 	cc := &fakeResolverCC{}
 	r := &lumenResolver{
 		cc:     cc,
@@ -141,15 +132,15 @@ func TestLumenResolverAttributesLegacyNodeWithoutHintIsOptimistic(t *testing.T) 
 		nodes:  make(map[string]resolvedEntry),
 	}
 
-	legacy := nodeEvent(discovery.NodeDiscovered, "node-legacy", false)
-	legacy.Resolved.Txt = map[string]string{"v": "0.1.1"} // no proto key
-	r.handleEvent(legacy)
+	event := nodeEvent(discovery.NodeDiscovered, "node-hinted", false)
+	event.Resolved.Txt = map[string]string{"v": "0.1.1", "tasks": "ocr"}
+	r.handleEvent(event)
 
 	last := cc.states[len(cc.states)-1]
 	for _, addr := range last.Addresses {
 		attr, ok := getNodeAttr(addr)
-		if !ok || !attr.Compatible {
-			t.Fatalf("legacy node without protocol hint must stay optimistic: %+v", attr)
+		if !ok || attr.Txt["tasks"] != "ocr" {
+			t.Fatalf("display metadata should remain available: %+v", attr)
 		}
 	}
 }

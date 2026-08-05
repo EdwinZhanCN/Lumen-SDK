@@ -18,11 +18,8 @@ type nodeAttrKey struct{}
 
 // nodeAttr carries discovery metadata for a single resolved address.
 type nodeAttr struct {
-	Identity       discovery.NodeIdentity
-	Tasks          []string
-	Txt            map[string]string
-	Compatible     bool
-	IncompatReason string
+	Identity discovery.NodeIdentity
+	Txt      map[string]string
 }
 
 func setNodeAttr(addr resolver.Address, attr nodeAttr) resolver.Address {
@@ -128,13 +125,9 @@ func (r *lumenResolver) pushStateLocked() {
 		if len(entry.endpoints) == 0 {
 			continue
 		}
-		compat := compatibilityFromTXT(entry.node.Txt)
 		attr := nodeAttr{
-			Identity:       entry.node.Identity,
-			Tasks:          entry.node.HintTasks(),
-			Txt:            entry.node.Txt,
-			Compatible:     compat.compatible,
-			IncompatReason: compat.incompatReason(),
+			Identity: entry.node.Identity,
+			Txt:      entry.node.Txt,
 		}
 		// Use first endpoint as primary address; the balancer creates one
 		// SubConn per unique address.

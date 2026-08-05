@@ -116,9 +116,31 @@ func TestHubControlPlaneFirstStartupRecoversWithoutReconnect(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
+	// A discovery task hint must not bypass in-band validation. The first RPC
+	// waits in the picker instead of reaching the starting hub and failing.
+	type inferResult struct {
+		response *pb.InferResponse
+		err      error
+	}
+	result := make(chan inferResult, 1)
+	go func() {
+		response, err := client.Infer(ctx, &pb.InferRequest{
+			CorrelationId: "startup-contract",
+			Task:          types.TaskSemanticTextEmbed,
+			Payload:       []byte("hello"),
+			PayloadMime:   "text/plain",
+		})
+		result <- inferResult{response: response, err: err}
+	}()
+
+	select {
+	case early := <-result:
+		t.Fatalf("pending inference returned before capability validation: %+v", early)
+	case <-time.After(500 * time.Millisecond):
+	}
+
 	// While starting: the node must not gain capabilities, and no task
 	// contract may be visible.
-	time.Sleep(1500 * time.Millisecond)
 	if _, _, ok := client.FindTaskContract(types.TaskSemanticTextEmbed); ok {
 		t.Fatalf("task contract visible while the hub is still starting")
 	}
@@ -140,16 +162,15 @@ func TestHubControlPlaneFirstStartupRecoversWithoutReconnect(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	response, err := client.Infer(ctx, &pb.InferRequest{
-		CorrelationId: "startup-contract",
-		Task:          types.TaskSemanticTextEmbed,
-		Payload:       []byte("hello"),
-		PayloadMime:   "text/plain",
-	})
-	if err != nil {
-		t.Fatalf("Infer() after hub became ready: %v", err)
-	}
-	if !response.GetIsFinal() {
-		t.Fatalf("Infer() response not final: %+v", response)
+	select {
+	case completed := <-result:
+		if completed.err != nil {
+			t.Fatalf("pending Infer() did not recover after hub became ready: %v", completed.err)
+		}
+		if !completed.response.GetIsFinal() {
+			t.Fatalf("Infer() response not final: %+v", completed.response)
+		}
+	case <-ctx.Done():
+		t.Fatalf("pending Infer() never resumed after capability validation: %v", ctx.Err())
 	}
 }

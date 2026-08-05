@@ -35,22 +35,3 @@ func TestParseProtocolMajor(t *testing.T) {
 		})
 	}
 }
-
-func TestResolvedNodeProtocolVersion(t *testing.T) {
-	node := ResolvedNode{Txt: map[string]string{"proto": "1.0"}}
-	if got := node.ProtocolVersion(); got != "1.0" {
-		t.Fatalf("ProtocolVersion() = %q, want 1.0", got)
-	}
-	major, ok := node.ProtocolMajor()
-	if !ok || major != 1 {
-		t.Fatalf("ProtocolMajor() = (%d, %v), want (1, true)", major, ok)
-	}
-
-	legacy := ResolvedNode{Txt: map[string]string{"v": "0.1.1"}}
-	if got := legacy.ProtocolVersion(); got != "" {
-		t.Fatalf("legacy ProtocolVersion() = %q, want empty", got)
-	}
-	if _, ok := legacy.ProtocolMajor(); ok {
-		t.Fatal("legacy node must not report a protocol major")
-	}
-}

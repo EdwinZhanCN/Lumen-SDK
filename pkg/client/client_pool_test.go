@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -72,9 +75,9 @@ func TestShouldAffectNodeHealthCanceledContextWins(t *testing.T) {
 
 func TestFilterByTaskSelectsMatchingNodes(t *testing.T) {
 	nodes := []*subConnState{
-		{tasks: []string{"ocr", "embed"}, state: connectivity.Ready},
-		{tasks: []string{"semantic"}, state: connectivity.Ready},
-		{tasks: []string{"ocr"}, state: connectivity.Ready},
+		{tasks: []string{"ocr", "embed"}, state: connectivity.Ready, validation: protocolValidationCompatible},
+		{tasks: []string{"semantic"}, state: connectivity.Ready, validation: protocolValidationCompatible},
+		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
 	}
 	now := time.Now()
 
@@ -96,8 +99,8 @@ func TestFilterByTaskSelectsMatchingNodes(t *testing.T) {
 
 func TestFilterByTaskEmptyTaskReturnsAll(t *testing.T) {
 	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.Ready},
-		{tasks: []string{"semantic"}, state: connectivity.Ready},
+		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
+		{tasks: []string{"semantic"}, state: connectivity.Ready, validation: protocolValidationCompatible},
 	}
 	result := filterByTask(nodes, "", false, time.Now())
 	if len(result) != 2 {
@@ -108,8 +111,8 @@ func TestFilterByTaskEmptyTaskReturnsAll(t *testing.T) {
 func TestFilterByTaskSkipsCoolingNodes(t *testing.T) {
 	now := time.Now()
 	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.Ready, cooldownUntil: now.Add(time.Hour)},
-		{tasks: []string{"ocr"}, state: connectivity.Ready},
+		{tasks: []string{"ocr"}, state: connectivity.Ready, cooldownUntil: now.Add(time.Hour), validation: protocolValidationCompatible},
+		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
 	}
 	result := filterByTask(nodes, "ocr", false, now)
 	if len(result) != 1 {
@@ -120,8 +123,8 @@ func TestFilterByTaskSkipsCoolingNodes(t *testing.T) {
 func TestFilterByTaskExpiredCooldownProbes(t *testing.T) {
 	now := time.Now()
 	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(-time.Millisecond)},
-		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(time.Hour)},
+		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(-time.Millisecond), validation: protocolValidationCompatible},
+		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(time.Hour), validation: protocolValidationCompatible},
 	}
 	result := filterByTask(nodes, "ocr", true, now)
 	if len(result) != 1 {
@@ -131,8 +134,8 @@ func TestFilterByTaskExpiredCooldownProbes(t *testing.T) {
 
 func TestAnySupportsTask(t *testing.T) {
 	nodes := []*subConnState{
-		{tasks: []string{"ocr", "embed"}},
-		{tasks: []string{"semantic"}},
+		{tasks: []string{"ocr", "embed"}, validation: protocolValidationCompatible},
+		{tasks: []string{"semantic"}, validation: protocolValidationCompatible},
 	}
 	if !anySupportsTask(nodes, "ocr") {
 		t.Fatal("should support ocr")
@@ -142,6 +145,36 @@ func TestAnySupportsTask(t *testing.T) {
 	}
 	if anySupportsTask(nodes, "nonexistent") {
 		t.Fatal("should not support nonexistent")
+	}
+}
+
+func TestPickerWaitsWhileProtocolValidationIsPending(t *testing.T) {
+	picker := &lumenPicker{hasPending: true}
+	_, err := picker.Pick(balancer.PickInfo{Ctx: WithTask(context.Background(), "ocr")})
+	if !errors.Is(err, balancer.ErrNoSubConnAvailable) {
+		t.Fatalf("pending picker error = %v, want ErrNoSubConnAvailable", err)
+	}
+}
+
+func TestPickerFailsWhenValidatedNodesDoNotSupportTask(t *testing.T) {
+	picker := &lumenPicker{known: []*subConnState{{
+		validation: protocolValidationCompatible,
+		tasks:      []string{"ocr"},
+	}}}
+	_, err := picker.Pick(balancer.PickInfo{Ctx: WithTask(context.Background(), "semantic")})
+	if err == nil || errors.Is(err, balancer.ErrNoSubConnAvailable) {
+		t.Fatalf("validated unsupported picker error = %v, want definitive failure", err)
+	}
+}
+
+func TestPendingNodeTaskHintIsNotRoutable(t *testing.T) {
+	nodes := []*subConnState{{
+		validation: protocolValidationPending,
+		state:      connectivity.Ready,
+		tasks:      []string{"ocr"},
+	}}
+	if got := filterByTask(nodes, "ocr", false, time.Now()); len(got) != 0 {
+		t.Fatalf("pending node with discovery hint became routable: %+v", got)
 	}
 }
 
@@ -214,9 +247,9 @@ func TestTaskContext(t *testing.T) {
 func TestNodeRegistryStats(t *testing.T) {
 	reg := &nodeRegistry{
 		nodes: map[string]*registeredNode{
-			"node-1": {state: connectivity.Ready},
-			"node-2": {state: connectivity.Connecting},
-			"node-3": {state: connectivity.Ready},
+			"node-1": {state: connectivity.Ready, validation: protocolValidationCompatible},
+			"node-2": {state: connectivity.Connecting, validation: protocolValidationCompatible},
+			"node-3": {state: connectivity.Ready, validation: protocolValidationCompatible},
 		},
 	}
 	total, healthy := reg.stats()
@@ -229,11 +262,12 @@ func TestNodeRegistryNodeInfos(t *testing.T) {
 	reg := &nodeRegistry{
 		nodes: map[string]*registeredNode{
 			"local-node-1": {
-				identity: discovery.NewNodeIdentity("local", "node-1"),
-				addr:     "192.168.1.10:5866",
-				state:    connectivity.Ready,
-				tasks:    []string{"ocr", "embed"},
-				txt:      map[string]string{"v": "1.2.3", "runtime": "onnxrt"},
+				identity:   discovery.NewNodeIdentity("local", "node-1"),
+				addr:       "192.168.1.10:5866",
+				state:      connectivity.Ready,
+				tasks:      []string{"ocr", "embed"},
+				txt:        map[string]string{"v": "1.2.3", "runtime": "onnxrt"},
+				validation: protocolValidationCompatible,
 			},
 		},
 	}
@@ -265,11 +299,13 @@ func TestAvailabilityFromRegistered(t *testing.T) {
 		node   registeredNode
 		expect discovery.NodeAvailability
 	}{
-		{"ready", registeredNode{state: connectivity.Ready}, discovery.NodeAvailabilityReady},
-		{"connecting", registeredNode{state: connectivity.Connecting}, discovery.NodeAvailabilityConnecting},
-		{"idle", registeredNode{state: connectivity.Idle}, discovery.NodeAvailabilityResolving},
-		{"transient failure below threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: 1}, discovery.NodeAvailabilityRediscovering},
-		{"transient failure at threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: hardFailureThreshold}, discovery.NodeAvailabilityUnavailable},
+		{"ready and validated", registeredNode{state: connectivity.Ready, validation: protocolValidationCompatible}, discovery.NodeAvailabilityReady},
+		{"ready and pending", registeredNode{state: connectivity.Ready, validation: protocolValidationPending}, discovery.NodeAvailabilityConnecting},
+		{"connecting", registeredNode{state: connectivity.Connecting, validation: protocolValidationCompatible}, discovery.NodeAvailabilityConnecting},
+		{"idle", registeredNode{state: connectivity.Idle, validation: protocolValidationCompatible}, discovery.NodeAvailabilityResolving},
+		{"transient failure below threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: 1, validation: protocolValidationCompatible}, discovery.NodeAvailabilityRediscovering},
+		{"transient failure at threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: hardFailureThreshold, validation: protocolValidationCompatible}, discovery.NodeAvailabilityUnavailable},
+		{"incompatible", registeredNode{state: connectivity.Ready, validation: protocolValidationIncompatible}, discovery.NodeAvailabilityIncompatible},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -608,6 +644,38 @@ func (r *fakeNodeResolver) Watch(ctx context.Context) (<-chan discovery.NodeEven
 	return ch, nil
 }
 
+type liveNodeResolver struct {
+	events chan discovery.NodeEvent
+}
+
+func newLiveNodeResolver() *liveNodeResolver {
+	return &liveNodeResolver{events: make(chan discovery.NodeEvent, 8)}
+}
+
+func (r *liveNodeResolver) Emit(event discovery.NodeEvent) {
+	r.events <- event
+}
+
+func (r *liveNodeResolver) Watch(ctx context.Context) (<-chan discovery.NodeEvent, error) {
+	out := make(chan discovery.NodeEvent, cap(r.events))
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case event := <-r.events:
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
 // inferViaStream routes one request through the pool and returns the error
 // surfaced by the RPC. A nil error means the task reached a node. The request
 // carries a deadline so pools with no schedulable node fail promptly instead
@@ -615,6 +683,7 @@ func (r *fakeNodeResolver) Watch(ctx context.Context) (<-chan discovery.NodeEven
 func inferViaStream(client pb.InferenceClient, task string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	ctx = WithTask(ctx, task)
 	stream, err := client.Infer(ctx)
 	if err != nil {
 		return err
@@ -631,34 +700,23 @@ func inferViaStream(client pb.InferenceClient, task string) error {
 
 // --- Protocol compatibility scheduling tests ---
 
-// TestPoolExcludesIncompatibleTXTNode verifies that a node announcing an
-// unsupported data-plane major in its TXT records is visible but never added
-// to the task pool: it gets no connection, no stats entry, and no task.
-func TestPoolExcludesIncompatibleTXTNode(t *testing.T) {
-	addr := startCapabilityServer(t, "semantic")
+// TestPoolIgnoresTXTProtocolHint verifies that discovery metadata never makes
+// a compatibility decision. The in-band v1 capability verdict wins even when
+// a legacy or third-party advertiser includes a contradictory TXT key.
+func TestPoolIgnoresTXTProtocolHint(t *testing.T) {
+	addr := startCapabilityServerWithVersion(t, "1.0", "semantic")
 	host, port, _ := splitEndpoint(addr)
 
 	resolver := &fakeNodeResolver{
-		events: []discovery.NodeEvent{
-			{
-				Type: discovery.NodeDiscovered,
-				Resolved: discovery.ResolvedNode{
-					Identity:  discovery.NewNodeIdentity("local", "node-compatible"),
-					Addresses: []string{host},
-					Port:      port,
-					Txt:       map[string]string{"proto": "1.0"},
-				},
+		events: []discovery.NodeEvent{{
+			Type: discovery.NodeDiscovered,
+			Resolved: discovery.ResolvedNode{
+				Identity:  discovery.NewNodeIdentity("local", "node-v1"),
+				Addresses: []string{host},
+				Port:      port,
+				Txt:       map[string]string{"proto": "2.0", "tasks": "wrong-task"},
 			},
-			{
-				Type: discovery.NodeDiscovered,
-				Resolved: discovery.ResolvedNode{
-					Identity:  discovery.NewNodeIdentity("local", "node-future"),
-					Addresses: []string{"192.0.2.99"},
-					Port:      5866,
-					Txt:       map[string]string{"proto": "2.0"},
-				},
-			},
-		},
+		}},
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
@@ -673,44 +731,20 @@ func TestPoolExcludesIncompatibleTXTNode(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		if len(infos) != 2 {
-			return false
-		}
-		for _, info := range infos {
-			if info.ID == "local-node-future" && !info.Compatible && info.Availability == discovery.NodeAvailabilityIncompatible {
-				return true
-			}
-		}
-		return false
+		return len(infos) == 1 && infos[0].Compatible &&
+			infos[0].Availability == discovery.NodeAvailabilityReady
 	})
 
-	infos := pool.NodeInfos()
-	var compatible, incompatible int
-	for _, info := range infos {
-		if info.Compatible {
-			compatible++
-		} else {
-			incompatible++
-			if info.IncompatibleReason == "" {
-				t.Fatalf("incompatible node missing reason: %+v", info)
-			}
-		}
+	if err := inferViaStream(pool.Client(), "semantic"); err != nil {
+		t.Fatalf("in-band compatible node was not routable: %v", err)
 	}
-	if compatible != 1 || incompatible != 1 {
-		t.Fatalf("expected 1 compatible + 1 incompatible node, got %d + %d", compatible, incompatible)
-	}
-
-	// The incompatible node never joined the pool: it has no connection, and
-	// stats only count connection-backed nodes.
-	stats := pool.Stats()
-	if stats.TotalConnections != 1 || stats.HealthyConnections != 1 {
-		t.Fatalf("pool stats = %+v, want 1/1 (incompatible node excluded)", stats)
+	if err := inferViaStream(pool.Client(), "wrong-task"); err == nil {
+		t.Fatal("TXT task hint must not become routable")
 	}
 }
 
-// TestPoolMarksCapabilityIncompatibleNode verifies the optimistic path: a
-// legacy node without a TXT protocol hint that reports an unsupported major
-// over the capability stream is demoted after the fetch and never scheduled.
+// TestPoolMarksCapabilityIncompatibleNode verifies that a node reporting an
+// unsupported major over the capability stream is never scheduled.
 func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
 	incompatAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
 	compatAddr := startCapabilityServer(t, "semantic")
@@ -750,7 +784,7 @@ func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// The v2 node connects (optimistic), then is demoted once its
+	// The v2 node connects in pending state, then is demoted once its
 	// capabilities report the unsupported major.
 	waitUntil(t, func() bool {
 		for _, info := range pool.NodeInfos() {
@@ -812,6 +846,189 @@ func TestPoolIncompatibleNodeNeverReceivesTasks(t *testing.T) {
 	client := pool.Client()
 	if err := inferViaStream(client, "semantic"); err == nil {
 		t.Fatal("inference must not be routed to an incompatible node")
+	}
+}
+
+func TestPoolMarksUnimplementedCapabilityRPCIncompatible(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	pb.RegisterInferenceServer(server, &pb.UnimplementedInferenceServer{})
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = lis.Close()
+	})
+
+	host, port, _ := splitEndpoint(lis.Addr().String())
+	resolver := &fakeNodeResolver{events: []discovery.NodeEvent{{
+		Type: discovery.NodeDiscovered,
+		Resolved: discovery.ResolvedNode{
+			Identity:  discovery.NewNodeIdentity("local", "node-unimplemented"),
+			Addresses: []string{host},
+			Port:      port,
+		},
+	}}}
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{ConnectTimeout: 2 * time.Second})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && !infos[0].Compatible &&
+			infos[0].Availability == discovery.NodeAvailabilityIncompatible
+	})
+	if reason := pool.NodeInfos()[0].IncompatibleReason; !strings.Contains(reason, "capability RPC not implemented") {
+		t.Fatalf("unexpected incompatible reason: %q", reason)
+	}
+}
+
+func TestPoolRediscoveryDoesNotClearInBandIncompatibleVerdict(t *testing.T) {
+	incompatAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
+	host, port, _ := splitEndpoint(incompatAddr)
+	resolver := newLiveNodeResolver()
+
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
+		ConnectTimeout:        2 * time.Second,
+		RediscoveryBackoffMin: time.Second,
+		RediscoveryBackoffMax: 5 * time.Second,
+	})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	event := discovery.NodeEvent{
+		Type: discovery.NodeDiscovered,
+		Resolved: discovery.ResolvedNode{
+			Identity:  discovery.NewNodeIdentity("local", "node-v2-refresh"),
+			Addresses: []string{host},
+			Port:      port,
+			Txt:       map[string]string{"v": "before"},
+		},
+	}
+	resolver.Emit(event)
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && !infos[0].Compatible
+	})
+
+	// A contradictory discovery hint and task list are display metadata only;
+	// they cannot overturn the stronger in-band verdict.
+	event.Resolved.Txt = map[string]string{
+		"v":     "rediscovered",
+		"proto": "1.0",
+		"tasks": "semantic",
+	}
+	resolver.Emit(event)
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && infos[0].Version == "rediscovered"
+	})
+	infos := pool.NodeInfos()
+	if infos[0].Compatible || infos[0].Availability != discovery.NodeAvailabilityIncompatible {
+		t.Fatalf("rediscovery cleared in-band verdict: %+v", infos[0])
+	}
+	if err := inferViaStream(pool.Client(), "semantic"); err == nil {
+		t.Fatal("rediscovered incompatible node received inference")
+	}
+}
+
+func TestPoolReconnectRevalidatesIncompatibleNode(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	address := lis.Addr().String()
+	serverV2 := grpc.NewServer()
+	pb.RegisterInferenceServer(serverV2, &testInferenceServer{
+		tasks:           []string{"semantic"},
+		protocolVersion: "2.0",
+	})
+	go func() { _ = serverV2.Serve(lis) }()
+	t.Cleanup(serverV2.Stop)
+
+	host, port, _ := splitEndpoint(address)
+	resolver := &fakeNodeResolver{events: []discovery.NodeEvent{{
+		Type: discovery.NodeDiscovered,
+		Resolved: discovery.ResolvedNode{
+			Identity:  discovery.NewNodeIdentity("local", "node-upgraded"),
+			Addresses: []string{host},
+			Port:      port,
+			Txt:       map[string]string{"v": "before"},
+		},
+	}}}
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
+		ConnectTimeout:        2 * time.Second,
+		RediscoveryBackoffMin: 100 * time.Millisecond,
+		RediscoveryBackoffMax: time.Second,
+	})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && !infos[0].Compatible
+	})
+
+	// Replacing the server forces a transport reconnect. The old incompatible
+	// verdict stays sticky until the new Ready connection is validated in-band.
+	serverV2.Stop()
+	_ = lis.Close()
+	lisV1, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("relisten on %s: %v", address, err)
+	}
+	serverV1 := grpc.NewServer()
+	pb.RegisterInferenceServer(serverV1, &testInferenceServer{
+		tasks:           []string{"semantic"},
+		protocolVersion: "1.0",
+	})
+	go func() { _ = serverV1.Serve(lisV1) }()
+	t.Cleanup(func() {
+		serverV1.Stop()
+		_ = lisV1.Close()
+	})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		infos := pool.NodeInfos()
+		if len(infos) == 1 && infos[0].Compatible &&
+			infos[0].Availability == discovery.NodeAvailabilityReady {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("node was not revalidated after reconnect: %+v", infos)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := inferViaStream(pool.Client(), "semantic"); err != nil {
+		t.Fatalf("revalidated node did not resume inference: %v", err)
+	}
+}
+
+func TestStaleCapabilityGenerationCannotOverwriteNewVerdict(t *testing.T) {
+	oldAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
+	key := "local-node-generation"
+	lb := &lumenBalancer{subConns: map[string]*subConnState{
+		key: {
+			addr:          resolver.Address{Addr: oldAddr},
+			validation:    protocolValidationPending,
+			validationGen: 2,
+		},
+	}}
+
+	if !lb.fetchCapabilitiesForNode(key, oldAddr, 1) {
+		t.Fatal("completed stale capability fetch should stop its old retry loop")
+	}
+	scs := lb.subConns[key]
+	if scs.validation != protocolValidationPending || len(scs.capabilities) != 0 || len(scs.tasks) != 0 {
+		t.Fatalf("stale generation overwrote current validation state: %+v", scs)
 	}
 }
 
