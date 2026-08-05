@@ -1,171 +1,81 @@
-# Lumen SDK Makefile
+# Lumen SDK development commands
 
-# Variables
-BINARY_NAME = lumen-hostd
-BUILD_DIR = dist
-VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
-COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS = -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
-
-# Go flags
-GO_FLAGS = -v
-CGO_ENABLED ?= 0
-
-# Fixed current-major baseline tag for `buf breaking` (WIRE_JSON policy).
-# The data-plane contract is frozen within this major; wire-level breaks
-# against this tag fail CI. Bump only on a protocol-major release.
 PROTO_BASELINE ?= v1.3.2
+PROTO_DIR := proto
+HOSTD_BINARY := dist/lumen-hostd
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+HOSTD_LDFLAGS := -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
 
-# Proto module directory (buf.yaml lives here).
-PROTO_DIR = proto
-
-# Platform specific variables
-PLATFORMS = linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
-
-.PHONY: help build build-all build-release archive install install-local uninstall clean clean-deps run-hostd release tag show-version quick-start ci ci-fast test test-coverage lint fmt vet deps proto\:check
-
-# Default target
+.PHONY: help deps fmt-check fmt vet lint test test-coverage build clean ci ci-fast proto-check proto-verify hostd-build hostd-run hostd-install
 .DEFAULT_GOAL := help
 
-# Help target
-help: ## Show this help message
+help: ## Show available targets
 	@echo 'Usage: make [target]'
 	@echo ''
-	@echo 'Targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# Development targets
-deps: ## Download dependencies
+deps: ## Download and verify Go modules
 	go mod download
 	go mod verify
 
-proto\:check: ## Lint the data-plane proto, check wire compatibility against the fixed baseline tag, and verify committed generated code
-	cd $(PROTO_DIR) && buf lint
-	cd $(PROTO_DIR) && buf breaking --against "https://github.com/EdwinZhanCN/Lumen-SDK.git#ref=$(PROTO_BASELINE),subdir=proto"
-	@tmp=$$(mktemp -d); \
-	protoc --proto_path=. --go_out=paths=source_relative:$$tmp --go-grpc_out=paths=source_relative:$$tmp proto/ml_service.proto && \
-	for f in proto/ml_service.pb.go proto/ml_service_grpc.pb.go; do \
-		if ! diff -q $$f $$tmp/$$f >/dev/null 2>&1; then \
-			echo "generated code out of date: $$f (run: protoc --proto_path=. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. proto/ml_service.proto)"; \
-			exit 1; \
-		fi; \
-	done; \
-	rm -rf $$tmp
-	@echo "proto:check ok (lint, WIRE_JSON baseline $(PROTO_BASELINE), generated code in sync)"
+fmt-check: ## Fail when committed Go files are not gofmt-formatted
+	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { \
+		echo "unformatted Go files:"; \
+		gofmt -l $$(git ls-files '*.go'); \
+		exit 1; \
+	}
 
-fmt: ## Format Go code
-	go fmt ./...
+fmt: ## Format committed Go files
+	gofmt -w $$(git ls-files '*.go')
 
-vet: ## Vet Go code
+vet: ## Run go vet
 	go vet ./...
 
-lint: ## Run linter
+lint: ## Run golangci-lint
 	golangci-lint run
 
-test: ## Run tests
-	go test -v -race -coverprofile=coverage.out ./...
+test: ## Run the complete test suite with the race detector
+	go test -race -coverprofile=coverage.out ./...
 
-test-coverage: test ## Show test coverage
+test-coverage: test ## Render HTML coverage output
 	go tool cover -html=coverage.out -o coverage.html
 
-# Build targets
-build: ## Build lumen-hostd for the current platform
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=$(CGO_ENABLED) go build $(GO_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/lumen-hostd
+build: ## Compile the SDK packages (Host Broker is an optional command)
+	go build ./pkg/... ./proto/...
 
-build-all: ## Build lumen-hostd for all platforms
-	@mkdir -p $(BUILD_DIR)
-	@echo "Building for multiple platforms..."
-	@for platform in $(PLATFORMS); do \
-		os=$$(echo $$platform | cut -d'/' -f1); \
-		arch=$$(echo $$platform | cut -d'/' -f2); \
-		output_name=$(BINARY_NAME)-$$os-$$arch; \
-		if [ $$os = "windows" ]; then \
-			output_name=$$output_name.exe; \
-		fi; \
-		echo "Building $$os/$$arch..."; \
-		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch go build $(GO_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$$output_name ./cmd/lumen-hostd; \
+# Local proto verification is deterministic once buf/protoc/plugins are installed.
+proto-check: ## Lint protos and verify committed generated Go code
+	cd $(PROTO_DIR) && buf lint
+	@tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; \
+	protoc --proto_path=. --go_out=paths=source_relative:$$tmp --go-grpc_out=paths=source_relative:$$tmp proto/ml_service.proto; \
+	for f in proto/ml_service.pb.go proto/ml_service_grpc.pb.go; do \
+		diff -u $$f $$tmp/$$f || { \
+			echo "generated code out of date: $$f"; \
+			echo "regenerate with: protoc --proto_path=. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. proto/ml_service.proto"; \
+			exit 1; \
+		}; \
 	done
 
-build-release: ## Build release binaries with version info
-	@if [ "$(VERSION)" = "dev" ]; then \
-		echo "Release builds require an exact version tag or VERSION=vX.Y.Z"; \
-		exit 1; \
-	fi
-	@echo "Building release version: $(VERSION)"
-	$(MAKE) build-all
+proto-verify: proto-check ## Also verify wire compatibility against the pinned remote baseline
+	cd $(PROTO_DIR) && buf breaking --against "https://github.com/EdwinZhanCN/Lumen-SDK.git#ref=$(PROTO_BASELINE),subdir=proto"
 
-# Archive targets
-archive: build-all ## Create archives for distribution
-	@echo "Creating archives..."
-	@cd $(BUILD_DIR); \
-	for platform in $(PLATFORMS); do \
-		os=$$(echo $$platform | cut -d'/' -f1); \
-		arch=$$(echo $$platform | cut -d'/' -f2); \
-		if [ $$os = "windows" ]; then \
-			zip -r $(BINARY_NAME)-$(VERSION)-$$os-$$arch.zip $(BINARY_NAME)-$$os-$$arch.exe; \
-		else \
-			tar -czf $(BINARY_NAME)-$(VERSION)-$$os-$$arch.tar.gz $(BINARY_NAME)-$$os-$$arch; \
-		fi; \
-	done
+# Host Broker is an experimental discovery bridge. It is source-built only and
+# intentionally excluded from the default release/support surface.
+hostd-build: ## Build experimental lumen-hostd for the current platform
+	@mkdir -p dist
+	CGO_ENABLED=0 go build $(HOSTD_LDFLAGS) -o $(HOSTD_BINARY) ./cmd/lumen-hostd
 
-# Installation targets
-install: build ## Install lumen-hostd to GOPATH/bin
-	go install $(LDFLAGS) ./cmd/lumen-hostd
+hostd-run: ## Run experimental lumen-hostd in the foreground
+	go run $(HOSTD_LDFLAGS) ./cmd/lumen-hostd serve
 
-install-local: build ## Install lumen-hostd to /usr/local/bin
-	@echo "Installing to /usr/local/bin (requires sudo)"
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+hostd-install: ## Install experimental lumen-hostd with go install
+	go install $(HOSTD_LDFLAGS) ./cmd/lumen-hostd
 
-uninstall: ## Remove lumen-hostd from /usr/local/bin
-	@echo "Removing from /usr/local/bin (requires sudo)"
-	sudo rm -f /usr/local/bin/$(BINARY_NAME)
+clean: ## Remove generated local artifacts
+	rm -rf dist coverage.out coverage.html
 
-# Cleanup targets
-clean: ## Clean build artifacts
-	rm -rf $(BUILD_DIR)
-	rm -f coverage.out coverage.html
+ci: fmt-check vet test ## Run the repository's deterministic default checks
 
-clean-deps: ## Clean module cache
-	go clean -modcache
-
-run-hostd: ## Run lumen-hostd in the foreground
-	go run $(LDFLAGS) ./cmd/lumen-hostd serve
-
-# Release targets
-release: clean test lint build-release archive ## Create a complete release
-
-tag: ## Create and push a new git tag
-	@if ! printf '%s' "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-		echo "Usage: make tag VERSION=vX.Y.Z"; \
-		exit 1; \
-	fi
-	@if [ -z "$(COMMIT)" ]; then \
-		echo "No git repository found"; \
-		exit 1; \
-	fi
-	@echo "Creating tag $(VERSION) for commit $(COMMIT)"
-	git tag -a $(VERSION) -m "Release $(VERSION)"
-	git push origin $(VERSION)
-	@echo "Tag $(VERSION) pushed. GitHub Actions will build and create release."
-
-# Version management
-show-version: ## Show version information
-	@echo "Version: $(VERSION)"
-	@echo "Commit: $(COMMIT)"
-	@echo "Build Time: $(BUILD_TIME)"
-
-# Quick start
-quick-start: build ## Quick build and start
-	@echo "Starting lumen-hostd..."
-	./$(BUILD_DIR)/$(BINARY_NAME) serve &
-	@sleep 2
-	@echo "Checking status..."
-	./$(BUILD_DIR)/$(BINARY_NAME) version
-	@echo "Quick start complete! lumen-hostd running in background."
-
-# CI helpers
-ci: deps fmt vet lint test ## Run full CI pipeline
-
-ci-fast: fmt vet test ## Run fast CI pipeline (no linting)
+ci-fast: fmt-check test ## Run formatting and tests without vet

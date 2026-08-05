@@ -9,8 +9,8 @@ discovery:
     deployment_id: "local"
     resolve_timeout: 15s # Moderate resolve timeout
     connect_timeout: 10s # Standard operational dial timeout
-    rediscovery_backoff_min: 15s # Moderate rediscovery cooldown
-    rediscovery_backoff_max: 3m # Conservative maximum cooldown
+    failure_cooldown_min: 15s # Moderate failure cooldown
+    failure_cooldown_max: 3m # Conservative maximum cooldown
     scan_interval: 45s # Less frequent mDNS re-query to save CPU
     mdns_enabled: true # Discover nodes on the LAN via mDNS
     broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch
@@ -36,5 +36,5 @@ chunk:
 
 # Optimizations for Lightweight Devices:
 # - Moderate mDNS discovery frequency to save CPU
-# - Conservative rediscovery backoff on flaky networks
+# - Conservative failure cooldown on flaky networks
 # - Structured logging with JSON format

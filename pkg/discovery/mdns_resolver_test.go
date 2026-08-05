@@ -60,11 +60,8 @@ func TestMDNSResolvedNodeKeepsCandidatesAndTXT(t *testing.T) {
 			t.Fatalf("endpoints = %#v, want %#v", endpoints, wantEndpoints)
 		}
 	}
-	if resolved.CapHash() != "abc" || resolved.Version() != "1.2.3" || resolved.Runtime() != "onnxrt" {
-		t.Fatalf("TXT not parsed correctly: %#v", resolved.Txt)
-	}
-	if tasks := resolved.HintTasks(); len(tasks) != 2 || tasks[0] != "ocr" || tasks[1] != "embed" {
-		t.Fatalf("HintTasks() = %#v", tasks)
+	if resolved.Version() != "1.2.3" || resolved.Runtime() != "onnxrt" {
+		t.Fatalf("descriptive TXT metadata not parsed correctly: %#v", resolved.Txt)
 	}
 }
 
@@ -101,11 +98,8 @@ func TestEventFromResolvedTTLExpiryShape(t *testing.T) {
 	if ev.Type != NodeExpired {
 		t.Fatalf("event type = %v, want NodeExpired", ev.Type)
 	}
-	if ev.ExplicitRemove {
-		t.Fatal("mDNS-style expiry should not be explicit remove")
-	}
-	if len(ev.Addresses) != 1 || ev.Addresses[0] != "127.0.0.1:5866" {
-		t.Fatalf("Addresses = %v, want [127.0.0.1:5866]", ev.Addresses)
+	if endpoint := ev.Resolved.Endpoint(); endpoint != "127.0.0.1:5866" {
+		t.Fatalf("endpoint = %q, want 127.0.0.1:5866", endpoint)
 	}
 }
 

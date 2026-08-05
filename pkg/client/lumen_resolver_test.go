@@ -26,17 +26,15 @@ func (c *fakeResolverCC) ParseServiceConfig(jsonSC string) *serviceconfig.ParseR
 
 func (c *fakeResolverCC) NewAddress(addresses []resolver.Address) {}
 
-func nodeEvent(evType discovery.NodeEventType, id string, explicit bool) discovery.NodeEvent {
+func nodeEvent(evType discovery.NodeEventType, id string) discovery.NodeEvent {
 	return discovery.NodeEvent{
-		Type:     evType,
-		Identity: discovery.NewNodeIdentity("local", id),
+		Type: evType,
 		Resolved: discovery.ResolvedNode{
 			Identity:  discovery.NewNodeIdentity("local", id),
 			Addresses: []string{"192.168.1.10"},
 			Port:      5866,
 			Txt:       map[string]string{"v": "0.1.1"},
 		},
-		ExplicitRemove: explicit,
 	}
 }
 
@@ -53,25 +51,25 @@ func TestLumenResolverDiscoveryExpireReonline(t *testing.T) {
 	r := &lumenResolver{
 		cc:     cc,
 		cancel: func() {},
-		nodes:  make(map[string]resolvedEntry),
+		nodes:  make(map[string]discovery.ResolvedNode),
 	}
 
 	// 1. Node appears on the LAN: its address enters the state.
-	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1", false))
+	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1"))
 	last := cc.states[len(cc.states)-1]
 	if !addressesOf(last)["192.168.1.10:5866"] {
 		t.Fatalf("discovered node address missing from state: %+v", last.Addresses)
 	}
 
 	// 2. Node goes offline (mDNS expiry after missed polls): address is removed.
-	r.handleEvent(nodeEvent(discovery.NodeExpired, "node-1", false))
+	r.handleEvent(nodeEvent(discovery.NodeExpired, "node-1"))
 	last = cc.states[len(cc.states)-1]
 	if len(last.Addresses) != 0 {
 		t.Fatalf("expired node address should be removed, got %+v", last.Addresses)
 	}
 
 	// 3. Node comes back online: address is re-added.
-	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1", false))
+	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1"))
 	last = cc.states[len(cc.states)-1]
 	if !addressesOf(last)["192.168.1.10:5866"] {
 		t.Fatalf("re-online node address missing from state: %+v", last.Addresses)
@@ -83,11 +81,11 @@ func TestLumenResolverBrokerRemoveIsAlsoApplied(t *testing.T) {
 	r := &lumenResolver{
 		cc:     cc,
 		cancel: func() {},
-		nodes:  make(map[string]resolvedEntry),
+		nodes:  make(map[string]discovery.ResolvedNode),
 	}
 
-	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1", false))
-	r.handleEvent(nodeEvent(discovery.NodeExpired, "node-1", true))
+	r.handleEvent(nodeEvent(discovery.NodeDiscovered, "node-1"))
+	r.handleEvent(nodeEvent(discovery.NodeExpired, "node-1"))
 	last := cc.states[len(cc.states)-1]
 	if len(last.Addresses) != 0 {
 		t.Fatalf("broker removed node should vanish from state, got %+v", last.Addresses)
@@ -99,12 +97,12 @@ func TestLumenResolverAttributesCarryMetadataButNoCompatibilityVerdict(t *testin
 	r := &lumenResolver{
 		cc:     cc,
 		cancel: func() {},
-		nodes:  make(map[string]resolvedEntry),
+		nodes:  make(map[string]discovery.ResolvedNode),
 	}
 
-	first := nodeEvent(discovery.NodeDiscovered, "node-a", false)
+	first := nodeEvent(discovery.NodeDiscovered, "node-a")
 	first.Resolved.Txt = map[string]string{"v": "0.1.1", "runtime": "burn", "proto": "1.0"}
-	second := nodeEvent(discovery.NodeDiscovered, "node-b", false)
+	second := nodeEvent(discovery.NodeDiscovered, "node-b")
 	second.Resolved.Txt = map[string]string{"v": "0.2.0", "runtime": "burn", "proto": "2.0"}
 	r.handleEvent(first)
 	r.handleEvent(second)
@@ -118,29 +116,35 @@ func TestLumenResolverAttributesCarryMetadataButNoCompatibilityVerdict(t *testin
 		if !ok {
 			t.Fatal("address missing node attributes")
 		}
-		if attr.Identity.IsZero() || attr.Txt["runtime"] != "burn" {
+		if attr.Identity.IsZero() || attr.Metadata["runtime"] != "burn" {
 			t.Fatalf("address metadata was not preserved: %+v", attr)
 		}
 	}
 }
 
-func TestLumenResolverDoesNotPromoteDiscoveryTaskHintsIntoAttributes(t *testing.T) {
+func TestLumenResolverFiltersAuthorityLikeDiscoveryHints(t *testing.T) {
 	cc := &fakeResolverCC{}
 	r := &lumenResolver{
 		cc:     cc,
 		cancel: func() {},
-		nodes:  make(map[string]resolvedEntry),
+		nodes:  make(map[string]discovery.ResolvedNode),
 	}
 
-	event := nodeEvent(discovery.NodeDiscovered, "node-hinted", false)
+	event := nodeEvent(discovery.NodeDiscovered, "node-hinted")
 	event.Resolved.Txt = map[string]string{"v": "0.1.1", "tasks": "ocr"}
 	r.handleEvent(event)
 
 	last := cc.states[len(cc.states)-1]
 	for _, addr := range last.Addresses {
 		attr, ok := getNodeAttr(addr)
-		if !ok || attr.Txt["tasks"] != "ocr" {
-			t.Fatalf("display metadata should remain available: %+v", attr)
+		if !ok {
+			t.Fatal("address missing node attributes")
+		}
+		if _, present := attr.Metadata["tasks"]; present {
+			t.Fatalf("task hints must not cross the discovery boundary: %+v", attr)
+		}
+		if attr.Metadata["v"] != "0.1.1" {
+			t.Fatalf("descriptive version metadata was lost: %+v", attr)
 		}
 	}
 }

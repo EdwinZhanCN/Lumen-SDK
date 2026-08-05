@@ -14,7 +14,8 @@ import (
 )
 
 // Usage: CLASSIFY_IMAGE=animal.jpg go run main.go
-//        CLASSIFY_IMAGE=animal.jpg CLASSIFY_TOP_K=3 go run main.go
+//
+//	CLASSIFY_IMAGE=animal.jpg CLASSIFY_TOP_K=3 go run main.go
 func main() {
 	imagePath := os.Getenv("CLASSIFY_IMAGE")
 	if imagePath == "" {

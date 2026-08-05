@@ -5,28 +5,23 @@ import (
 	"fmt"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
-// BrokerResolver subscribes to a Lumen Host Broker WebSocket endpoint for
-// node change events. It implements the NodeResolver interface.
+// BrokerResolver subscribes to complete address snapshots from an experimental
+// Lumen Host Broker. Snapshot replacement is translated into the same
+// discovered/expired event stream used by every other resolver.
 type BrokerResolver struct {
 	brokerURL    string
 	deploymentID string
 	logger       *zap.Logger
 }
 
-// NewBrokerResolver creates a Broker-based resolver.
-// brokerURL is the base URL of the Broker (e.g. "http://localhost:5866").
-// The resolver connects to brokerURL + "/v1/nodes/watch" via WebSocket.
 func NewBrokerResolver(brokerURL string, logger *zap.Logger) *BrokerResolver {
 	return NewBrokerResolverWithDeployment(brokerURL, DefaultDeploymentID, logger)
 }
 
-// NewBrokerResolverWithDeployment creates a Broker-based resolver
-// scoped to a specific deployment ID.
 func NewBrokerResolverWithDeployment(brokerURL, deploymentID string, logger *zap.Logger) *BrokerResolver {
 	if deploymentID == "" {
 		deploymentID = DefaultDeploymentID
@@ -38,37 +33,40 @@ func NewBrokerResolverWithDeployment(brokerURL, deploymentID string, logger *zap
 	}
 }
 
-// Watch connects to the Broker WebSocket and emits node events.
-// On disconnect it reconnects with exponential backoff.
+// Watch connects to Host Broker and reconnects with bounded exponential
+// backoff. The last accepted snapshot is retained across reconnects and is
+// replaced by the next valid snapshot.
 func (r *BrokerResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
-	wsURL := wsScheme(r.brokerURL) + "://" + wsHost(r.brokerURL) + "/v1/nodes/watch"
+	wsURL, err := brokerWebSocketURL(r.brokerURL)
+	if err != nil {
+		return nil, err
+	}
 
 	ch := make(chan NodeEvent, 32)
-
 	go func() {
 		defer close(ch)
-
-		backoff := 1 * time.Second
+		known := make(map[string]ResolvedNode)
+		backoff := time.Second
 		const maxBackoff = 30 * time.Second
 
 		for {
-			select {
-			case <-ctx.Done():
+			if err := ctx.Err(); err != nil {
 				return
-			default:
 			}
-
-			if err := r.connect(ctx, wsURL, ch); err != nil {
-				r.logger.Warn("broker resolver disconnected, reconnecting",
+			receivedSnapshot, err := r.connect(ctx, wsURL, ch, known)
+			if receivedSnapshot {
+				// A healthy session should not inherit backoff accumulated by old
+				// connection failures.
+				backoff = time.Second
+			}
+			if err != nil && ctx.Err() == nil {
+				r.logger.Warn("broker resolver disconnected; reconnecting",
 					zap.String("url", wsURL),
 					zap.Error(err),
 					zap.Duration("backoff", backoff),
 				)
-			} else {
-				backoff = 1 * time.Second // reset on clean disconnect
 			}
 
-			// Exponential backoff with jitter.
 			select {
 			case <-ctx.Done():
 				return
@@ -80,43 +78,91 @@ func (r *BrokerResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 			}
 		}
 	}()
-
 	return ch, nil
 }
 
-func (r *BrokerResolver) connect(ctx context.Context, wsURL string, ch chan<- NodeEvent) error {
+func (r *BrokerResolver) connect(
+	ctx context.Context,
+	wsURL string,
+	ch chan<- NodeEvent,
+	known map[string]ResolvedNode,
+) (bool, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
-		return fmt.Errorf("dial ws: %w", err)
+		return false, fmt.Errorf("dial Broker WebSocket: %w", err)
 	}
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 
 	r.logger.Info("broker resolver connected", zap.String("url", wsURL))
-
-	// Ping handler to keep the connection alive.
 	conn.SetPingHandler(func(appData string) error {
 		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
 	})
 
-	// Read pump.
+	receivedSnapshot := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			return fmt.Errorf("read ws: %w", err)
+			return receivedSnapshot, fmt.Errorf("read Broker WebSocket: %w", err)
 		}
-
-		events, err := parseNodeEventsWithDeployment(raw, r.deploymentID)
+		snapshot, err := parseNodeSnapshot(raw, r.deploymentID)
 		if err != nil {
-			r.logger.Warn("failed to parse node event", zap.Error(err))
+			r.logger.Warn("rejected Broker snapshot", zap.Error(err))
 			continue
 		}
+		if err := emitSnapshotReplacement(ctx, ch, known, snapshot); err != nil {
+			return receivedSnapshot, err
+		}
+		receivedSnapshot = true
+	}
+}
 
-		for _, ev := range events {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case ch <- ev:
+func emitSnapshotReplacement(
+	ctx context.Context,
+	ch chan<- NodeEvent,
+	known map[string]ResolvedNode,
+	snapshot []ResolvedNode,
+) error {
+	current := make(map[string]ResolvedNode, len(snapshot))
+	for _, node := range snapshot {
+		current[node.Key()] = node
+	}
+
+	for key, previous := range known {
+		if _, exists := current[key]; !exists {
+			if err := emitNodeEvent(ctx, ch, eventFromResolved(NodeExpired, previous)); err != nil {
+				return err
 			}
 		}
+	}
+	for _, node := range snapshot {
+		// Re-emitting retained identities is intentional: it replaces endpoint and
+		// descriptive metadata without a second added/updated wire protocol.
+		if err := emitNodeEvent(ctx, ch, eventFromResolved(NodeDiscovered, node)); err != nil {
+			return err
+		}
+	}
+
+	clear(known)
+	for key, node := range current {
+		known[key] = node
+	}
+	return nil
+}
+
+func emitNodeEvent(ctx context.Context, ch chan<- NodeEvent, event NodeEvent) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case ch <- event:
+		return nil
 	}
 }

@@ -154,7 +154,7 @@ func (r *MDNSResolver) runQuery(ctx context.Context, ch chan<- NodeEvent, known 
 			event := eventFromResolved(NodeDiscovered, resolved)
 			r.logger.Info("mDNS node resolved",
 				zap.String("id", key),
-				zap.Strings("addresses", event.Addresses),
+				zap.Strings("addresses", event.Resolved.CandidateEndpoints()),
 			)
 			select {
 			case ch <- event:
@@ -221,16 +221,7 @@ func extractInstanceName(fullName, serviceType, domain string) string {
 }
 
 func eventFromResolved(eventType NodeEventType, resolved ResolvedNode) NodeEvent {
-	resolved = resolved.Normalized()
-	endpoints := resolved.CandidateEndpoints()
-	return NodeEvent{
-		Type:      eventType,
-		Identity:  resolved.Identity,
-		Resolved:  resolved,
-		Addresses: endpoints,
-		Tasks:     resolved.HintTasks(),
-		Txt:       resolved.Txt,
-	}
+	return NodeEvent{Type: eventType, Resolved: resolved.Normalized()}
 }
 
 func parseTXT(records []string) map[string]string {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,20 +23,23 @@ const hardFailureThreshold = 3
 
 // PoolOptions controls operational session behavior.
 type PoolOptions struct {
-	ConnectTimeout        time.Duration
-	RediscoveryBackoffMin time.Duration
-	RediscoveryBackoffMax time.Duration
+	ConnectTimeout     time.Duration
+	FailureCooldownMin time.Duration
+	FailureCooldownMax time.Duration
 }
 
 func (o PoolOptions) normalized() PoolOptions {
 	if o.ConnectTimeout <= 0 {
 		o.ConnectTimeout = 10 * time.Second
 	}
-	if o.RediscoveryBackoffMin <= 0 {
-		o.RediscoveryBackoffMin = 10 * time.Second
+	if o.FailureCooldownMin <= 0 {
+		o.FailureCooldownMin = 10 * time.Second
 	}
-	if o.RediscoveryBackoffMax < o.RediscoveryBackoffMin {
-		o.RediscoveryBackoffMax = 2 * time.Minute
+	if o.FailureCooldownMax <= 0 {
+		o.FailureCooldownMax = 2 * time.Minute
+	}
+	if o.FailureCooldownMax < o.FailureCooldownMin {
+		o.FailureCooldownMax = o.FailureCooldownMin
 	}
 	return o
 }
@@ -83,9 +85,9 @@ func (p *Pool) Connect(resolver discovery.NodeResolver) error {
 
 	opts := p.options
 	balancerName := newLumenBalancerName(registry, balancerOptions{
-		connectTimeout:        opts.ConnectTimeout,
-		rediscoveryBackoffMin: opts.RediscoveryBackoffMin,
-		rediscoveryBackoffMax: opts.RediscoveryBackoffMax,
+		connectTimeout:     opts.ConnectTimeout,
+		failureCooldownMin: opts.FailureCooldownMin,
+		failureCooldownMax: opts.FailureCooldownMax,
 	}, p.logger)
 
 	rb := &lumenResolverBuilder{
@@ -131,8 +133,8 @@ func (p *Pool) Client() pb.InferenceClient {
 
 // PoolStats is a read-only snapshot of pool state.
 type PoolStats struct {
-	TotalConnections   int `json:"total_connections"`
-	HealthyConnections int `json:"healthy_connections"`
+	TotalNodes    int `json:"total_nodes"`
+	RoutableNodes int `json:"routable_nodes"`
 }
 
 // Stats returns current pool statistics.
@@ -143,10 +145,10 @@ func (p *Pool) Stats() PoolStats {
 	if reg == nil {
 		return PoolStats{}
 	}
-	total, healthy := reg.stats()
+	total, routable := reg.stats()
 	return PoolStats{
-		TotalConnections:   total,
-		HealthyConnections: healthy,
+		TotalNodes:    total,
+		RoutableNodes: routable,
 	}
 }
 
@@ -226,78 +228,6 @@ func copyStringMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		out[k] = v
-	}
-	return out
-}
-
-func mergeTasks(current, incoming []string) []string {
-	seen := make(map[string]struct{}, len(current)+len(incoming))
-	out := make([]string, 0, len(current)+len(incoming))
-	for _, task := range current {
-		task = strings.TrimSpace(task)
-		if task == "" {
-			continue
-		}
-		if _, ok := seen[task]; ok {
-			continue
-		}
-		seen[task] = struct{}{}
-		out = append(out, task)
-	}
-	for _, task := range incoming {
-		task = strings.TrimSpace(task)
-		if task == "" {
-			continue
-		}
-		if _, ok := seen[task]; ok {
-			continue
-		}
-		seen[task] = struct{}{}
-		out = append(out, task)
-	}
-	return out
-}
-
-func tasksFromCapabilities(caps []*pb.Capability) []string {
-	var tasks []string
-	for _, cap := range caps {
-		for _, task := range cap.GetTasks() {
-			if task.GetName() != "" {
-				tasks = append(tasks, task.GetName())
-			}
-		}
-	}
-	return mergeTasks(nil, tasks)
-}
-
-func tasksToIOTasks(names []string) []*pb.IOTask {
-	out := make([]*pb.IOTask, 0, len(names))
-	for _, n := range names {
-		out = append(out, &pb.IOTask{Name: n})
-	}
-	return out
-}
-
-func tasksToIOTasksFromCapabilities(caps []*pb.Capability, fallbackNames []string) []*pb.IOTask {
-	seen := make(map[string]struct{})
-	var out []*pb.IOTask
-	for _, cap := range caps {
-		for _, task := range cap.GetTasks() {
-			if task.GetName() == "" {
-				continue
-			}
-			if _, ok := seen[task.GetName()]; ok {
-				continue
-			}
-			seen[task.GetName()] = struct{}{}
-			out = append(out, task)
-		}
-	}
-	for _, task := range tasksToIOTasks(fallbackNames) {
-		if _, ok := seen[task.GetName()]; ok {
-			continue
-		}
-		out = append(out, task)
 	}
 	return out
 }

@@ -10,8 +10,8 @@ discovery:
     deployment_id: "local"
     resolve_timeout: 20s # Conservative resolve timeout
     connect_timeout: 15s # Longer operational dial timeout
-    rediscovery_backoff_min: 30s # Less frequent rediscovery attempts
-    rediscovery_backoff_max: 5m # Longer maximum cooldown for unstable links
+    failure_cooldown_min: 30s # Longer initial routing cooldown after repeated failures
+    failure_cooldown_max: 5m # Long maximum routing cooldown for unstable links
     scan_interval: 60s # Infrequent mDNS re-query to save CPU/battery
     mdns_enabled: true # Discover nodes on the LAN via mDNS
     broker_url: "" # Set to also/instead consume a Host Broker's /v1/nodes/watch

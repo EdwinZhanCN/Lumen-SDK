@@ -50,10 +50,13 @@ func activeNode(id, addr string, tasks ...string) *discovery.NodeInfo {
 		ioTasks = append(ioTasks, &pb.IOTask{Name: task})
 	}
 	return &discovery.NodeInfo{
-		ID:      id,
-		Address: addr,
-		Status:  discovery.NodeStatusActive,
-		Tasks:   ioTasks,
+		ID:            id,
+		Address:       addr,
+		Availability:  discovery.NodeAvailabilityReady,
+		Compatibility: discovery.CompatibilityCompatible,
+		Capabilities: []*pb.Capability{{
+			Tasks: ioTasks,
+		}},
 	}
 }
 
@@ -181,14 +184,25 @@ func TestServerNodesWatchServesBrokerResolver(t *testing.T) {
 	if ev.Type != discovery.NodeDiscovered {
 		t.Fatalf("event type = %v, want NodeDiscovered", ev.Type)
 	}
-	if ev.Identity.Key() != "local-node-b" {
-		t.Fatalf("identity = %q, want local-node-b", ev.Identity.Key())
+	if ev.Resolved.Identity.Key() != "local-node-b" {
+		t.Fatalf("identity = %q, want local-node-b", ev.Resolved.Identity.Key())
+	}
+	if endpoint := ev.Resolved.Endpoint(); endpoint != "10.0.0.2:50051" {
+		t.Fatalf("endpoint = %q, want 10.0.0.2:50051", endpoint)
+	}
+
+	// A replacement snapshot must propagate an endpoint change for the same
+	// identity; the previous incremental wire format silently lost this case.
+	catalog.set([]*discovery.NodeInfo{activeNode("node-b", "10.0.0.9:50051", "ocr")})
+	ev = nextEvent(t, events)
+	if ev.Type != discovery.NodeDiscovered || ev.Resolved.Endpoint() != "10.0.0.9:50051" {
+		t.Fatalf("address replacement event = %+v", ev)
 	}
 
 	catalog.set(nil)
 	ev = nextEvent(t, events)
-	if ev.Type != discovery.NodeExpired || !ev.ExplicitRemove {
-		t.Fatalf("expected explicit NodeExpired, got type=%v explicit=%v", ev.Type, ev.ExplicitRemove)
+	if ev.Type != discovery.NodeExpired {
+		t.Fatalf("event type = %v, want NodeExpired", ev.Type)
 	}
 }
 

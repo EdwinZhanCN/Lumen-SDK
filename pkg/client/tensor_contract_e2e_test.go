@@ -172,8 +172,8 @@ func newTensorContractClient(t *testing.T, capabilities []*pb.Capability) (*Lume
 
 	cfg := config.DefaultConfig()
 	cfg.Discovery.ConnectTimeout = 2 * time.Second
-	cfg.Discovery.RediscoveryBackoffMin = 100 * time.Millisecond
-	cfg.Discovery.RediscoveryBackoffMax = time.Second
+	cfg.Discovery.FailureCooldownMin = 100 * time.Millisecond
+	cfg.Discovery.FailureCooldownMax = time.Second
 
 	client := &LumenClient{
 		pool:     NewPoolWithOptions(zap.NewNop(), PoolOptions{ConnectTimeout: cfg.Discovery.ConnectTimeout}),

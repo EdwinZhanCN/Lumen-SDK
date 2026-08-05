@@ -71,38 +71,50 @@ func TestShouldAffectNodeHealthCanceledContextWins(t *testing.T) {
 	}
 }
 
-// --- filterByTask tests (test picker filtering logic without needing real SubConns) ---
+func TestPoolOptionsNormalizedKeepsMaximumAtLeastMinimum(t *testing.T) {
+	opts := (PoolOptions{FailureCooldownMin: 5 * time.Minute}).normalized()
+	if opts.FailureCooldownMax != opts.FailureCooldownMin {
+		t.Fatalf("maximum cooldown %s is below minimum %s", opts.FailureCooldownMax, opts.FailureCooldownMin)
+	}
+}
+
+// --- picker snapshot filtering tests ---
+
+func testPickerNode(tasks ...string) pickerNode {
+	capability := &pb.Capability{ServiceName: "test", ProtocolVersion: "1.0"}
+	for _, task := range tasks {
+		capability.Tasks = append(capability.Tasks, &pb.IOTask{Name: task})
+	}
+	return pickerNode{capabilities: []*pb.Capability{capability}}
+}
 
 func TestFilterByTaskSelectsMatchingNodes(t *testing.T) {
-	nodes := []*subConnState{
-		{tasks: []string{"ocr", "embed"}, state: connectivity.Ready, validation: protocolValidationCompatible},
-		{tasks: []string{"semantic"}, state: connectivity.Ready, validation: protocolValidationCompatible},
-		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
+	nodes := []pickerNode{
+		testPickerNode("ocr", "embed"),
+		testPickerNode("semantic"),
+		testPickerNode("ocr"),
 	}
 	now := time.Now()
 
-	result := filterByTask(nodes, "ocr", false, now)
+	result := filterByTask(nodes, "ocr", now)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 matches for 'ocr', got %d", len(result))
 	}
 
-	result = filterByTask(nodes, "semantic", false, now)
+	result = filterByTask(nodes, "semantic", now)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 match for 'semantic', got %d", len(result))
 	}
 
-	result = filterByTask(nodes, "nonexistent", false, now)
+	result = filterByTask(nodes, "nonexistent", now)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 matches for 'nonexistent', got %d", len(result))
 	}
 }
 
 func TestFilterByTaskEmptyTaskReturnsAll(t *testing.T) {
-	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
-		{tasks: []string{"semantic"}, state: connectivity.Ready, validation: protocolValidationCompatible},
-	}
-	result := filterByTask(nodes, "", false, time.Now())
+	nodes := []pickerNode{testPickerNode("ocr"), testPickerNode("semantic")}
+	result := filterByTask(nodes, "", time.Now())
 	if len(result) != 2 {
 		t.Fatalf("empty task should match all, got %d", len(result))
 	}
@@ -110,33 +122,29 @@ func TestFilterByTaskEmptyTaskReturnsAll(t *testing.T) {
 
 func TestFilterByTaskSkipsCoolingNodes(t *testing.T) {
 	now := time.Now()
-	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.Ready, cooldownUntil: now.Add(time.Hour), validation: protocolValidationCompatible},
-		{tasks: []string{"ocr"}, state: connectivity.Ready, validation: protocolValidationCompatible},
-	}
-	result := filterByTask(nodes, "ocr", false, now)
+	cooling := testPickerNode("ocr")
+	cooling.cooldownUntil = now.Add(time.Hour)
+	nodes := []pickerNode{cooling, testPickerNode("ocr")}
+	result := filterByTask(nodes, "ocr", now)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 (skip cooling node), got %d", len(result))
 	}
 }
 
-func TestFilterByTaskExpiredCooldownProbes(t *testing.T) {
+func TestFilterByTaskAcceptsExpiredCooldown(t *testing.T) {
 	now := time.Now()
-	nodes := []*subConnState{
-		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(-time.Millisecond), validation: protocolValidationCompatible},
-		{tasks: []string{"ocr"}, state: connectivity.TransientFailure, cooldownUntil: now.Add(time.Hour), validation: protocolValidationCompatible},
-	}
-	result := filterByTask(nodes, "ocr", true, now)
+	expired := testPickerNode("ocr")
+	expired.cooldownUntil = now.Add(-time.Millisecond)
+	cooling := testPickerNode("ocr")
+	cooling.cooldownUntil = now.Add(time.Hour)
+	result := filterByTask([]pickerNode{expired, cooling}, "ocr", now)
 	if len(result) != 1 {
-		t.Fatalf("expected 1 probe with expired cooldown, got %d", len(result))
+		t.Fatalf("expected 1 node after cooldown expiry, got %d", len(result))
 	}
 }
 
 func TestAnySupportsTask(t *testing.T) {
-	nodes := []*subConnState{
-		{tasks: []string{"ocr", "embed"}, validation: protocolValidationCompatible},
-		{tasks: []string{"semantic"}, validation: protocolValidationCompatible},
-	}
+	nodes := []pickerNode{testPickerNode("ocr", "embed"), testPickerNode("semantic")}
 	if !anySupportsTask(nodes, "ocr") {
 		t.Fatal("should support ocr")
 	}
@@ -148,7 +156,7 @@ func TestAnySupportsTask(t *testing.T) {
 	}
 }
 
-func TestPickerWaitsWhileProtocolValidationIsPending(t *testing.T) {
+func TestPickerWaitsWhileCompatibilityIsPending(t *testing.T) {
 	picker := &lumenPicker{hasPending: true}
 	_, err := picker.Pick(balancer.PickInfo{Ctx: WithTask(context.Background(), "ocr")})
 	if !errors.Is(err, balancer.ErrNoSubConnAvailable) {
@@ -156,25 +164,11 @@ func TestPickerWaitsWhileProtocolValidationIsPending(t *testing.T) {
 	}
 }
 
-func TestPickerFailsWhenValidatedNodesDoNotSupportTask(t *testing.T) {
-	picker := &lumenPicker{known: []*subConnState{{
-		validation: protocolValidationCompatible,
-		tasks:      []string{"ocr"},
-	}}}
+func TestPickerFailsWhenCompatibleNodesDoNotSupportTask(t *testing.T) {
+	picker := &lumenPicker{known: []pickerNode{testPickerNode("ocr")}}
 	_, err := picker.Pick(balancer.PickInfo{Ctx: WithTask(context.Background(), "semantic")})
 	if err == nil || errors.Is(err, balancer.ErrNoSubConnAvailable) {
-		t.Fatalf("validated unsupported picker error = %v, want definitive failure", err)
-	}
-}
-
-func TestPendingNodeTaskHintIsNotRoutable(t *testing.T) {
-	nodes := []*subConnState{{
-		validation: protocolValidationPending,
-		state:      connectivity.Ready,
-		tasks:      []string{"ocr"},
-	}}
-	if got := filterByTask(nodes, "ocr", false, time.Now()); len(got) != 0 {
-		t.Fatalf("pending node with discovery hint became routable: %+v", got)
+		t.Fatalf("unsupported picker error = %v, want definitive failure", err)
 	}
 }
 
@@ -183,25 +177,25 @@ func TestPendingNodeTaskHintIsNotRoutable(t *testing.T) {
 func TestStartCooldownExponentialBackoff(t *testing.T) {
 	lb := &lumenBalancer{
 		options: balancerOptions{
-			rediscoveryBackoffMin: time.Second,
-			rediscoveryBackoffMax: time.Minute,
+			failureCooldownMin: time.Second,
+			failureCooldownMax: time.Minute,
 		},
 	}
 
 	scs := &subConnState{}
 	now := time.Now()
 
-	lb.startCooldownLocked(scs, now)
+	lb.startCooldownLocked("", scs, now)
 	if scs.cooldown != time.Second {
 		t.Fatalf("first cooldown = %v, want 1s", scs.cooldown)
 	}
 
-	lb.startCooldownLocked(scs, now)
+	lb.startCooldownLocked("", scs, now)
 	if scs.cooldown != 2*time.Second {
 		t.Fatalf("second cooldown = %v, want 2s", scs.cooldown)
 	}
 
-	lb.startCooldownLocked(scs, now)
+	lb.startCooldownLocked("", scs, now)
 	if scs.cooldown != 4*time.Second {
 		t.Fatalf("third cooldown = %v, want 4s", scs.cooldown)
 	}
@@ -210,19 +204,19 @@ func TestStartCooldownExponentialBackoff(t *testing.T) {
 func TestStartCooldownCapsAtMax(t *testing.T) {
 	lb := &lumenBalancer{
 		options: balancerOptions{
-			rediscoveryBackoffMin: 30 * time.Second,
-			rediscoveryBackoffMax: time.Minute,
+			failureCooldownMin: 30 * time.Second,
+			failureCooldownMax: time.Minute,
 		},
 	}
 	scs := &subConnState{cooldown: 30 * time.Second}
 	now := time.Now()
 
-	lb.startCooldownLocked(scs, now)
+	lb.startCooldownLocked("", scs, now)
 	if scs.cooldown != time.Minute {
 		t.Fatalf("cooldown = %v, want 1m (capped)", scs.cooldown)
 	}
 
-	lb.startCooldownLocked(scs, now)
+	lb.startCooldownLocked("", scs, now)
 	if scs.cooldown != time.Minute {
 		t.Fatalf("cooldown = %v, should stay at max 1m", scs.cooldown)
 	}
@@ -247,14 +241,14 @@ func TestTaskContext(t *testing.T) {
 func TestNodeRegistryStats(t *testing.T) {
 	reg := &nodeRegistry{
 		nodes: map[string]*registeredNode{
-			"node-1": {state: connectivity.Ready, validation: protocolValidationCompatible},
-			"node-2": {state: connectivity.Connecting, validation: protocolValidationCompatible},
-			"node-3": {state: connectivity.Ready, validation: protocolValidationCompatible},
+			"node-1": {state: connectivity.Ready, compatibility: discovery.CompatibilityCompatible},
+			"node-2": {state: connectivity.Connecting, compatibility: discovery.CompatibilityCompatible},
+			"node-3": {state: connectivity.Ready, compatibility: discovery.CompatibilityCompatible},
 		},
 	}
-	total, healthy := reg.stats()
-	if total != 3 || healthy != 2 {
-		t.Fatalf("stats = (%d, %d), want (3, 2)", total, healthy)
+	total, routable := reg.stats()
+	if total != 3 || routable != 2 {
+		t.Fatalf("stats = (%d, %d), want (3, 2)", total, routable)
 	}
 }
 
@@ -262,12 +256,14 @@ func TestNodeRegistryNodeInfos(t *testing.T) {
 	reg := &nodeRegistry{
 		nodes: map[string]*registeredNode{
 			"local-node-1": {
-				identity:   discovery.NewNodeIdentity("local", "node-1"),
-				addr:       "192.168.1.10:5866",
-				state:      connectivity.Ready,
-				tasks:      []string{"ocr", "embed"},
-				txt:        map[string]string{"v": "1.2.3", "runtime": "onnxrt"},
-				validation: protocolValidationCompatible,
+				identity: discovery.NewNodeIdentity("local", "node-1"),
+				addr:     "192.168.1.10:5866",
+				state:    connectivity.Ready,
+				capabilities: []*pb.Capability{{
+					Tasks: []*pb.IOTask{{Name: "ocr"}, {Name: "embed"}},
+				}},
+				metadata:      map[string]string{"v": "1.2.3", "runtime": "onnxrt"},
+				compatibility: discovery.CompatibilityCompatible,
 			},
 		},
 	}
@@ -285,9 +281,9 @@ func TestNodeRegistryNodeInfos(t *testing.T) {
 
 func TestNodeRegistryEmptyStats(t *testing.T) {
 	reg := &nodeRegistry{nodes: make(map[string]*registeredNode)}
-	total, healthy := reg.stats()
-	if total != 0 || healthy != 0 {
-		t.Fatalf("empty stats = (%d, %d), want (0, 0)", total, healthy)
+	total, routable := reg.stats()
+	if total != 0 || routable != 0 {
+		t.Fatalf("empty stats = (%d, %d), want (0, 0)", total, routable)
 	}
 }
 
@@ -296,20 +292,18 @@ func TestNodeRegistryEmptyStats(t *testing.T) {
 func TestAvailabilityFromRegistered(t *testing.T) {
 	tests := []struct {
 		name   string
-		node   registeredNode
+		state  connectivity.State
 		expect discovery.NodeAvailability
 	}{
-		{"ready and validated", registeredNode{state: connectivity.Ready, validation: protocolValidationCompatible}, discovery.NodeAvailabilityReady},
-		{"ready and pending", registeredNode{state: connectivity.Ready, validation: protocolValidationPending}, discovery.NodeAvailabilityConnecting},
-		{"connecting", registeredNode{state: connectivity.Connecting, validation: protocolValidationCompatible}, discovery.NodeAvailabilityConnecting},
-		{"idle", registeredNode{state: connectivity.Idle, validation: protocolValidationCompatible}, discovery.NodeAvailabilityResolving},
-		{"transient failure below threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: 1, validation: protocolValidationCompatible}, discovery.NodeAvailabilityRediscovering},
-		{"transient failure at threshold", registeredNode{state: connectivity.TransientFailure, hardFailures: hardFailureThreshold, validation: protocolValidationCompatible}, discovery.NodeAvailabilityUnavailable},
-		{"incompatible", registeredNode{state: connectivity.Ready, validation: protocolValidationIncompatible}, discovery.NodeAvailabilityIncompatible},
+		{"idle", connectivity.Idle, discovery.NodeAvailabilityDiscovered},
+		{"connecting", connectivity.Connecting, discovery.NodeAvailabilityConnecting},
+		{"ready", connectivity.Ready, discovery.NodeAvailabilityReady},
+		{"transient failure", connectivity.TransientFailure, discovery.NodeAvailabilityUnavailable},
+		{"shutdown", connectivity.Shutdown, discovery.NodeAvailabilityUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := availabilityFromRegistered(&tt.node)
+			got := availabilityFromRegistered(&registeredNode{state: tt.state})
 			if got != tt.expect {
 				t.Fatalf("availability = %s, want %s", got, tt.expect)
 			}
@@ -319,36 +313,24 @@ func TestAvailabilityFromRegistered(t *testing.T) {
 
 // --- Helper function tests ---
 
-func TestMergeTasks(t *testing.T) {
-	result := mergeTasks([]string{"ocr", "embed"}, []string{"embed", "semantic"})
-	if len(result) != 3 {
-		t.Fatalf("merged len = %d, want 3", len(result))
+func TestCapabilitiesSupportTask(t *testing.T) {
+	capabilities := []*pb.Capability{
+		{ServiceName: "vision", Tasks: []*pb.IOTask{{Name: "ocr"}, {Name: "embed"}}},
+		{ServiceName: "semantic", Tasks: []*pb.IOTask{{Name: "embed"}, {Name: "semantic"}}},
 	}
-	expected := map[string]bool{"ocr": true, "embed": true, "semantic": true}
-	for _, task := range result {
-		if !expected[task] {
-			t.Fatalf("unexpected task: %s", task)
-		}
-	}
-}
-
-func TestMergeTasksTrimsWhitespace(t *testing.T) {
-	result := mergeTasks([]string{" ocr ", ""}, []string{" embed "})
-	if len(result) != 2 {
-		t.Fatalf("merged len = %d, want 2", len(result))
-	}
-}
-
-func TestNodeSupportsTaskSlice(t *testing.T) {
-	tasks := []string{"ocr", "embed", "semantic"}
-	if !nodeSupportsTaskSlice(tasks, "ocr") {
+	if !capabilitiesSupportTask(capabilities, "ocr") {
 		t.Fatal("should support ocr")
 	}
-	if nodeSupportsTaskSlice(tasks, "missing") {
+	if capabilitiesSupportTask(capabilities, "missing") {
 		t.Fatal("should not support missing")
 	}
-	if nodeSupportsTaskSlice(nil, "ocr") {
-		t.Fatal("nil tasks should not support anything")
+	if capabilitiesSupportTask(nil, "ocr") {
+		t.Fatal("nil capabilities should not support anything")
+	}
+
+	tasks := taskNamesFromCapabilities(capabilities)
+	if got, want := strings.Join(tasks, ","), "ocr,embed,semantic"; got != want {
+		t.Fatalf("taskNamesFromCapabilities = %q, want %q", got, want)
 	}
 }
 
@@ -377,9 +359,9 @@ func TestPoolConnectAndDiscoverNode(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 
 	if err := pool.Connect(resolver); err != nil {
@@ -389,7 +371,7 @@ func TestPoolConnectAndDiscoverNode(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		s := pool.Stats()
-		return s.TotalConnections > 0 && s.HealthyConnections > 0
+		return s.TotalNodes > 0 && s.RoutableNodes > 0
 	})
 
 	infos := pool.NodeInfos()
@@ -399,10 +381,8 @@ func TestPoolConnectAndDiscoverNode(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		for _, info := range pool.NodeInfos() {
-			for _, task := range info.Tasks {
-				if task.Name == "semantic" {
-					return true
-				}
+			if info.SupportsTask("semantic") {
+				return true
 			}
 		}
 		return false
@@ -440,9 +420,9 @@ func TestPoolMultipleNodes(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 
 	if err := pool.Connect(resolver); err != nil {
@@ -452,7 +432,7 @@ func TestPoolMultipleNodes(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		s := pool.Stats()
-		return s.TotalConnections >= 2 && s.HealthyConnections >= 2
+		return s.TotalNodes >= 2 && s.RoutableNodes >= 2
 	})
 
 	waitUntil(t, func() bool {
@@ -462,14 +442,8 @@ func TestPoolMultipleNodes(t *testing.T) {
 		}
 		foundOCR, foundSemantic := false, false
 		for _, info := range infos {
-			for _, task := range info.Tasks {
-				if task.Name == "ocr" {
-					foundOCR = true
-				}
-				if task.Name == "semantic" {
-					foundSemantic = true
-				}
-			}
+			foundOCR = foundOCR || info.SupportsTask("ocr")
+			foundSemantic = foundSemantic || info.SupportsTask("semantic")
 		}
 		return foundOCR && foundSemantic
 	})
@@ -494,9 +468,9 @@ func TestPoolWatcherNotification(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 
 	notified := make(chan struct{}, 10)
@@ -537,7 +511,7 @@ func TestPoolCloseIdempotent(t *testing.T) {
 func TestPoolStatsBeforeConnect(t *testing.T) {
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{})
 	s := pool.Stats()
-	if s.TotalConnections != 0 || s.HealthyConnections != 0 {
+	if s.TotalNodes != 0 || s.RoutableNodes != 0 {
 		t.Fatalf("stats before connect = %+v, want zeros", s)
 	}
 	infos := pool.NodeInfos()
@@ -561,7 +535,7 @@ func waitUntil(t *testing.T, condition func() bool) {
 }
 
 func startCapabilityServer(t *testing.T, tasks ...string) string {
-	return startCapabilityServerWithVersion(t, "", tasks...)
+	return startCapabilityServerWithVersion(t, "1.0", tasks...)
 }
 
 func startCapabilityServerWithVersion(t *testing.T, protocolVersion string, tasks ...string) string {
@@ -720,9 +694,9 @@ func TestPoolIgnoresTXTProtocolHint(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 	if err := pool.Connect(resolver); err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -731,7 +705,7 @@ func TestPoolIgnoresTXTProtocolHint(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		return len(infos) == 1 && infos[0].Compatible &&
+		return len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityCompatible &&
 			infos[0].Availability == discovery.NodeAvailabilityReady
 	})
 
@@ -775,9 +749,9 @@ func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 	if err := pool.Connect(resolver); err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -788,8 +762,8 @@ func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
 	// capabilities report the unsupported major.
 	waitUntil(t, func() bool {
 		for _, info := range pool.NodeInfos() {
-			if info.ID == "local-node-v2" && !info.Compatible &&
-				info.Availability == discovery.NodeAvailabilityIncompatible {
+			if info.ID == "local-node-v2" && info.Compatibility == discovery.CompatibilityIncompatible &&
+				info.Availability == discovery.NodeAvailabilityReady {
 				return true
 			}
 		}
@@ -803,7 +777,7 @@ func TestPoolMarksCapabilityIncompatibleNode(t *testing.T) {
 	})
 
 	stats := pool.Stats()
-	if stats.HealthyConnections != 1 {
+	if stats.RoutableNodes != 1 {
 		t.Fatalf("expected exactly one healthy connection (v1), got %+v", stats)
 	}
 }
@@ -829,9 +803,9 @@ func TestPoolIncompatibleNodeNeverReceivesTasks(t *testing.T) {
 	}
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 	if err := pool.Connect(resolver); err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -840,7 +814,7 @@ func TestPoolIncompatibleNodeNeverReceivesTasks(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		return len(infos) == 1 && !infos[0].Compatible
+		return len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityIncompatible
 	})
 
 	client := pool.Client()
@@ -879,8 +853,8 @@ func TestPoolMarksUnimplementedCapabilityRPCIncompatible(t *testing.T) {
 
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		return len(infos) == 1 && !infos[0].Compatible &&
-			infos[0].Availability == discovery.NodeAvailabilityIncompatible
+		return len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityIncompatible &&
+			infos[0].Availability == discovery.NodeAvailabilityReady
 	})
 	if reason := pool.NodeInfos()[0].IncompatibleReason; !strings.Contains(reason, "capability RPC not implemented") {
 		t.Fatalf("unexpected incompatible reason: %q", reason)
@@ -893,9 +867,9 @@ func TestPoolRediscoveryDoesNotClearInBandIncompatibleVerdict(t *testing.T) {
 	resolver := newLiveNodeResolver()
 
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: time.Second,
-		RediscoveryBackoffMax: 5 * time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: time.Second,
+		FailureCooldownMax: 5 * time.Second,
 	})
 	if err := pool.Connect(resolver); err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -914,7 +888,7 @@ func TestPoolRediscoveryDoesNotClearInBandIncompatibleVerdict(t *testing.T) {
 	resolver.Emit(event)
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		return len(infos) == 1 && !infos[0].Compatible
+		return len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityIncompatible
 	})
 
 	// A contradictory discovery hint and task list are display metadata only;
@@ -930,7 +904,7 @@ func TestPoolRediscoveryDoesNotClearInBandIncompatibleVerdict(t *testing.T) {
 		return len(infos) == 1 && infos[0].Version == "rediscovered"
 	})
 	infos := pool.NodeInfos()
-	if infos[0].Compatible || infos[0].Availability != discovery.NodeAvailabilityIncompatible {
+	if infos[0].Compatibility != discovery.CompatibilityIncompatible || infos[0].Availability != discovery.NodeAvailabilityReady {
 		t.Fatalf("rediscovery cleared in-band verdict: %+v", infos[0])
 	}
 	if err := inferViaStream(pool.Client(), "semantic"); err == nil {
@@ -963,9 +937,9 @@ func TestPoolReconnectRevalidatesIncompatibleNode(t *testing.T) {
 		},
 	}}}
 	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{
-		ConnectTimeout:        2 * time.Second,
-		RediscoveryBackoffMin: 100 * time.Millisecond,
-		RediscoveryBackoffMax: time.Second,
+		ConnectTimeout:     2 * time.Second,
+		FailureCooldownMin: 100 * time.Millisecond,
+		FailureCooldownMax: time.Second,
 	})
 	if err := pool.Connect(resolver); err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -973,7 +947,7 @@ func TestPoolReconnectRevalidatesIncompatibleNode(t *testing.T) {
 	defer pool.Close()
 	waitUntil(t, func() bool {
 		infos := pool.NodeInfos()
-		return len(infos) == 1 && !infos[0].Compatible
+		return len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityIncompatible
 	})
 
 	// Replacing the server forces a transport reconnect. The old incompatible
@@ -998,7 +972,7 @@ func TestPoolReconnectRevalidatesIncompatibleNode(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		infos := pool.NodeInfos()
-		if len(infos) == 1 && infos[0].Compatible &&
+		if len(infos) == 1 && infos[0].Compatibility == discovery.CompatibilityCompatible &&
 			infos[0].Availability == discovery.NodeAvailabilityReady {
 			break
 		}
@@ -1012,22 +986,44 @@ func TestPoolReconnectRevalidatesIncompatibleNode(t *testing.T) {
 	}
 }
 
+func TestStaleSubConnGenerationCannotMutateReplacement(t *testing.T) {
+	key := "reused-node-id"
+	scs := &subConnState{
+		generation:    2,
+		state:         connectivity.Connecting,
+		compatibility: discovery.CompatibilityPending,
+	}
+	lb := &lumenBalancer{subConns: map[string]*subConnState{key: scs}}
+
+	lb.handleSubConnStateChange(key, 1, balancer.SubConnState{ConnectivityState: connectivity.Ready})
+
+	if scs.state != connectivity.Connecting {
+		t.Fatalf("stale SubConn callback changed replacement state: %s", scs.state)
+	}
+	if scs.compatibility != discovery.CompatibilityPending {
+		t.Fatalf("stale SubConn callback changed replacement compatibility: %s", scs.compatibility)
+	}
+}
+
 func TestStaleCapabilityGenerationCannotOverwriteNewVerdict(t *testing.T) {
 	oldAddr := startCapabilityServerWithVersion(t, "2.0", "semantic")
 	key := "local-node-generation"
-	lb := &lumenBalancer{subConns: map[string]*subConnState{
-		key: {
-			addr:          resolver.Address{Addr: oldAddr},
-			validation:    protocolValidationPending,
-			validationGen: 2,
+	lb := &lumenBalancer{
+		options: balancerOptions{connectTimeout: time.Second},
+		subConns: map[string]*subConnState{
+			key: {
+				addr:             resolver.Address{Addr: oldAddr},
+				compatibility:    discovery.CompatibilityPending,
+				compatibilityGen: 2,
+			},
 		},
-	}}
+	}
 
 	if !lb.fetchCapabilitiesForNode(key, oldAddr, 1) {
 		t.Fatal("completed stale capability fetch should stop its old retry loop")
 	}
 	scs := lb.subConns[key]
-	if scs.validation != protocolValidationPending || len(scs.capabilities) != 0 || len(scs.tasks) != 0 {
+	if scs.compatibility != discovery.CompatibilityPending || len(scs.capabilities) != 0 {
 		t.Fatalf("stale generation overwrote current validation state: %+v", scs)
 	}
 }

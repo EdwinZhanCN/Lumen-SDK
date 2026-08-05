@@ -33,12 +33,12 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected connect_timeout 10s, got %s", config.Discovery.ConnectTimeout)
 	}
 
-	if config.Discovery.RediscoveryBackoffMin != 10*time.Second {
-		t.Errorf("Expected rediscovery_backoff_min 10s, got %s", config.Discovery.RediscoveryBackoffMin)
+	if config.Discovery.FailureCooldownMin != 10*time.Second {
+		t.Errorf("Expected failure_cooldown_min 10s, got %s", config.Discovery.FailureCooldownMin)
 	}
 
-	if config.Discovery.RediscoveryBackoffMax != 2*time.Minute {
-		t.Errorf("Expected rediscovery_backoff_max 2m, got %s", config.Discovery.RediscoveryBackoffMax)
+	if config.Discovery.FailureCooldownMax != 2*time.Minute {
+		t.Errorf("Expected failure_cooldown_max 2m, got %s", config.Discovery.FailureCooldownMax)
 	}
 
 	if config.Broker.Port != 5866 {
@@ -130,8 +130,8 @@ func TestLoadFromEnv(t *testing.T) {
 	os.Setenv("LUMEN_DISCOVERY_DEPLOYMENT_ID", "lab")
 	os.Setenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT", "3s")
 	os.Setenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT", "4s")
-	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN", "5s")
-	os.Setenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX", "30s")
+	os.Setenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MIN", "5s")
+	os.Setenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MAX", "30s")
 	os.Setenv("LUMEN_BROKER_HOST", "127.0.0.1")
 	os.Setenv("LUMEN_BROKER_PORT", "9090")
 	os.Setenv("LUMEN_LOG_LEVEL", "debug")
@@ -143,8 +143,8 @@ func TestLoadFromEnv(t *testing.T) {
 		os.Unsetenv("LUMEN_DISCOVERY_DEPLOYMENT_ID")
 		os.Unsetenv("LUMEN_DISCOVERY_RESOLVE_TIMEOUT")
 		os.Unsetenv("LUMEN_DISCOVERY_CONNECT_TIMEOUT")
-		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MIN")
-		os.Unsetenv("LUMEN_DISCOVERY_REDISCOVERY_BACKOFF_MAX")
+		os.Unsetenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MIN")
+		os.Unsetenv("LUMEN_DISCOVERY_FAILURE_COOLDOWN_MAX")
 		os.Unsetenv("LUMEN_BROKER_HOST")
 		os.Unsetenv("LUMEN_BROKER_PORT")
 		os.Unsetenv("LUMEN_LOG_LEVEL")
@@ -173,12 +173,12 @@ func TestLoadFromEnv(t *testing.T) {
 		t.Errorf("Expected connect_timeout 4s, got %s", config.Discovery.ConnectTimeout)
 	}
 
-	if config.Discovery.RediscoveryBackoffMin != 5*time.Second {
-		t.Errorf("Expected rediscovery_backoff_min 5s, got %s", config.Discovery.RediscoveryBackoffMin)
+	if config.Discovery.FailureCooldownMin != 5*time.Second {
+		t.Errorf("Expected failure_cooldown_min 5s, got %s", config.Discovery.FailureCooldownMin)
 	}
 
-	if config.Discovery.RediscoveryBackoffMax != 30*time.Second {
-		t.Errorf("Expected rediscovery_backoff_max 30s, got %s", config.Discovery.RediscoveryBackoffMax)
+	if config.Discovery.FailureCooldownMax != 30*time.Second {
+		t.Errorf("Expected failure_cooldown_max 30s, got %s", config.Discovery.FailureCooldownMax)
 	}
 
 	if config.Broker.Host != "127.0.0.1" {

@@ -107,10 +107,6 @@ func (n ResolvedNode) Endpoint() string {
 	return endpoints[0]
 }
 
-func (n ResolvedNode) CapHash() string {
-	return n.Txt["cap_hash"]
-}
-
 func (n ResolvedNode) Version() string {
 	return n.Txt["v"]
 }
@@ -119,61 +115,16 @@ func (n ResolvedNode) Runtime() string {
 	return n.Txt["runtime"]
 }
 
-func (n ResolvedNode) HintTasks() []string {
-	return splitCSV(n.Txt["tasks"])
-}
-
-// NodeAvailability describes operational-session availability. It is more
-// precise than NodeStatus, which is kept for public compatibility.
+// NodeAvailability describes only transport/session availability. Protocol
+// compatibility is represented separately by CompatibilityState.
 type NodeAvailability string
 
 const (
-	NodeAvailabilityUnknown       NodeAvailability = "unknown"
-	NodeAvailabilityResolving     NodeAvailability = "resolving"
-	NodeAvailabilityConnecting    NodeAvailability = "connecting"
-	NodeAvailabilityReady         NodeAvailability = "ready"
-	NodeAvailabilityDegraded      NodeAvailability = "degraded"
-	NodeAvailabilityRediscovering NodeAvailability = "rediscovering"
-	NodeAvailabilityUnavailable   NodeAvailability = "unavailable"
-	// NodeAvailabilityIncompatible marks a node that speaks an unsupported
-	// data-plane protocol major (or one that cannot be parsed). The node stays
-	// visible and connected for reconnect detection but is never pickable.
-	NodeAvailabilityIncompatible NodeAvailability = "incompatible"
+	NodeAvailabilityDiscovered  NodeAvailability = "discovered"
+	NodeAvailabilityConnecting  NodeAvailability = "connecting"
+	NodeAvailabilityReady       NodeAvailability = "ready"
+	NodeAvailabilityUnavailable NodeAvailability = "unavailable"
 )
-
-func (a NodeAvailability) NodeStatus() NodeStatus {
-	switch a {
-	case NodeAvailabilityReady:
-		return NodeStatusActive
-	case NodeAvailabilityConnecting, NodeAvailabilityResolving:
-		return NodeStatusStarting
-	case NodeAvailabilityDegraded, NodeAvailabilityRediscovering, NodeAvailabilityUnavailable, NodeAvailabilityIncompatible:
-		return NodeStatusError
-	default:
-		return NodeStatusUnknown
-	}
-}
-
-func splitCSV(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	seen := make(map[string]struct{}, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if _, ok := seen[part]; ok {
-			continue
-		}
-		seen[part] = struct{}{}
-		out = append(out, part)
-	}
-	return out
-}
 
 func normalizeAddresses(addresses []string) []string {
 	seen := make(map[string]struct{}, len(addresses))

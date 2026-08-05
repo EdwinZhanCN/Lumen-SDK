@@ -1,37 +1,38 @@
 package discovery
 
 import (
-	"sync"
-	"sync/atomic"
 	"time"
 
 	pb "github.com/edwinzhancn/lumen-sdk/proto"
 )
 
-// NodeInfo represents a discovered ML inference node with its capabilities and status.
+// CompatibilityState is the in-band protocol verdict for a connected node.
+// Discovery never sets this state; the gRPC capability exchange is authoritative.
+type CompatibilityState string
+
+const (
+	CompatibilityPending      CompatibilityState = "pending"
+	CompatibilityCompatible   CompatibilityState = "compatible"
+	CompatibilityIncompatible CompatibilityState = "incompatible"
+)
+
+// NodeInfo is an immutable snapshot of one discovered node's operational
+// session. Availability and Compatibility are intentionally orthogonal: a
+// transport can be ready while the node is protocol-incompatible.
 type NodeInfo struct {
-	ID           string                 `json:"id"`
-	Address      string                 `json:"address"`
-	Status       NodeStatus             `json:"status"`
-	Availability NodeAvailability       `json:"availability,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	Capabilities []*pb.Capability       `json:"capabilities,omitempty"`
-	Version      string                 `json:"version"`
-	Runtime      string                 `json:"runtime"`
-	Models       []*ModelInfo           `json:"models,omitempty"`
-	LastSeen     time.Time              `json:"last_seen"`
-	Tasks        []*pb.IOTask           `json:"tasks,omitempty"`
+	ID            string                 `json:"id"`
+	Address       string                 `json:"address"`
+	Availability  NodeAvailability       `json:"availability"`
+	Compatibility CompatibilityState     `json:"compatibility"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	Capabilities  []*pb.Capability       `json:"capabilities,omitempty"`
+	Version       string                 `json:"version,omitempty"`
+	Runtime       string                 `json:"runtime,omitempty"`
+	Models        []*ModelInfo           `json:"models,omitempty"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 
-	// Compatible is false after in-band validation proves that the node does
-	// not speak a supported data-plane protocol major. Pending nodes report true
-	// for API compatibility but remain outside the task picker until validated.
-	Compatible bool `json:"compatible"`
-	// IncompatibleReason explains why the node was excluded from the task pool.
+	// IncompatibleReason explains why the node is excluded from routing.
 	IncompatibleReason string `json:"incompatible_reason,omitempty"`
-
-	connections    int64           `json:"-"`
-	supportedTasks map[string]bool `json:"-"`
-	mu             sync.RWMutex    `json:"-"`
 }
 
 type ModelInfo struct {
@@ -41,43 +42,31 @@ type ModelInfo struct {
 	Runtime string `json:"runtime"`
 }
 
-type NodeStatus string
-
-const (
-	NodeStatusUnknown  NodeStatus = "unknown"
-	NodeStatusStarting NodeStatus = "starting"
-	NodeStatusActive   NodeStatus = "active"
-	NodeStatusError    NodeStatus = "error"
-)
-
 func (n *NodeInfo) IsActive() bool {
-	return n.Status == NodeStatusActive
+	return n != nil && n.Availability == NodeAvailabilityReady && n.Compatibility == CompatibilityCompatible
 }
 
 func (n *NodeInfo) SupportsTask(task string) bool {
-	n.mu.RLock()
-	cache := n.supportedTasks
-	if cache != nil {
-		supported := cache[task]
-		n.mu.RUnlock()
-		return supported
+	if n == nil || task == "" {
+		return false
 	}
-	n.mu.RUnlock()
-
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.supportedTasks == nil {
-		n.rebuildSupportedTasksCacheLocked()
+	for _, capability := range n.Capabilities {
+		for _, ioTask := range capability.GetTasks() {
+			if ioTask.GetName() == task {
+				return true
+			}
+		}
 	}
-	return n.supportedTasks[task]
+	return false
 }
 
 func (n *NodeInfo) SupportsServiceTask(service, task string) bool {
+	if n == nil || task == "" {
+		return false
+	}
 	if service == "" {
 		return n.SupportsTask(task)
 	}
-	n.mu.RLock()
-	defer n.mu.RUnlock()
 	for _, capability := range n.Capabilities {
 		if capability.GetServiceName() != service {
 			continue
@@ -92,52 +81,22 @@ func (n *NodeInfo) SupportsServiceTask(service, task string) bool {
 }
 
 func (n *NodeInfo) MatchingServices(task string) []string {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	if n == nil || task == "" {
+		return nil
+	}
 	seen := make(map[string]bool)
 	var services []string
 	for _, capability := range n.Capabilities {
 		for _, ioTask := range capability.GetTasks() {
-			if ioTask.GetName() == task {
-				service := capability.GetServiceName()
-				if service != "" && !seen[service] {
-					seen[service] = true
-					services = append(services, service)
-				}
+			if ioTask.GetName() != task {
+				continue
+			}
+			service := capability.GetServiceName()
+			if service != "" && !seen[service] {
+				seen[service] = true
+				services = append(services, service)
 			}
 		}
 	}
 	return services
-}
-
-func (n *NodeInfo) rebuildSupportedTasksCacheLocked() {
-	n.supportedTasks = make(map[string]bool)
-
-	for _, ioTask := range n.Tasks {
-		n.supportedTasks[ioTask.Name] = true
-	}
-
-	for _, capability := range n.Capabilities {
-		for _, ioTask := range capability.Tasks {
-			n.supportedTasks[ioTask.Name] = true
-		}
-	}
-}
-
-func (n *NodeInfo) InvalidateTaskCache() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.supportedTasks = nil
-}
-
-func (n *NodeInfo) GetConnections() int64 {
-	return atomic.LoadInt64(&n.connections)
-}
-
-func (n *NodeInfo) IncrementConnections() {
-	atomic.AddInt64(&n.connections, 1)
-}
-
-func (n *NodeInfo) DecrementConnections() {
-	atomic.AddInt64(&n.connections, -1)
 }
