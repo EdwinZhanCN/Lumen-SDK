@@ -7,7 +7,7 @@ Lumen SDK 是 Lumilio/Lumen 体系中的 Go 数据平面客户端。它负责发
 - `pkg/client`：gRPC 客户端、连接池、协议验证、任务路由和分块传输。
 - `pkg/discovery`：mDNS、静态地址及可选 Broker 的地址发现；发现结果不携带兼容性结论。
 - `pkg/types` 与 `proto`：任务、Tensor 和 gRPC 数据平面契约。
-- `pkg/hostbroker` / `cmd/lumen-hostd`：实验性的发现桥，仅在应用无法直接使用局域网发现时从源码构建。
+- `pkg/hostbroker` / `cmd/lumen-hostd`：可选的发现兼容桥，仅用于应用无法直接使用局域网发现的场景。
 
 ## 运行边界
 
@@ -48,13 +48,22 @@ make proto-check   # local proto lint/generated-code check
 make proto-verify  # additionally compare with the pinned remote wire baseline
 ```
 
-## 实验性 Host Broker
+## 可选 Host Broker
 
-Host Broker 是源码可用的高级工具，不是默认安装路径，也不发布预编译二进制。它只转发节点标识、地址和描述性元数据，不代理推理 payload，也不转发任务或协议权威信息。
+Host Broker 不是默认或推荐的发现路径；应用应优先直接使用 mDNS 或静态地址。对于 Docker Desktop 等无法直接执行局域网发现的环境，可以将它作为兼容桥。它只转发节点标识、地址和描述性元数据，不代理推理 payload，也不转发任务或协议权威信息。
+
+Release tag 会继续发布 Linux、macOS 和 Windows 的预编译 `lumen-hostd` 产物；也可以从源码构建：
 
 ```sh
 make hostd-build
 make hostd-run
 ```
 
-SDK tag 用作源码版本和协议基线；它不承诺 `lumen-hostd` 的跨平台二进制发行。
+维护者可以在发 tag 前本地验证完整发布产物：
+
+```sh
+make release VERSION=vX.Y.Z
+make tag VERSION=vX.Y.Z # push tag 并触发 GitHub Release
+```
+
+SDK tag 同时用作源码版本、协议基线和对应 `lumen-hostd` 二进制发行版本。

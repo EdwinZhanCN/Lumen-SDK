@@ -3,12 +3,13 @@
 PROTO_BASELINE ?= v1.3.2
 PROTO_DIR := proto
 HOSTD_BINARY := dist/lumen-hostd
+HOSTD_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 HOSTD_LDFLAGS := -ldflags="-X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)'"
 
-.PHONY: help deps fmt-check fmt vet lint test test-coverage build clean ci ci-fast proto-check proto-verify hostd-build hostd-run hostd-install
+.PHONY: help deps fmt-check fmt vet lint test test-coverage build clean ci ci-fast proto-check proto-verify hostd-build hostd-build-all hostd-archive hostd-run hostd-install release tag
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -61,17 +62,56 @@ proto-check: ## Lint protos and verify committed generated Go code
 proto-verify: proto-check ## Also verify wire compatibility against the pinned remote baseline
 	cd $(PROTO_DIR) && buf breaking --against "https://github.com/EdwinZhanCN/Lumen-SDK.git#ref=$(PROTO_BASELINE),subdir=proto"
 
-# Host Broker is an experimental discovery bridge. It is source-built only and
-# intentionally excluded from the default release/support surface.
-hostd-build: ## Build experimental lumen-hostd for the current platform
+# Host Broker is an optional discovery bridge. Direct mDNS or static discovery
+# remains the default integration path, while release tags still ship hostd.
+hostd-build: ## Build optional lumen-hostd for the current platform
 	@mkdir -p dist
 	CGO_ENABLED=0 go build $(HOSTD_LDFLAGS) -o $(HOSTD_BINARY) ./cmd/lumen-hostd
 
-hostd-run: ## Run experimental lumen-hostd in the foreground
+hostd-build-all: ## Cross-build lumen-hostd for all release platforms
+	@set -eu; \
+	for platform in $(HOSTD_PLATFORMS); do \
+		os=$${platform%/*}; \
+		arch=$${platform#*/}; \
+		output=dist/$$os-$$arch/lumen-hostd; \
+		if [ "$$os" = windows ]; then output=$$output.exe; fi; \
+		echo "Building lumen-hostd for $$os/$$arch"; \
+		mkdir -p dist/$$os-$$arch; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(HOSTD_LDFLAGS) -o $$output ./cmd/lumen-hostd; \
+	done
+
+hostd-archive: ## Build and archive versioned lumen-hostd release artifacts
+	@if ! printf '%s' "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "Usage: make hostd-archive VERSION=vX.Y.Z"; \
+		exit 1; \
+	fi
+	@$(MAKE) hostd-build-all VERSION=$(VERSION)
+	@set -eu; \
+	for platform in $(HOSTD_PLATFORMS); do \
+		os=$${platform%/*}; \
+		arch=$${platform#*/}; \
+		if [ "$$os" = windows ]; then \
+			(cd dist/$$os-$$arch && zip -q ../lumen-hostd-$(VERSION)-$$os-$$arch.zip lumen-hostd.exe); \
+		else \
+			tar -czf dist/lumen-hostd-$(VERSION)-$$os-$$arch.tar.gz -C dist/$$os-$$arch lumen-hostd; \
+		fi; \
+	done
+
+hostd-run: ## Run optional lumen-hostd in the foreground
 	go run $(HOSTD_LDFLAGS) ./cmd/lumen-hostd serve
 
-hostd-install: ## Install experimental lumen-hostd with go install
+hostd-install: ## Install optional lumen-hostd with go install
 	go install $(HOSTD_LDFLAGS) ./cmd/lumen-hostd
+
+release: clean ci hostd-archive ## Validate and create local release artifacts
+
+tag: release ## Create and push a release tag (triggers GitHub Release)
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "Refusing to tag a dirty worktree"; \
+		exit 1; \
+	fi
+	git tag -a $(VERSION) -m "Release $(VERSION)"
+	git push origin refs/tags/$(VERSION)
 
 clean: ## Remove generated local artifacts
 	rm -rf dist coverage.out coverage.html
