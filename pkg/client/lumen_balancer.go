@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +58,8 @@ type nodeRegistry struct {
 type registeredNode struct {
 	identity       discovery.NodeIdentity
 	addr           string
+	sources        []string
+	lastObserved   time.Time
 	state          connectivity.State
 	capabilities   []*pb.Capability
 	metadata       map[string]string
@@ -74,6 +77,8 @@ func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
 		out = append(out, &discovery.NodeInfo{
 			ID:                 node.identity.Key(),
 			Address:            node.addr,
+			Sources:            append([]string(nil), node.sources...),
+			LastObserved:       node.lastObserved,
 			Availability:       availabilityFromRegistered(node),
 			Compatibility:      node.compatibility,
 			Metadata:           buildCapabilityMetadata(node.capabilities),
@@ -85,6 +90,7 @@ func (r *nodeRegistry) nodeInfos() []*discovery.NodeInfo {
 			IncompatibleReason: node.incompatReason,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -113,12 +119,15 @@ type lumenBalancerBuilder struct {
 func (b *lumenBalancerBuilder) Name() string { return b.name }
 
 func (b *lumenBalancerBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOptions) balancer.Balancer {
+	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	return &lumenBalancer{
-		cc:       cc,
-		subConns: make(map[string]*subConnState),
-		registry: b.registry,
-		options:  b.opts,
-		logger:   b.logger,
+		cc:           cc,
+		subConns:     make(map[string]*subConnState),
+		registry:     b.registry,
+		options:      b.opts,
+		logger:       b.logger,
+		lifecycleCtx: lifecycleCtx,
+		cancel:       cancel,
 	}
 }
 
@@ -136,6 +145,8 @@ type subConnState struct {
 	cooldown           time.Duration
 	cooldownTimer      *time.Timer
 	metadata           map[string]string
+	sources            []string
+	lastObserved       time.Time
 	compatibility      discovery.CompatibilityState
 	compatibilityGen   uint64
 	capabilityFetchGen uint64
@@ -150,6 +161,8 @@ type lumenBalancer struct {
 	registry       *nodeRegistry
 	options        balancerOptions
 	logger         *zap.Logger
+	lifecycleCtx   context.Context
+	cancel         context.CancelFunc
 	nextSubConnGen uint64
 	closed         bool
 }
@@ -182,6 +195,8 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 				}
 			}
 			existing.metadata = copyStringMap(attr.Metadata)
+			existing.sources = append([]string(nil), attr.Sources...)
+			existing.lastObserved = attr.LastObserved
 			existing.updatedAt = time.Now()
 			continue
 		}
@@ -194,6 +209,8 @@ func (lb *lumenBalancer) UpdateClientConnState(state balancer.ClientConnState) e
 			addr:          addr,
 			state:         connectivity.Idle,
 			metadata:      copyStringMap(attr.Metadata),
+			sources:       append([]string(nil), attr.Sources...),
+			lastObserved:  attr.LastObserved,
 			compatibility: discovery.CompatibilityPending,
 			updatedAt:     time.Now(),
 		}
@@ -262,6 +279,13 @@ func (lb *lumenBalancer) handleSubConnStateChange(key string, generation uint64,
 	prevState := scs.state
 	scs.state = state.ConnectivityState
 	scs.updatedAt = time.Now()
+	if prevState != state.ConnectivityState {
+		lb.log().Info("transport state changed",
+			zap.String("id", key),
+			zap.String("from", prevState.String()),
+			zap.String("to", state.ConnectivityState.String()),
+		)
+	}
 
 	if state.ConnectivityState == connectivity.Ready && prevState != connectivity.Ready {
 		// Every transport connection gets a fresh in-band verdict. Resolver
@@ -341,7 +365,13 @@ func (lb *lumenBalancer) UpdateSubConnState(_ balancer.SubConn, _ balancer.SubCo
 func (lb *lumenBalancer) Close() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
+	if lb.closed {
+		return
+	}
 	lb.closed = true
+	if lb.cancel != nil {
+		lb.cancel()
+	}
 	for _, scs := range lb.subConns {
 		if scs.cooldownTimer != nil {
 			scs.cooldownTimer.Stop()
@@ -433,6 +463,8 @@ func (lb *lumenBalancer) syncRegistryLocked() {
 		lb.registry.nodes[key] = &registeredNode{
 			identity:       scs.identity,
 			addr:           scs.addr.Addr,
+			sources:        append([]string(nil), scs.sources...),
+			lastObserved:   scs.lastObserved,
 			state:          scs.state,
 			capabilities:   discovery.CloneCapabilities(scs.capabilities),
 			metadata:       copyStringMap(scs.metadata),
@@ -479,7 +511,7 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string, generation
 
 		lb.mu.Lock()
 		scs, ok := lb.subConns[key]
-		stale := !ok || scs.state != connectivity.Ready || scs.addr.Addr != addr ||
+		stale := lb.closed || !ok || scs.state != connectivity.Ready || scs.addr.Addr != addr ||
 			scs.compatibilityGen != generation
 		lb.mu.Unlock()
 		if stale {
@@ -492,7 +524,15 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string, generation
 			)
 		}
 
-		time.Sleep(backoff)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-lb.baseContext().Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
+		}
 		backoff *= 2
 		if backoff > capFetchBackoffMax {
 			backoff = capFetchBackoffMax
@@ -503,7 +543,7 @@ func (lb *lumenBalancer) fetchCapabilitiesWithRetry(key, addr string, generation
 // fetchCapabilitiesForNode performs one capability fetch. It reports success
 // only when at least one capability was received; the caller owns retries.
 func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string, generation uint64) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), lb.options.connectTimeout)
+	ctx, cancel := context.WithTimeout(lb.baseContext(), lb.options.connectTimeout)
 	defer cancel()
 
 	conn, err := grpc.NewClient(addr,
@@ -520,38 +560,14 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string, generation u
 	defer conn.Close()
 
 	cli := pb.NewInferenceClient(conn)
-	stream, err := cli.StreamCapabilities(ctx, &emptypb.Empty{})
-	if err != nil {
-		// A node that does not implement the capability RPC speaks a different
-		// protocol; it cannot be parsed or scheduled. Mark it incompatible once
-		// instead of retrying forever.
-		if status.Code(err) == codes.Unimplemented {
-			lb.markCapabilityRPCUnimplemented(key, addr, generation)
-			return true
-		}
-		lb.log().Warn("cap fetch: stream failed", zap.String("id", key), zap.Error(err))
-		return false
+	caps, rpcUnsupported, err := fetchCapabilitySet(ctx, cli)
+	if rpcUnsupported {
+		lb.markCapabilityRPCUnimplemented(key, addr, generation)
+		return true
 	}
-
-	var caps []*pb.Capability
-	for {
-		cap, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			// Streaming status errors are commonly delivered by the first Recv
-			// rather than by StreamCapabilities itself.
-			if status.Code(err) == codes.Unimplemented {
-				lb.markCapabilityRPCUnimplemented(key, addr, generation)
-				return true
-			}
-			lb.log().Debug("cap fetch: recv failed", zap.String("id", key), zap.Error(err))
-			return false
-		}
-		if cap != nil {
-			caps = append(caps, cap)
-		}
+	if err != nil {
+		lb.log().Debug("cap fetch failed", zap.String("id", key), zap.Error(err))
+		return false
 	}
 	if len(caps) == 0 {
 		return false
@@ -575,10 +591,62 @@ func (lb *lumenBalancer) fetchCapabilitiesForNode(key, addr string, generation u
 	if applied {
 		lb.log().Info("capabilities fetched",
 			zap.String("id", key),
+			zap.String("compatibility", string(compatibility)),
 			zap.Strings("tasks", taskNamesFromCapabilities(caps)),
 		)
 	}
 	return true
+}
+
+// fetchCapabilitySet prefers the authoritative streaming exchange. Older
+// compatible servers that only expose unary GetCapabilities retain their
+// fallback; only a node implementing neither RPC is terminally incompatible.
+func fetchCapabilitySet(ctx context.Context, cli pb.InferenceClient) ([]*pb.Capability, bool, error) {
+	stream, err := cli.StreamCapabilities(ctx, &emptypb.Empty{})
+	if err != nil {
+		if status.Code(err) != codes.Unimplemented {
+			return nil, false, err
+		}
+		return fetchUnaryCapability(ctx, cli)
+	}
+
+	var capabilities []*pb.Capability
+	for {
+		capability, err := stream.Recv()
+		if err == io.EOF {
+			return capabilities, false, nil
+		}
+		if err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				return fetchUnaryCapability(ctx, cli)
+			}
+			return nil, false, err
+		}
+		if capability != nil {
+			capabilities = append(capabilities, capability)
+		}
+	}
+}
+
+func fetchUnaryCapability(ctx context.Context, cli pb.InferenceClient) ([]*pb.Capability, bool, error) {
+	capability, err := cli.GetCapabilities(ctx, &emptypb.Empty{})
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			return nil, true, err
+		}
+		return nil, false, err
+	}
+	if capability == nil {
+		return nil, false, nil
+	}
+	return []*pb.Capability{capability}, false, nil
+}
+
+func (lb *lumenBalancer) baseContext() context.Context {
+	if lb.lifecycleCtx != nil {
+		return lb.lifecycleCtx
+	}
+	return context.Background()
 }
 
 func (lb *lumenBalancer) markCapabilityRPCUnimplemented(key, addr string, generation uint64) {
@@ -611,7 +679,7 @@ func (lb *lumenBalancer) log() *zap.Logger {
 func availabilityFromRegistered(node *registeredNode) discovery.NodeAvailability {
 	switch node.state {
 	case connectivity.Idle:
-		return discovery.NodeAvailabilityDiscovered
+		return discovery.NodeAvailabilityConnecting
 	case connectivity.Connecting:
 		return discovery.NodeAvailabilityConnecting
 	case connectivity.Ready:

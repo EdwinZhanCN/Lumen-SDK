@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/edwinzhancn/lumen-sdk/pkg/discovery"
 	"go.uber.org/zap"
@@ -15,8 +17,10 @@ const lumenScheme = "lumen"
 type nodeAttrKey struct{}
 
 type nodeAttr struct {
-	Identity discovery.NodeIdentity
-	Metadata map[string]string
+	Identity     discovery.NodeIdentity
+	Metadata     map[string]string
+	Sources      []string
+	LastObserved time.Time
 }
 
 func setNodeAttr(addr resolver.Address, attr nodeAttr) resolver.Address {
@@ -34,16 +38,22 @@ func getNodeAttr(addr resolver.Address) (nodeAttr, bool) {
 
 type lumenResolverBuilder struct {
 	nodeResolver discovery.NodeResolver
+	parentCtx    context.Context
 	logger       *zap.Logger
 }
 
 func (b *lumenResolverBuilder) Build(_ resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (resolver.Resolver, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	parentCtx := b.parentCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentCtx)
 	r := &lumenResolver{
-		cc:     cc,
-		cancel: cancel,
-		nodes:  make(map[string]discovery.ResolvedNode),
-		logger: b.logger,
+		cc:           cc,
+		cancel:       cancel,
+		nodeResolver: b.nodeResolver,
+		nodes:        make(map[string]discovery.ResolvedNode),
+		logger:       b.logger,
 	}
 	go r.watch(ctx, b.nodeResolver)
 	return r, nil
@@ -52,11 +62,12 @@ func (b *lumenResolverBuilder) Build(_ resolver.Target, cc resolver.ClientConn, 
 func (b *lumenResolverBuilder) Scheme() string { return lumenScheme }
 
 type lumenResolver struct {
-	cc     resolver.ClientConn
-	cancel context.CancelFunc
-	mu     sync.Mutex
-	nodes  map[string]discovery.ResolvedNode
-	logger *zap.Logger
+	cc           resolver.ClientConn
+	cancel       context.CancelFunc
+	nodeResolver discovery.NodeResolver
+	mu           sync.Mutex
+	nodes        map[string]discovery.ResolvedNode
+	logger       *zap.Logger
 }
 
 func (r *lumenResolver) watch(ctx context.Context, nr discovery.NodeResolver) {
@@ -87,18 +98,30 @@ func (r *lumenResolver) handleEvent(event discovery.NodeEvent) {
 		}
 	case discovery.NodeResolveFailed:
 		// Resolution failures do not make liveness or compatibility claims.
+		return
 	}
 	r.pushStateLocked()
 }
 
 func (r *lumenResolver) pushStateLocked() {
-	var addrs []resolver.Address
-	for _, node := range r.nodes {
+	keys := make([]string, 0, len(r.nodes))
+	for key := range r.nodes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	addrs := make([]resolver.Address, 0, len(keys))
+	for _, key := range keys {
+		node := r.nodes[key]
 		endpoints := node.CandidateEndpoints()
 		if len(endpoints) == 0 {
 			continue
 		}
-		attr := nodeAttr{Identity: node.Identity, Metadata: discoveryMetadata(node)}
+		attr := nodeAttr{
+			Identity:     node.Identity,
+			Metadata:     discoveryMetadata(node),
+			Sources:      append([]string(nil), node.Sources...),
+			LastObserved: node.LastObserved,
+		}
 		addrs = append(addrs, setNodeAttr(resolver.Address{Addr: endpoints[0]}, attr))
 	}
 	r.cc.UpdateState(resolver.State{Addresses: addrs})
@@ -115,6 +138,8 @@ func discoveryMetadata(node discovery.ResolvedNode) map[string]string {
 	return metadata
 }
 
-func (r *lumenResolver) ResolveNow(_ resolver.ResolveNowOptions) {}
+func (r *lumenResolver) ResolveNow(_ resolver.ResolveNowOptions) {
+	discovery.RequestResolveNow(r.nodeResolver)
+}
 
 func (r *lumenResolver) Close() { r.cancel() }

@@ -22,6 +22,8 @@ const (
 type NodeInfo struct {
 	ID            string                 `json:"id"`
 	Address       string                 `json:"address"`
+	Sources       []string               `json:"sources,omitempty"`
+	LastObserved  time.Time              `json:"last_observed_at,omitempty"`
 	Availability  NodeAvailability       `json:"availability"`
 	Compatibility CompatibilityState     `json:"compatibility"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`

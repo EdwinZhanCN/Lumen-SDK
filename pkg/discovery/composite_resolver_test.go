@@ -3,146 +3,207 @@ package discovery
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
 
-// fakeResolver is a minimal, directly-controllable NodeResolver test double,
-// used where StaticResolver's real address-parsing behavior isn't the point.
-type fakeResolver struct {
-	ch  chan NodeEvent
-	err error
+type namedFakeResolver struct {
+	name string
+
+	mu      sync.Mutex
+	watches int
+	streams []chan NodeEvent
+	errors  []error
+	called  chan int
 }
 
-func (f *fakeResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
-	if f.err != nil {
-		return nil, f.err
+func (f *namedFakeResolver) SourceName() string { return f.name }
+
+func (f *namedFakeResolver) Watch(context.Context) (<-chan NodeEvent, error) {
+	f.mu.Lock()
+	index := f.watches
+	f.watches++
+	var stream chan NodeEvent
+	if index < len(f.streams) {
+		stream = f.streams[index]
 	}
-	return f.ch, nil
+	var err error
+	if index < len(f.errors) {
+		err = f.errors[index]
+	}
+	f.mu.Unlock()
+	if f.called != nil {
+		select {
+		case f.called <- index + 1:
+		default:
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if stream == nil {
+		stream = make(chan NodeEvent)
+	}
+	return stream, nil
 }
-
-// TestCompositeResolverMergesBackends and TestCompositeResolverSingleBackendPassthrough
-// were relocated from static_resolver_test.go: they exercise CompositeResolver
-// behavior using StaticResolver only as a convenient fake backend.
 
 func TestCompositeResolverMergesBackends(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	a := NewStaticResolver([]string{"10.0.0.1:50051"}, "", nil)
 	b := NewStaticResolver([]string{"10.0.0.2:50051"}, "", nil)
-	merged, err := NewCompositeResolver(a, b, nil).Watch(ctx)
+	resolver := NewCompositeResolver(a, b)
+	merged, err := resolver.Watch(ctx)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
 
 	events := collectEvents(t, merged, 2)
 	seen := map[string]bool{}
-	for _, ev := range events {
-		seen[ev.Resolved.Endpoint()] = true
+	for _, event := range events {
+		seen[event.Resolved.Endpoint()] = true
 	}
 	if !seen["10.0.0.1:50051"] || !seen["10.0.0.2:50051"] {
 		t.Fatalf("merged events missing endpoints: %v", seen)
 	}
-
-	cancel()
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case _, ok := <-merged:
-			if !ok {
-				return // closed once all backends stopped
-			}
-		case <-deadline:
-			t.Fatal("merged channel did not close after ctx cancellation")
-		}
-	}
-}
-
-func TestCompositeResolverSingleBackendPassthrough(t *testing.T) {
-	r := NewStaticResolver([]string{"10.0.0.1:50051"}, "", nil)
-	if got := NewCompositeResolver(nil, r); got != NodeResolver(r) {
-		t.Fatalf("single backend should be returned as-is, got %T", got)
-	}
-}
-
-// TestCompositeResolverPropagatesBackendWatchError characterizes the current
-// fail-fast fan-out: if any backend's Watch call fails to start, the whole
-// composite fails to start rather than degrading to the remaining backends.
-func TestCompositeResolverPropagatesBackendWatchError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	good := NewStaticResolver([]string{"10.0.0.1:50051"}, "", nil)
-	bad := &fakeResolver{err: errors.New("boom")}
-
-	if _, err := NewCompositeResolver(good, bad).Watch(ctx); err == nil {
-		t.Fatal("expected an error when one backend fails to start, got nil")
-	}
-}
-
-// TestCompositeResolverStaysOpenUntilAllBackendsClose guards against a
-// refactor accidentally closing the merged channel as soon as the first
-// backend finishes, which would silently drop events from slower backends
-// (e.g. mDNS) still in flight.
-func TestCompositeResolverStaysOpenUntilAllBackendsClose(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	fast := &fakeResolver{ch: make(chan NodeEvent)}
-	close(fast.ch) // this backend has nothing to say and closes immediately
-
-	slow := NewStaticResolver([]string{"10.0.0.9:50051"}, "", nil) // open until ctx cancel
-
-	merged, err := NewCompositeResolver(fast, slow).Watch(ctx)
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-
-	ev := awaitEvent(t, merged, 2*time.Second)
-	if endpoint := ev.Resolved.Endpoint(); endpoint != "10.0.0.9:50051" {
-		t.Fatalf("endpoint = %q, want 10.0.0.9:50051", endpoint)
-	}
-
-	select {
-	case _, ok := <-merged:
-		if ok {
-			t.Fatal("unexpected extra event")
-		}
-		t.Fatal("merged channel closed before all backends stopped")
-	case <-time.After(100 * time.Millisecond):
+	statuses := Statuses(resolver)
+	if len(statuses) != 2 || statuses[0].State != BackendHealthy || statuses[1].State != BackendHealthy {
+		t.Fatalf("unexpected source statuses: %+v", statuses)
 	}
 
 	cancel()
-	select {
-	case _, ok := <-merged:
-		if ok {
-			t.Fatal("expected close, got event")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("merged channel did not close after ctx cancellation")
-	}
+	awaitMDNSClose(t, merged)
 }
 
-// TestCompositeResolverDoesNotDeduplicateAcrossSources documents that
-// deduplication across discovery sources (e.g. the same node visible via
-// mDNS and a future Broker resolver) is explicitly not CompositeResolver's
-// job; the pool/registry layer handles merging.
-func TestCompositeResolverDoesNotDeduplicateAcrossSources(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	a := NewStaticResolver([]string{"10.0.0.5:50051"}, "dup", nil)
-	b := NewStaticResolver([]string{"10.0.0.5:50051"}, "dup", nil)
-
-	merged, err := NewCompositeResolver(a, b).Watch(ctx)
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
+func TestCompositeResolverRestartsOnlyClosedChildAndPreservesOtherSources(t *testing.T) {
+	first := make(chan NodeEvent, 1)
+	second := make(chan NodeEvent, 1)
+	flaky := &namedFakeResolver{
+		name:    "flaky",
+		streams: []chan NodeEvent{first, second},
+		called:  make(chan int, 4),
 	}
+	stable := NewStaticResolver([]string{"10.0.0.9:50051"}, "stable", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resolver := NewCompositeResolver(flaky, stable)
+	merged, _ := resolver.Watch(ctx)
+	awaitWatchCall(t, flaky.called, 1)
+	first <- discoveredEvent("local", "flaky-node", "10.0.0.8", 50051)
 
 	events := collectEvents(t, merged, 2)
-	if events[0].Resolved.Identity.Key() != events[1].Resolved.Identity.Key() {
-		t.Fatalf("expected both sources to report the same identity, got %q and %q",
-			events[0].Resolved.Identity.Key(), events[1].Resolved.Identity.Key())
+	seen := map[string]bool{}
+	for _, event := range events {
+		seen[event.Resolved.Key()] = true
+	}
+	if !seen["stable-static-10.0.0.9:50051"] || !seen["local-flaky-node"] {
+		t.Fatalf("initial merged state missing node: %v", seen)
+	}
+
+	close(first)
+	awaitWatchCall(t, flaky.called, 2)
+	second <- discoveredEvent("local", "late-node", "10.0.0.7", 50051)
+	late := awaitEvent(t, merged, time.Second)
+	if late.Type != NodeDiscovered || late.Resolved.Key() != "local-late-node" {
+		t.Fatalf("late event = %+v", late)
+	}
+	select {
+	case event := <-merged:
+		if event.Type == NodeExpired && event.Resolved.Key() == "stable-static-10.0.0.9:50051" {
+			t.Fatalf("stable source was revoked by flaky source restart: %+v", event)
+		}
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	cancel()
+	close(second)
+	awaitMDNSClose(t, merged)
+}
+
+func TestCompositeResolverRetriesWatchStartFailure(t *testing.T) {
+	stream := make(chan NodeEvent, 1)
+	flaky := &namedFakeResolver{
+		name:    "flaky",
+		streams: []chan NodeEvent{nil, stream},
+		errors:  []error{errors.New("boom"), nil},
+		called:  make(chan int, 4),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resolver := NewCompositeResolver(flaky)
+	merged, err := resolver.Watch(ctx)
+	if err != nil {
+		t.Fatalf("composite must start in degraded mode: %v", err)
+	}
+	awaitWatchCall(t, flaky.called, 1)
+	awaitWatchCall(t, flaky.called, 2)
+	stream <- discoveredEvent("local", "recovered", "10.0.0.6", 50051)
+	event := awaitEvent(t, merged, time.Second)
+	if event.Resolved.Key() != "local-recovered" {
+		t.Fatalf("recovered event = %+v", event)
+	}
+	cancel()
+	close(stream)
+	awaitMDNSClose(t, merged)
+}
+
+func TestCompositeResolverReconcilesIdentityOwnershipAcrossSources(t *testing.T) {
+	aStream := make(chan NodeEvent, 4)
+	bStream := make(chan NodeEvent, 4)
+	a := &namedFakeResolver{name: "mdns", streams: []chan NodeEvent{aStream}}
+	b := &namedFakeResolver{name: "broker", streams: []chan NodeEvent{bStream}}
+	ctx, cancel := context.WithCancel(context.Background())
+	merged, _ := NewCompositeResolver(a, b).Watch(ctx)
+
+	aEvent := discoveredEvent("lab", "node-1", "10.0.0.1", 5866)
+	bEvent := discoveredEvent("lab", "node-1", "10.0.0.2", 5866)
+	aStream <- aEvent
+	first := awaitEvent(t, merged, time.Second)
+	if first.Resolved.Source != "mdns" {
+		t.Fatalf("primary source = %q, want mdns", first.Resolved.Source)
+	}
+	bStream <- bEvent
+	ownedByBoth := awaitEvent(t, merged, time.Second)
+	if len(ownedByBoth.Resolved.Sources) != 2 || ownedByBoth.Resolved.Endpoint() != "10.0.0.1:5866" {
+		t.Fatalf("ownership merge = %+v", ownedByBoth.Resolved)
+	}
+
+	aStream <- NodeEvent{Type: NodeExpired, Resolved: aEvent.Resolved}
+	failover := awaitEvent(t, merged, time.Second)
+	if failover.Type != NodeDiscovered || failover.Resolved.Source != "broker" || failover.Resolved.Endpoint() != "10.0.0.2:5866" {
+		t.Fatalf("source failover = %+v", failover)
+	}
+	bStream <- NodeEvent{Type: NodeExpired, Resolved: bEvent.Resolved}
+	expired := awaitEvent(t, merged, time.Second)
+	if expired.Type != NodeExpired {
+		t.Fatalf("final event = %+v, want expired", expired)
+	}
+
+	cancel()
+	close(aStream)
+	close(bStream)
+	awaitMDNSClose(t, merged)
+}
+
+func discoveredEvent(deployment, node, address string, port int) NodeEvent {
+	return NodeEvent{
+		Type: NodeDiscovered,
+		Resolved: ResolvedNode{
+			Identity:     NewNodeIdentity(deployment, node),
+			Addresses:    []string{address},
+			Port:         port,
+			LastObserved: time.Now().UTC(),
+		},
+	}
+}
+
+func awaitWatchCall(t *testing.T, called <-chan int, want int) {
+	t.Helper()
+	select {
+	case got := <-called:
+		if got != want {
+			t.Fatalf("watch call = %d, want %d", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for watch call %d", want)
 	}
 }

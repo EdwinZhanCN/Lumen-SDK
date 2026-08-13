@@ -94,8 +94,8 @@ type LumenClient struct {
 //
 // Discovery backends are additive: every configured backend (mDNS when
 // MDNSEnabled, Broker push when BrokerURL is set, StaticNodes when non-empty) runs concurrently and their node events are
-// merged. A node reachable through more than one backend appears once per
-// backend identity; the pool tolerates the redundant connection.
+// merged. Equivalent identities retain source ownership while sharing one
+// downstream transport; expiring one source cannot revoke another's node.
 func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error) {
 	if cfg == nil {
 		cfg = config.DefaultConfig()
@@ -125,7 +125,7 @@ func NewLumenClient(cfg *config.Config, logger *zap.Logger) (*LumenClient, error
 	if len(resolvers) == 0 {
 		return nil, fmt.Errorf("no discovery backend configured: enable mDNS, set broker_url, or list static_nodes")
 	}
-	resolver := discovery.NewCompositeResolver(resolvers...)
+	resolver := discovery.NewCompositeResolverWithLogger(logger, resolvers...)
 
 	return &LumenClient{
 		pool:     pool,
@@ -155,7 +155,7 @@ func (c *LumenClient) Start(ctx context.Context) error {
 		}
 	})
 
-	if err := c.pool.Connect(c.resolver); err != nil {
+	if err := c.pool.ConnectContext(ctx, c.resolver); err != nil {
 		return fmt.Errorf("pool connect: %w", err)
 	}
 

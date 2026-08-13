@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
@@ -52,6 +53,7 @@ type Pool struct {
 	conn     *grpc.ClientConn
 	cli      pb.InferenceClient
 	registry *nodeRegistry
+	cancel   context.CancelFunc
 	watchers []func([]*discovery.NodeInfo)
 
 	logger  *zap.Logger
@@ -76,6 +78,16 @@ func NewPoolWithOptions(logger *zap.Logger, options PoolOptions) *Pool {
 
 // Connect creates the gRPC ClientConn using the given resolver backend.
 func (p *Pool) Connect(resolver discovery.NodeResolver) error {
+	return p.ConnectContext(context.Background(), resolver)
+}
+
+// ConnectContext creates the gRPC connection and binds resolver supervision to
+// ctx in addition to the Pool's Close lifecycle.
+func (p *Pool) ConnectContext(ctx context.Context, resolver discovery.NodeResolver) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(ctx)
 	registry := &nodeRegistry{
 		nodes: make(map[string]*registeredNode),
 		onChanged: func() {
@@ -92,6 +104,7 @@ func (p *Pool) Connect(resolver discovery.NodeResolver) error {
 
 	rb := &lumenResolverBuilder{
 		nodeResolver: resolver,
+		parentCtx:    lifecycleCtx,
 		logger:       p.logger,
 	}
 
@@ -108,6 +121,7 @@ func (p *Pool) Connect(resolver discovery.NodeResolver) error {
 		}),
 	)
 	if err != nil {
+		lifecycleCancel()
 		return fmt.Errorf("create gRPC client: %w", err)
 	}
 
@@ -115,11 +129,18 @@ func (p *Pool) Connect(resolver discovery.NodeResolver) error {
 	p.conn = conn
 	p.cli = pb.NewInferenceClient(conn)
 	p.registry = registry
+	p.cancel = lifecycleCancel
 	p.mu.Unlock()
 
 	// grpc.NewClient is lazy — force eager resolver/balancer startup so
 	// node discovery begins immediately rather than on the first RPC.
 	conn.Connect()
+	if lifecycleCtx.Done() != nil {
+		go func() {
+			<-lifecycleCtx.Done()
+			_ = conn.Close()
+		}()
+	}
 
 	return nil
 }
@@ -196,6 +217,10 @@ func (p *Pool) Close() error {
 	defer p.mu.Unlock()
 
 	if p.conn != nil {
+		if p.cancel != nil {
+			p.cancel()
+			p.cancel = nil
+		}
 		if err := p.conn.Close(); err != nil {
 			p.logger.Error("failed to close connection", zap.Error(err))
 		}

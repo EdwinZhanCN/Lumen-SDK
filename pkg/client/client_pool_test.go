@@ -295,7 +295,7 @@ func TestAvailabilityFromRegistered(t *testing.T) {
 		state  connectivity.State
 		expect discovery.NodeAvailability
 	}{
-		{"idle", connectivity.Idle, discovery.NodeAvailabilityDiscovered},
+		{"idle", connectivity.Idle, discovery.NodeAvailabilityConnecting},
 		{"connecting", connectivity.Connecting, discovery.NodeAvailabilityConnecting},
 		{"ready", connectivity.Ready, discovery.NodeAvailabilityReady},
 		{"transient failure", connectivity.TransientFailure, discovery.NodeAvailabilityUnavailable},
@@ -859,6 +859,52 @@ func TestPoolMarksUnimplementedCapabilityRPCIncompatible(t *testing.T) {
 	if reason := pool.NodeInfos()[0].IncompatibleReason; !strings.Contains(reason, "capability RPC not implemented") {
 		t.Fatalf("unexpected incompatible reason: %q", reason)
 	}
+}
+
+type unaryCapabilityServer struct {
+	pb.UnimplementedInferenceServer
+}
+
+func (s *unaryCapabilityServer) GetCapabilities(context.Context, *emptypb.Empty) (*pb.Capability, error) {
+	return &pb.Capability{
+		ServiceName:     "legacy",
+		ProtocolVersion: "1.0",
+		Tasks:           []*pb.IOTask{{Name: "ocr"}},
+	}, nil
+}
+
+func TestPoolFallsBackToUnaryCapabilitiesForOlderCompatibleServer(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	pb.RegisterInferenceServer(server, &unaryCapabilityServer{})
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = lis.Close()
+	})
+
+	host, port, _ := splitEndpoint(lis.Addr().String())
+	resolver := &fakeNodeResolver{events: []discovery.NodeEvent{{
+		Type: discovery.NodeDiscovered,
+		Resolved: discovery.ResolvedNode{
+			Identity:  discovery.NewNodeIdentity("local", "node-unary-capabilities"),
+			Addresses: []string{host},
+			Port:      port,
+		},
+	}}}
+	pool := NewPoolWithOptions(zap.NewNop(), PoolOptions{ConnectTimeout: 2 * time.Second})
+	if err := pool.Connect(resolver); err != nil {
+		t.Fatalf("Connect error: %v", err)
+	}
+	defer pool.Close()
+
+	waitUntil(t, func() bool {
+		infos := pool.NodeInfos()
+		return len(infos) == 1 && infos[0].IsActive() && infos[0].SupportsTask("ocr")
+	})
 }
 
 func TestPoolRediscoveryDoesNotClearInBandIncompatibleVerdict(t *testing.T) {

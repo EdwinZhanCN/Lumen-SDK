@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,6 +17,8 @@ type BrokerResolver struct {
 	brokerURL    string
 	deploymentID string
 	logger       *zap.Logger
+	statusMu     sync.RWMutex
+	status       ResolverStatus
 }
 
 func NewBrokerResolver(brokerURL string, logger *zap.Logger) *BrokerResolver {
@@ -30,7 +33,16 @@ func NewBrokerResolverWithDeployment(brokerURL, deploymentID string, logger *zap
 		brokerURL:    brokerURL,
 		deploymentID: deploymentID,
 		logger:       ensureLogger(logger),
+		status:       ResolverStatus{Source: "broker", State: BackendStarting},
 	}
+}
+
+func (r *BrokerResolver) SourceName() string { return "broker" }
+
+func (r *BrokerResolver) ResolverStatuses() []ResolverStatus {
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	return []ResolverStatus{r.status}
 }
 
 // Watch connects to Host Broker and reconnects with bounded exponential
@@ -39,6 +51,7 @@ func NewBrokerResolverWithDeployment(brokerURL, deploymentID string, logger *zap
 func (r *BrokerResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 	wsURL, err := brokerWebSocketURL(r.brokerURL)
 	if err != nil {
+		r.recordBrokerFailure(ErrorCodeWatchStartFailed)
 		return nil, err
 	}
 
@@ -60,6 +73,7 @@ func (r *BrokerResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 				backoff = time.Second
 			}
 			if err != nil && ctx.Err() == nil {
+				r.recordBrokerFailure(ErrorCodeWatchClosed)
 				r.logger.Warn("broker resolver disconnected; reconnecting",
 					zap.String("url", wsURL),
 					zap.Error(err),
@@ -118,11 +132,45 @@ func (r *BrokerResolver) connect(
 			r.logger.Warn("rejected Broker snapshot", zap.Error(err))
 			continue
 		}
+		observedAt := time.Now().UTC()
+		for index := range snapshot {
+			snapshot[index].Source = r.SourceName()
+			snapshot[index].Sources = []string{r.SourceName()}
+			snapshot[index].LastObserved = observedAt
+			snapshot[index] = snapshot[index].Normalized()
+		}
 		if err := emitSnapshotReplacement(ctx, ch, known, snapshot); err != nil {
 			return receivedSnapshot, err
 		}
+		r.recordBrokerSuccess(observedAt, len(snapshot))
 		receivedSnapshot = true
 	}
+}
+
+func (r *BrokerResolver) recordBrokerFailure(code string) {
+	now := time.Now().UTC()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.State = BackendDegraded
+	r.status.LastScanStartedAt = now
+	r.status.LastScanCompletedAt = now
+	r.status.LastOutcome = ScanOutcomeFailed
+	r.status.LastErrorCode = code
+	r.status.ConsecutiveFailures++
+}
+
+func (r *BrokerResolver) recordBrokerSuccess(at time.Time, matched int) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.State = BackendHealthy
+	r.status.LastScanStartedAt = at
+	r.status.LastScanCompletedAt = at
+	r.status.LastScanSucceededAt = at
+	r.status.LastOutcome = ScanOutcomeSuccess
+	r.status.LastErrorCode = ErrorCodeNone
+	r.status.ConsecutiveFailures = 0
+	r.status.MatchedCount = clampDiagnosticCount(matched)
+	r.status.RejectedCount = 0
 }
 
 func emitSnapshotReplacement(

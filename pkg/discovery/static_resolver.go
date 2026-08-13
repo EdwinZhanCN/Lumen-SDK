@@ -5,6 +5,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -20,6 +22,8 @@ type StaticResolver struct {
 	endpoints    []string
 	deploymentID string
 	logger       *zap.Logger
+	statusMu     sync.RWMutex
+	status       ResolverStatus
 }
 
 // NewStaticResolver creates a resolver for a fixed endpoint list. Invalid
@@ -32,13 +36,23 @@ func NewStaticResolver(endpoints []string, deploymentID string, logger *zap.Logg
 		endpoints:    endpoints,
 		deploymentID: deploymentID,
 		logger:       ensureLogger(logger),
+		status:       ResolverStatus{Source: "static", State: BackendStarting},
 	}
+}
+
+func (r *StaticResolver) SourceName() string { return "static" }
+
+func (r *StaticResolver) ResolverStatuses() []ResolverStatus {
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	return []ResolverStatus{r.status}
 }
 
 // Watch emits one NodeDiscovered event per valid endpoint, then holds the
 // channel open until ctx is cancelled. The resolver layer retains resolved
 // entries, so a single emission is sufficient.
 func (r *StaticResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
+	observedAt := time.Now().UTC()
 	events := make([]NodeEvent, 0, len(r.endpoints))
 	for _, endpoint := range r.endpoints {
 		endpoint = strings.TrimSpace(endpoint)
@@ -50,12 +64,26 @@ func (r *StaticResolver) Watch(ctx context.Context) (<-chan NodeEvent, error) {
 			r.logger.Warn("skipping invalid static node endpoint", zap.String("endpoint", endpoint))
 			continue
 		}
+		resolved.Source = r.SourceName()
+		resolved.Sources = []string{r.SourceName()}
+		resolved.LastObserved = observedAt
 		r.logger.Info("static node resolved",
 			zap.String("id", resolved.Key()),
 			zap.Strings("addresses", resolved.CandidateEndpoints()),
 		)
 		events = append(events, eventFromResolved(NodeDiscovered, resolved))
 	}
+	r.statusMu.Lock()
+	r.status.State = BackendHealthy
+	r.status.LastScanStartedAt = observedAt
+	r.status.LastScanCompletedAt = observedAt
+	r.status.LastScanSucceededAt = observedAt
+	r.status.LastOutcome = ScanOutcomeSuccess
+	r.status.MatchedCount = len(events)
+	r.status.RejectedCount = len(r.endpoints) - len(events)
+	r.status.ConsecutiveFailures = 0
+	r.status.LastErrorCode = ErrorCodeNone
+	r.statusMu.Unlock()
 
 	ch := make(chan NodeEvent, len(events))
 	go func() {

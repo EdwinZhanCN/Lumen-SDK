@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -71,12 +72,20 @@ type ResolvedNode struct {
 	Addresses    []string          `json:"addresses"`
 	Port         int               `json:"port"`
 	Txt          map[string]string `json:"txt,omitempty"`
+	Source       string            `json:"source,omitempty"`
+	Sources      []string          `json:"sources,omitempty"`
+	LastObserved time.Time         `json:"last_observed_at,omitempty"`
 	ExpiresAt    time.Time         `json:"expires_at,omitempty"`
 }
 
 func (n ResolvedNode) Normalized() ResolvedNode {
 	n.Identity = n.Identity.Normalized()
 	n.Addresses = normalizeAddresses(n.Addresses)
+	n.Source = strings.TrimSpace(n.Source)
+	n.Sources = normalizeSources(n.Source, n.Sources)
+	if n.Source == "" && len(n.Sources) > 0 {
+		n.Source = n.Sources[0]
+	}
 	if n.Txt == nil {
 		n.Txt = map[string]string{}
 	}
@@ -139,6 +148,28 @@ func normalizeAddresses(addresses []string) []string {
 		}
 		seen[addr] = struct{}{}
 		out = append(out, addr)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeSources(primary string, sources []string) []string {
+	seen := make(map[string]struct{}, len(sources)+1)
+	out := make([]string, 0, len(sources)+1)
+	appendSource := func(source string) {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			return
+		}
+		if _, ok := seen[source]; ok {
+			return
+		}
+		seen[source] = struct{}{}
+		out = append(out, source)
+	}
+	appendSource(primary)
+	for _, source := range sources {
+		appendSource(source)
 	}
 	return out
 }

@@ -174,3 +174,75 @@ func TestHubControlPlaneFirstStartupRecoversWithoutReconnect(t *testing.T) {
 		t.Fatalf("pending Infer() never resumed after capability validation: %v", ctx.Err())
 	}
 }
+
+func TestClientStartsFirstThenLateHubConvergesOnSameLifecycle(t *testing.T) {
+	capabilities := tensorContractCapabilities(types.PreprocessSigLIP2BasePatch16_224Image)
+	resolver := newLiveNodeResolver()
+	cfg := config.DefaultConfig()
+	cfg.Discovery.ConnectTimeout = 150 * time.Millisecond
+	client := &LumenClient{
+		pool:     NewPoolWithOptions(zap.NewNop(), PoolOptions{ConnectTimeout: time.Second}),
+		resolver: resolver,
+		config:   cfg,
+		logger:   zap.NewNop(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("client.Start() without a hub must keep discovery alive: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if got := len(client.GetNodes()); got != 0 {
+		t.Fatalf("nodes before hub startup = %d, want 0", got)
+	}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	hub := &startingHubServer{inner: &tensorContractServer{
+		capabilities: capabilities,
+		seen:         make(chan *pb.InferRequest, 16),
+	}}
+	pb.RegisterInferenceServer(server, hub)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = lis.Close()
+	})
+
+	host, port, err := splitEndpoint(lis.Addr().String())
+	if err != nil {
+		t.Fatalf("split endpoint: %v", err)
+	}
+	resolver.Emit(discovery.NodeEvent{
+		Type: discovery.NodeDiscovered,
+		Resolved: discovery.ResolvedNode{
+			Identity:     discovery.NewNodeIdentity("local", "late-hub-node"),
+			Addresses:    []string{host},
+			Port:         port,
+			Source:       "mdns",
+			Sources:      []string{"mdns"},
+			LastObserved: time.Now().UTC(),
+		},
+	})
+
+	waitUntil(t, func() bool {
+		nodes := client.GetNodes()
+		return len(nodes) == 1 && nodes[0].Compatibility == discovery.CompatibilityPending
+	})
+	if _, _, ok := client.FindTaskContract(types.TaskSemanticTextEmbed); ok {
+		t.Fatal("late hub became routable before capability readiness")
+	}
+
+	hub.ready.Store(true)
+	waitUntil(t, func() bool {
+		_, _, ok := client.FindTaskContract(types.TaskSemanticTextEmbed)
+		return ok
+	})
+	snapshot := client.RuntimeSnapshot()
+	if snapshot.Counts.DiscoveredNodes != 1 || snapshot.Counts.ActiveNodes != 1 {
+		t.Fatalf("late hub did not become active: %+v", snapshot.Counts)
+	}
+}

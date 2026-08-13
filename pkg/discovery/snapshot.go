@@ -26,6 +26,8 @@ func CloneNode(node *NodeInfo) *NodeInfo {
 	out := &NodeInfo{
 		ID:                 node.ID,
 		Address:            node.Address,
+		Sources:            append([]string(nil), node.Sources...),
+		LastObserved:       node.LastObserved,
 		Availability:       node.Availability,
 		Compatibility:      node.Compatibility,
 		Version:            node.Version,
