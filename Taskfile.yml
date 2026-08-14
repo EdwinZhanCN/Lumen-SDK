@@ -1,0 +1,206 @@
+version: '3'
+
+vars:
+  PROTO_BASELINE: v1.3.2
+  PROTO_DIR: proto
+  HOSTD_BINARY: dist/lumen-hostd
+  HOSTD_PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+  VERSION:
+    sh: git describe --tags --exact-match 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  BUILD_TIME:
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  deps:
+    desc: Download and verify Go modules
+    cmds:
+      - go mod download
+      - go mod verify
+
+  verify:
+    desc: Verify downloaded Go modules
+    cmds:
+      - go mod verify
+
+  fmt-check:
+    desc: Fail when committed Go files are not gofmt-formatted
+    cmds:
+      - |
+        test -z "$(gofmt -l $(git ls-files '*.go'))" || {
+          echo "unformatted Go files:"
+          gofmt -l $(git ls-files '*.go')
+          exit 1
+        }
+
+  fmt:
+    desc: Format committed Go files
+    cmds:
+      - gofmt -w $(git ls-files '*.go')
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  test:
+    desc: Run the complete test suite with the race detector
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+
+  test-coverage:
+    desc: Render HTML coverage output
+    cmds:
+      - task: test
+      - go tool cover -html=coverage.out -o coverage.html
+
+  build:
+    desc: Compile the SDK packages (Host Broker is an optional command)
+    cmds:
+      - go build ./pkg/... ./proto/...
+
+  proto-check:
+    desc: Lint protos and verify committed generated Go code
+    cmds:
+      - cd {{.PROTO_DIR}} && buf lint
+      - |
+        set -eu
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        protoc --proto_path=. --go_out=paths=source_relative:"$tmp" --go-grpc_out=paths=source_relative:"$tmp" proto/ml_service.proto
+        for file in proto/ml_service.pb.go proto/ml_service_grpc.pb.go; do
+          diff -u "$file" "$tmp/$file" || {
+            echo "generated code out of date: $file"
+            echo "regenerate with: protoc --proto_path=. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. proto/ml_service.proto"
+            exit 1
+          }
+        done
+
+  proto-verify:
+    desc: Also verify wire compatibility against the pinned remote baseline
+    cmds:
+      - task: proto-check
+      - cd {{.PROTO_DIR}} && buf breaking --against "https://github.com/EdwinZhanCN/Lumen-SDK.git#ref={{.PROTO_BASELINE}},subdir=proto"
+
+  hostd-build:
+    desc: Build optional lumen-hostd for the current platform
+    cmds:
+      - mkdir -p dist
+      - >-
+        CGO_ENABLED=0 go build
+        -ldflags="-X 'main.Version={{.VERSION}}' -X 'main.Commit={{.COMMIT}}' -X 'main.BuildTime={{.BUILD_TIME}}'"
+        -o "{{.HOSTD_BINARY}}" ./cmd/lumen-hostd
+
+  hostd-build-all:
+    desc: Cross-build lumen-hostd for all release platforms
+    cmds:
+      - |
+        set -eu
+        for platform in {{.HOSTD_PLATFORMS}}; do
+          os="${platform%/*}"
+          arch="${platform#*/}"
+          output="dist/$os-$arch/lumen-hostd"
+          if [ "$os" = windows ]; then
+            output="$output.exe"
+          fi
+          echo "Building lumen-hostd for $os/$arch"
+          mkdir -p "dist/$os-$arch"
+          CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+            -ldflags="-X 'main.Version={{.VERSION}}' -X 'main.Commit={{.COMMIT}}' -X 'main.BuildTime={{.BUILD_TIME}}'" \
+            -o "$output" ./cmd/lumen-hostd
+        done
+
+  hostd-package:
+    desc: Archive a previously built current-platform lumen-hostd binary
+    cmds:
+      - |
+        set -eu
+        binary="{{.HOSTD_BINARY}}"
+        archive_dir="$(dirname "$binary")"
+        archive_name="lumen-hostd-{{.VERSION}}-{{.GOOS}}-{{.GOARCH}}"
+        if [ "{{.GOOS}}" = windows ]; then
+          (cd "$archive_dir" && zip -q "$archive_name.zip" "$(basename "$binary")")
+        else
+          tar -czf "$archive_dir/$archive_name.tar.gz" -C "$archive_dir" "$(basename "$binary")"
+        fi
+
+  hostd-archive:
+    desc: Build and archive versioned lumen-hostd release artifacts
+    cmds:
+      - |
+        if ! printf '%s' "{{.VERSION}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "Usage: task hostd-archive VERSION=vX.Y.Z"
+          exit 1
+        fi
+      - task: hostd-build-all
+      - |
+        set -eu
+        for platform in {{.HOSTD_PLATFORMS}}; do
+          os="${platform%/*}"
+          arch="${platform#*/}"
+          if [ "$os" = windows ]; then
+            (cd "dist/$os-$arch" && zip -q "../lumen-hostd-{{.VERSION}}-$os-$arch.zip" lumen-hostd.exe)
+          else
+            tar -czf "dist/lumen-hostd-{{.VERSION}}-$os-$arch.tar.gz" -C "dist/$os-$arch" lumen-hostd
+          fi
+        done
+
+  hostd-run:
+    desc: Run optional lumen-hostd in the foreground
+    cmds:
+      - go run -ldflags="-X 'main.Version={{.VERSION}}' -X 'main.Commit={{.COMMIT}}' -X 'main.BuildTime={{.BUILD_TIME}}'" ./cmd/lumen-hostd serve
+
+  hostd-install:
+    desc: Install optional lumen-hostd with go install
+    cmds:
+      - go install -ldflags="-X 'main.Version={{.VERSION}}' -X 'main.Commit={{.COMMIT}}' -X 'main.BuildTime={{.BUILD_TIME}}'" ./cmd/lumen-hostd
+
+  clean:
+    desc: Remove generated local artifacts
+    cmds:
+      - rm -rf dist coverage.out coverage.html
+
+  ci:
+    desc: Run the repository's deterministic default checks
+    deps:
+      - verify
+      - fmt-check
+      - vet
+      - test
+
+  ci-fast:
+    desc: Run formatting and tests without vet
+    deps:
+      - fmt-check
+      - test
+
+  release:
+    desc: Validate and create local release artifacts
+    cmds:
+      - task: clean
+      - task: ci
+      - task: hostd-archive
+
+  tag:
+    desc: Create and push a release tag (triggers GitHub Release)
+    cmds:
+      - task: release
+      - |
+        set -eu
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "Refusing to tag a dirty worktree"
+          exit 1
+        fi
+        git tag -a "{{.VERSION}}" -m "Release {{.VERSION}}"
+        git push origin "refs/tags/{{.VERSION}}"

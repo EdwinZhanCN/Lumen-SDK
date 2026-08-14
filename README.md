@@ -41,11 +41,13 @@ resp, err := c.Infer(ctx, req)
 
 ## 开发
 
+项目使用 [Task](https://taskfile.dev/) 管理开发和发布命令，请先安装 `task`。
+
 ```sh
-make ci            # gofmt check + vet + race tests
-make build         # compile SDK packages
-make proto-check   # local proto lint/generated-code check
-make proto-verify  # additionally compare with the pinned remote wire baseline
+task ci            # 依赖校验 + gofmt check + vet + race tests
+task build         # compile SDK packages
+task proto-check   # local proto lint/generated-code check
+task proto-verify  # additionally compare with the pinned remote wire baseline
 ```
 
 ## 可选 Host Broker
@@ -55,15 +57,15 @@ Host Broker 不是默认或推荐的发现路径；应用应优先直接使用 m
 Release tag 会继续发布 Linux、macOS 和 Windows 的预编译 `lumen-hostd` 产物；也可以从源码构建：
 
 ```sh
-make hostd-build
-make hostd-run
+task hostd-build
+task hostd-run
 ```
 
 维护者可以在发 tag 前本地验证完整发布产物：
 
 ```sh
-make release VERSION=vX.Y.Z
-make tag VERSION=vX.Y.Z # push tag 并触发 GitHub Release
+task release VERSION=vX.Y.Z
+task tag VERSION=vX.Y.Z # push tag 并触发 GitHub Release
 ```
 
 SDK tag 同时用作源码版本、协议基线和对应 `lumen-hostd` 二进制发行版本。
